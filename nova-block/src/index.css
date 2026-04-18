@@ -1,0 +1,332 @@
+@import "tailwindcss";
+
+@import './styles/novablock-core.css';
+@plugin "@tailwindcss/typography";
+
+
+
+
+
+
+:root {
+  /* 治愈系浅色模式 - 燕麦色/奶油白 */
+  --background: 45 30% 96%; /* #F5F5F0 燕麦色 */
+  --foreground: 20 10% 20%;
+  --card: 45 40% 98%;
+  --card-foreground: 20 10% 20%;
+  --popover: 45 40% 99%;
+  --popover-foreground: 20 10% 20%;
+  --primary: 35 30% 45%; /* 治愈系棕色 */
+  --primary-foreground: 45 30% 98%;
+  --secondary: 45 20% 90%;
+  --secondary-foreground: 20 10% 20%;
+  --muted: 45 15% 85%;
+  --muted-foreground: 20 10% 40%;
+  --accent: 35 40% 90%;
+  --accent-foreground: 20 10% 20%;
+  --border: 45 15% 80%;
+  --input: 45 15% 80%;
+  --ring: 35 30% 45%;
+  --radius: 1rem;
+  
+  /* 柔和弥散阴影 */
+  --shadow-color: 45 10% 20% / 0.08;
+  --soft-shadow: 0 10px 30px -10px hsla(var(--shadow-color));
+
+  /* 纸张纹理 SVG - 极轻量噪点 */
+  --paper-texture: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+}
+
+.dark {
+  /* 治愈系深色模式 - 深海蓝/莫兰迪灰 */
+  --background: 222 47% 7%; /* #0F172A 深海蓝基调 */
+  --foreground: 210 40% 98%;
+  --card: 222 47% 10%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 12%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 210 40% 90%;
+  --primary-foreground: 222 47% 10%;
+  --secondary: 222 47% 15%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 222 47% 20%;
+  --muted-foreground: 217 32% 60%;
+  --accent: 222 47% 25%;
+  --accent-foreground: 210 40% 98%;
+  --border: 222 47% 15%;
+  --input: 222 47% 15%;
+  --ring: 210 40% 90%;
+  
+  --shadow-color: 0 0% 0% / 0.3;
+  --soft-shadow: 0 10px 40px -10px hsla(var(--shadow-color));
+}
+
+@theme {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-border: hsl(var(--border));
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
+  --shadow-soft: var(--soft-shadow);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    @apply antialiased selection:bg-primary/20 selection:text-primary;
+    position: relative;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    line-height: 1.7; /* 优化行间距 */
+    letter-spacing: -0.011em; /* 优化字间距 */
+  }
+
+  /* 全局纸张纹理层 */
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: var(--paper-texture);
+    pointer-events: none;
+    z-index: 50;
+    opacity: 0.4;
+  }
+}
+
+/* 隐藏滚动条但保留滚动功能 */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Custom Scrollbar for Sidebar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* 待办事项列表样式 */
+.novablock-editor ul[data-type="taskList"] {
+  list-style: none !important;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.novablock-editor ul[data-type="taskList"] li {
+  display: flex !important;
+  align-items: flex-start !important;
+  margin-bottom: 0.25rem;
+}
+
+.novablock-editor ul[data-type="taskList"] li::before,
+.novablock-editor ul[data-type="taskList"] li::marker {
+  display: none !important;
+  content: none !important;
+}
+
+.novablock-editor ul[data-type="taskList"] li > label {
+  flex: 0 0 auto;
+  margin-right: 0.5rem;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  height: 1.5rem; 
+}
+
+.novablock-editor ul[data-type="taskList"] li > div {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.novablock-editor ul[data-type="taskList"] li > div > p {
+  margin: 0;
+}
+
+.novablock-editor ul[data-type="taskList"] input[type="checkbox"] {
+  cursor: pointer;
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: #3b82f6; 
+  border-radius: 0.25rem;
+  margin: 0;
+  appearance: auto !important; 
+}
+
+/* Callout block styling - Dark Mode optimized */
+.novablock-editor .callout-block {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background-color: rgba(255, 255, 255, 0.02);
+  color: #e5e7eb;
+  position: relative;
+  align-items: flex-start;
+}
+
+/* ... 保持原有逻辑，但确保颜色适配暗色 ... */
+
+.novablock-editor h1, .novablock-editor h2, .novablock-editor h3, .novablock-editor h4, .novablock-editor h5, .novablock-editor h6 {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* 数学公式样式适配暗色 */
+.math-inline {
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+  font-family: serif;
+}
+
+.math-block {
+  display: flex;
+  justify-content: center;
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 0.75rem;
+  font-family: serif;
+  font-size: 1.125rem;
+  color: #ffffff;
+}
+
+/* Note Link Capsule Styling - 莫兰迪色治愈系风格 */
+.note-link-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.6rem;
+  margin: 0 0.2rem;
+  background-color: #E6E2D3; /* 莫兰迪浅米色 */
+  color: #6B5B4B; /* 深咖啡灰 */
+  border: 1px solid #D4C5B9;
+  border-radius: 0.75rem;
+  font-weight: 500;
+  font-size: 0.9em;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  vertical-align: middle;
+  text-decoration: none !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.note-link-capsule:hover {
+  background-color: #D4C5B9;
+  color: #4A3F35;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px -4px rgba(107, 91, 75, 0.3);
+  border-color: #B99976;
+}
+
+.note-link-capsule.selected {
+  border: 2px solid #B99976;
+  box-shadow: 0 0 0 2px rgba(185, 153, 118, 0.2);
+}
+
+.note-link-capsule::before {
+  content: "";
+  display: none; /* We handle the icon in renderHTML */
+}
+
+/* Tippy theme for note link menu */
+.tippy-box[data-theme~='note-link-menu'] {
+  background-color: transparent;
+  box-shadow: none;
+}
+.tippy-box[data-theme~='note-link-menu'] .tippy-content {
+  padding: 0;
+}
+
+/* Text Effects */
+.text-effect-gradient {
+  background: linear-gradient(to right, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #8b00ff);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gradient-shift 3s linear infinite;
+  will-change: background-position;
+}
+
+@keyframes gradient-shift {
+  to {
+    background-position: 200% center;
+  }
+}
+
+.text-effect-bounce {
+  display: inline-block;
+  animation: bounce-text 1s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes bounce-text {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-5px);
+  }
+}
+
+.text-effect-neon {
+  color: inherit;
+  text-shadow: 0 0 5px currentColor, 0 0 10px currentColor, 0 0 15px currentColor;
+  animation: neon-pulse 1.5s ease-in-out infinite alternate;
+  will-change: text-shadow;
+}
+
+@keyframes neon-pulse {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.7;
+    text-shadow: 0 0 2px currentColor, 0 0 4px currentColor, 0 0 6px currentColor;
+  }
+}
+
+.text-effect-typewriter {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid currentColor;
+  animation: typewriter-typing 4s steps(40, end) infinite, typewriter-blink-caret 0.75s step-end infinite;
+  max-width: fit-content;
+}
+
+@keyframes typewriter-typing {
+  from { width: 0 }
+  to { width: 100% }
+}
+
+@keyframes typewriter-blink-caret {
+  from, to { border-color: transparent }
+  50% { border-color: currentColor }
+}

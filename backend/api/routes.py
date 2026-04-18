@@ -1,0 +1,1960 @@
+from __future__ import annotations
+# 🚀 核心修复：在导入任何其他模块前先加载 llama_cpp，防止 Windows 上的 DLL 冲突导致的 Access Violation
+try:
+    import llama_cpp
+except ImportError:
+    pass
+
+import os
+import sys
+import uuid
+import shutil
+import asyncio
+import threading
+from PIL import Image
+from pathlib import Path
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form, BackgroundTasks
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse, FileResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from backend.agent.planner import run_agent
+from backend.config import get_settings
+from backend.models.db_models import Note, Notebook
+from backend.models.schemas import (
+    AgentRequest,
+    AskRequest,
+    AskResponse,
+    BulkNoteAction,
+    Citation,
+    InlineAIRequest,
+    ModelConfigPayload,
+    NotebookCreate,
+    NotebookUpdate,
+    NotebookResponse,
+    NoteCreate,
+    NoteMovePayload,
+    NotePropertyCreate,
+    NotePropertyResponse,
+    NotePropertyUpdate,
+    NoteResponse,
+    NoteTemplateCreate,
+    NoteTemplateResponse,
+    NoteTemplateUpdate,
+    NoteListItemResponse,
+    NoteTreeResponse,
+    NoteUpdate,
+    QuickCaptureRequest,
+    QuickCaptureResponse,
+    SearchRequest,
+    TagSuggestRequest,
+    TagSuggestResponse,
+    TaskCreate,
+    TaskResponse,
+    TaskUpdate,
+    TrashResponse,
+    UploadResponse,
+    UserStatsResponse,
+    AchievementResponse,
+    UserAchievementResponse,
+    ThemeUpdatePayload,
+)
+from backend.database import get_db, SessionLocal, engine
+from backend.utils import log_buffer
+import subprocess
+import json
+from backend.config import get_settings, get_custom_config_path, PROJECT_DIR
+from backend.rag.pipeline import citations_from_results, cosine_similarity, search_knowledge
+from backend.services.ai_client import AIClient
+from backend.services.document_service import chunk_text, parse_document
+from backend.services.repositories import (
+    add_exp,
+    create_note,
+    create_notebook,
+    create_note_property,
+    create_task,
+    delete_note_property,
+    delete_task,
+    clear_completed_tasks,
+    get_note,
+    get_note_properties,
+    get_or_create_default_notebook,
+    get_or_create_inbox_notebook,
+    get_or_create_model_config,
+    get_or_create_user_stats,
+    list_notes,
+    list_notes_tree,
+    list_notebooks,
+    list_templates,
+    list_trashed_notes,
+    list_trashed_notebooks,
+    list_tasks,
+    bulk_move_notes,
+    bulk_soft_delete_notes,
+    create_template,
+    delete_template,
+    move_note,
+    purge_note,
+    purge_notebook,
+    replace_note_links,
+    restore_note,
+    restore_notebook,
+    soft_delete_note,
+    soft_delete_notebook,
+    purge_trash,
+    update_notebook,
+    update_note,
+    update_template,
+    update_model_config,
+    update_note_property,
+    update_task,
+    list_user_achievements,
+    check_and_unlock_achievements,
+    update_user_theme,
+    update_user_wallpaper,
+)
+from backend.services.vector_store import vector_store
+
+from backend.services.local_ai import local_ai_manager
+
+router = APIRouter()
+settings = get_settings()
+ai_client = AIClient()
+
+import re
+import platform
+import psutil
+
+# AI 插件状态全局变量
+ai_enabled = True
+
+def load_ai_status():
+    """从 ai_config.json 加载 AI 启用状态"""
+    global ai_enabled
+    config_path = Path(settings.data_root) / "ai_config.json"
+    if config_path.exists():
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                ai_enabled = config.get("enabled", True)
+        except Exception as e:
+            print(f"[!] Error loading AI status: {e}")
+
+# 初始化加载
+load_ai_status()
+
+def extract_manual_links(content: str) -> list[int]:
+    """
+    Extract note IDs from content.
+    Matches: <span data-type="note-link" data-id="123">...</span>
+    Also support any custom tiptap node output if needed.
+    """
+    if not content:
+        return []
+    
+    # Match data-id="..." within tags that have data-type="note-link" or data-type="wiki"
+    # The requirement mentioned <span data-type="note-link" data-id="123">
+    pattern = r'data-id="(\d+)"'
+    ids = re.findall(pattern, content)
+    
+    # Also look for data-wiki-id if we use that for WikiLink
+    wiki_pattern = r'data-wiki-id="(\d+)"'
+    ids.extend(re.findall(wiki_pattern, content))
+    
+    # Convert to unique integers
+    return list(set(int(id_str) for id_str in ids))
+
+
+def should_run_ai_indexing(llm_config: dict[str, str] | None) -> bool:
+    if not ai_enabled or not llm_config:
+        return False
+    return bool(llm_config.get("api_key") and llm_config.get("base_url"))
+
+
+def spawn_note_indexing(*args, **kwargs) -> None:
+    threading.Thread(
+        target=background_index_note_task,
+        args=args,
+        kwargs=kwargs,
+        daemon=True,
+    ).start()
+
+async def background_index_note_async(note_id: int, title: str, content: str, tags: list[str] | None = None, icon: str = "\U0001f4dd", type: str = "note", parent_id: int | None = None, is_title_manually_edited: bool = False):
+    """异步执行 AI 处理：摘要、向量化、自动链接"""
+    if not ai_enabled:
+        return
+        
+    db = SessionLocal()
+    try:
+        # 获取最新的 AI 配置
+        model_config = get_or_create_model_config(db)
+        llm_config = {
+            "provider": model_config.provider,
+            "api_key": model_config.api_key,
+            "base_url": model_config.base_url,
+            "model_name": model_config.model_name,
+        }
+        if not should_run_ai_indexing(llm_config):
+            return
+        
+        # 1. 摘要处理
+        summary = await ai_client.summarize(content, llm_config)
+        if not summary or summary.startswith("Error:"):
+            return
+        
+        # 2. 更新数据库摘要 (这里不需要重复传入 content 以免大并发下覆盖新数据，但后端接口通常是全量)
+        # 引入重试机制以应对可能的 SQLite 锁竞争
+        from backend.database import with_db_retry
+        @with_db_retry(max_retries=5, delay=0.5)
+        def save_summary():
+            update_note(db, note_id, title=title, content=content, summary=summary, tags=tags, icon=icon, type=type, parent_id=parent_id, is_title_manually_edited=is_title_manually_edited)
+        
+        save_summary()
+        
+        # 3. 向量索引处理
+        chunks = chunk_text(content, settings.chunk_size_words, settings.chunk_overlap_words)
+        records = []
+        vector_store.delete_note_chunks(note_id)
+        
+        # 笔记级向量（基于摘要和前 3000 字）
+        note_embedding = await ai_client.embed(f"{title}\n{summary}\n{content[:3000]}", llm_config)
+        
+        for index, chunk in enumerate(chunks):
+            embedding = await ai_client.embed(chunk, llm_config)
+            records.append({
+                "id": f"note-{note_id}-chunk-{index}",
+                "document": chunk,
+                "embedding": embedding,
+                "metadata": {"note_id": note_id, "title": title, "chunk_index": index},
+            })
+        
+        if records:
+            vector_store.upsert_chunks(records)
+            
+        # 4. 自动链接处理
+        results = vector_store.search(note_embedding, top_k=6)
+        link_targets: list[tuple[int, float]] = []
+        seen_notes = {note_id}
+        for item in results:
+            target_id = item["metadata"]["note_id"]
+            if target_id not in seen_notes and item["score"] >= 0.2:
+                link_targets.append((target_id, item["score"]))
+                seen_notes.add(target_id)
+        
+        if link_targets:
+            @with_db_retry(max_retries=5, delay=0.5)
+            def save_links():
+                replace_note_links(db, note_id, sorted(link_targets, key=lambda pair: pair[1], reverse=True)[:5], link_type="ai")
+            save_links()
+            
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error in background indexing note {note_id}: {str(e)}")
+        # In case of DB errors, we rollback the current session
+        db.rollback()
+    finally:
+        db.close()
+
+
+def background_index_note_task(*args, **kwargs):
+    """BackgroundTasks 只能执行同步 callable；这里用一个 sync wrapper 安全执行协程。"""
+
+    async def _run():
+        # 背景任务中避免复用全局 ai_client（AsyncClient 跨 event loop/线程复用风险较高）
+        local_ai_client = AIClient()
+        try:
+            # 临时替换全局引用：复用 background_index_note_async 的逻辑
+            global ai_client
+            old = ai_client
+            ai_client = local_ai_client
+            try:
+                await background_index_note_async(*args, **kwargs)
+            finally:
+                ai_client = old
+        finally:
+            try:
+                await local_ai_client.client.aclose()
+            except Exception:
+                pass
+
+    asyncio.run(_run())
+
+
+def note_to_response(note: Note) -> NoteResponse:
+    links = [link.target_note_id for link in note.links_from if link.link_type == "manual"]
+    ai_links = [link.target_note_id for link in note.links_from if link.link_type == "ai"]
+    properties = [NotePropertyResponse.model_validate(p) for p in note.properties]
+    return NoteResponse(
+        id=note.id,
+        title=note.title,
+        file_path=getattr(note, "file_path", None),
+        background_paper=getattr(note, "background_paper", None),
+        sort_key=getattr(note, "sort_key", None),
+        stickers=getattr(note, "stickers", []) or [],
+        sticky_notes=getattr(note, "sticky_notes", []) or [],
+        icon=note.icon,
+        type=note.type,
+        content=note.content,
+        summary=note.summary,
+        tags=[tag for tag in note.tags.split(",") if tag],
+        properties=properties,
+        links=links,
+        ai_links=ai_links,
+        notebook_id=note.notebook_id,
+        parent_id=note.parent_id,
+        position=note.position,
+        is_title_manually_edited=(note.is_title_manually_edited == 1),
+        is_folder=(note.is_folder == 1),
+        created_at=note.created_at,
+        deleted_at=note.deleted_at,
+    )
+
+
+def note_to_list_item_response(note: Note) -> NoteListItemResponse:
+    links = [link.target_note_id for link in note.links_from if link.link_type == "manual"]
+    ai_links = [link.target_note_id for link in note.links_from if link.link_type == "ai"]
+    properties = [NotePropertyResponse.model_validate(p) for p in note.properties]
+    return NoteListItemResponse(
+        id=note.id,
+        title=note.title,
+        file_path=getattr(note, "file_path", None),
+        background_paper=getattr(note, "background_paper", None),
+        sort_key=getattr(note, "sort_key", None),
+        stickers=getattr(note, "stickers", []) or [],
+        sticky_notes=getattr(note, "sticky_notes", []) or [],
+        icon=note.icon,
+        type=note.type,
+        summary=note.summary,
+        tags=[tag for tag in note.tags.split(",") if tag],
+        properties=properties,
+        links=links,
+        ai_links=ai_links,
+        notebook_id=note.notebook_id,
+        parent_id=note.parent_id,
+        position=note.position,
+        is_title_manually_edited=(note.is_title_manually_edited == 1),
+        is_folder=(note.is_folder == 1),
+        created_at=note.created_at,
+        deleted_at=note.deleted_at,
+    )
+
+def note_to_tree_response(note: Note) -> NoteTreeResponse:
+    # 树形列表默认不返回 content，避免大字段导致的网络/内存开销
+    resp = note_to_list_item_response(note)
+    children = [note_to_tree_response(child) for child in note.children if child.deleted_at is None]
+    return NoteTreeResponse(
+        **resp.model_dump(),
+        children=children,
+    )
+
+def notebook_to_response(notebook: Notebook) -> NotebookResponse:
+    return NotebookResponse.model_validate(notebook)
+
+def persist_note_sync(
+    db: Session,
+    title: str,
+    content: str,
+    background_tasks: BackgroundTasks,
+    notebook_id: int | None = None,
+    icon: str = "\U0001f4dd",
+    type: str = "note",
+    parent_id: int | None = None,
+    is_title_manually_edited: bool = False,
+    tags: list[str] | None = None,
+    background_paper: str | None = None,
+    sort_key: str | None = None,
+    stickers: list[dict] | None = None,
+    sticky_notes: list[dict] | None = None,
+) -> NoteResponse:
+    # 1. 快速创建数据库记录
+    from backend.database import with_db_retry
+    
+    @with_db_retry(max_retries=3)
+    def do_create():
+        nonlocal notebook_id
+        notebook_id = notebook_id or get_or_create_default_notebook(db).id
+        return create_note(
+            db,
+            title=title,
+            content=content,
+            summary="",
+            tags=tags,
+            notebook_id=notebook_id,
+            icon=icon,
+            type=type,
+            parent_id=parent_id,
+            is_title_manually_edited=is_title_manually_edited,
+            background_paper=background_paper,
+            sort_key=sort_key,
+            stickers=stickers,
+            sticky_notes=sticky_notes,
+        )
+    
+    note = do_create()
+    
+    # 1.5 Parse and save manual links
+    manual_link_ids = extract_manual_links(content)
+    if manual_link_ids:
+        replace_note_links(db, note.id, [(tid, 1.0) for tid in manual_link_ids], link_type="manual")
+    
+    # 2. 异步执行 AI 任务
+    spawn_note_indexing(
+        note.id,
+        title,
+        content,
+        tags=tags,
+        icon=icon,
+        type=type,
+        parent_id=parent_id,
+        is_title_manually_edited=is_title_manually_edited,
+    )
+    
+    return note_to_response(note)
+
+def get_or_create_thumbnail(file_path: Path) -> str | None:
+    """如果文件是动图且没有缩略图，则生成并返回缩略图文件名；否则返回 None。"""
+    if file_path.suffix.lower() not in [".gif", ".webp"] or file_path.name.endswith(".thumb.png"):
+        return None
+    
+    thumb_name = f"{file_path.stem}.thumb.png"
+    thumb_path = file_path.parent / thumb_name
+    
+    if not thumb_path.exists():
+        try:
+            with Image.open(file_path) as img:
+                # 提取第一帧并保存
+                img.seek(0)
+                # 转换到 RGBA (针对带有透明度的 WebP/GIF) 并保存为 PNG
+                img.convert("RGBA").save(thumb_path, "PNG")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to generate thumbnail for {file_path}: {e}")
+            return None
+            
+    return thumb_name
+
+@router.get("/emoticons/list", response_model=list[dict])
+def list_emoticons():
+    """获取表情包资源列表"""
+    emoticons_path = Path(settings.emoticons_path)
+    if not emoticons_path.exists():
+        emoticons_path.mkdir(parents=True, exist_ok=True)
+    
+    files = []
+    # 支持常见的图片格式
+    extensions = ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.svg"]
+    for ext in extensions:
+        for f in emoticons_path.glob(ext):
+            # 排除生成的缩略图文件本身被列出
+            if f.name.endswith(".thumb.png"):
+                continue
+                
+            url = f"/api/emoticons/static/files/{f.name}"
+            thumb_url = url
+            
+            # 动图特殊处理
+            if f.suffix.lower() in [".gif", ".webp"]:
+                thumb_name = get_or_create_thumbnail(f)
+                if thumb_name:
+                    thumb_url = f"/api/emoticons/static/files/{thumb_name}"
+            
+            files.append({
+                "name": f.name,
+                "url": url,
+                "thumb_url": thumb_url
+            })
+            
+    return sorted(files, key=lambda x: x["name"])
+
+@router.post("/notes/quick-capture", response_model=QuickCaptureResponse)
+def quick_capture_api(payload: QuickCaptureRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> QuickCaptureResponse:
+    from datetime import datetime
+    title = f"灵感碎片 - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    
+    # 1. 确保 Inbox 笔记本存在
+    inbox = get_or_create_inbox_notebook(db)
+    
+    # 2. 持久化笔记
+    note_resp = persist_note_sync(db, title, payload.content, background_tasks, notebook_id=inbox.id, icon="⚡", type="note")
+    
+    # 3. 增加 EXP
+    exp_gained = 10
+    stats = add_exp(db, exp_gained)
+    
+    return QuickCaptureResponse(
+        status="success",
+        note=note_resp,
+        exp_gained=exp_gained,
+        current_exp=stats.exp,
+        current_level=stats.level
+    )
+
+@router.get("/user/stats", response_model=UserStatsResponse)
+def get_user_stats_api(db: Session = Depends(get_db)) -> UserStatsResponse:
+    stats = get_or_create_user_stats(db)
+    # 每次获取 stats 时检查是否有新成就解锁
+    check_and_unlock_achievements(db)
+    return UserStatsResponse.model_validate(stats)
+
+
+@router.get("/user/achievements", response_model=list[UserAchievementResponse])
+def get_user_achievements_api(db: Session = Depends(get_db)) -> list[UserAchievementResponse]:
+    return [UserAchievementResponse.model_validate(ua) for ua in list_user_achievements(db)]
+
+
+@router.patch("/user/theme", response_model=UserStatsResponse)
+def update_user_theme_api(payload: ThemeUpdatePayload, db: Session = Depends(get_db)) -> UserStatsResponse:
+    stats = update_user_theme(db, payload.theme)
+    return UserStatsResponse.model_validate(stats)
+
+
+from pydantic import BaseModel
+class WallpaperUpdatePayload(BaseModel):
+    wallpaper_url: str
+
+@router.patch("/user/wallpaper", response_model=UserStatsResponse)
+def update_user_wallpaper_api(payload: WallpaperUpdatePayload, db: Session = Depends(get_db)) -> UserStatsResponse:
+    stats = update_user_wallpaper(db, payload.wallpaper_url)
+    return UserStatsResponse.model_validate(stats)
+
+
+
+@router.post("/upload", response_model=UploadResponse)
+async def upload_documents(background_tasks: BackgroundTasks, files: list[UploadFile] = File(...), db: Session = Depends(get_db)) -> UploadResponse:
+    imported: list[NoteResponse] = []
+    default_notebook = get_or_create_default_notebook(db)
+    for file in files:
+        content = await file.read()
+        title, parsed = parse_document(file.filename, content)
+        imported.append(persist_note_sync(db, title, parsed, background_tasks, default_notebook.id))
+    return UploadResponse(imported_notes=imported)
+
+@router.post("/media/upload")
+def upload_media_api(file: UploadFile = File(...), note_id: str = Form(None)):
+    try:
+        ext = os.path.splitext(file.filename)[1]
+        unique_name = f"{uuid.uuid4()}{ext}"
+        
+        # Isolate by note_id if provided
+        upload_base = Path(settings.uploads_path)
+        if note_id:
+            upload_base = upload_base / note_id
+            upload_base.mkdir(parents=True, exist_ok=True)
+            
+        save_path = upload_base / unique_name
+        with open(save_path, "wb") as f:
+            # Sync read from UploadFile
+            f.write(file.file.read())
+            
+        url_path = f"{note_id}/{unique_name}" if note_id else unique_name
+        return {
+            "url": f"/api/media/static/files/{url_path}",
+            "name": file.filename,
+            "size": save_path.stat().st_size,
+            "type": file.content_type
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@router.post("/media/upload/init")
+def upload_media_init(filename: str = Form(...), size: int = Form(...), note_id: str = Form(None)):
+    upload_id = str(uuid.uuid4())
+    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    return {"upload_id": upload_id}
+
+@router.post("/media/upload/chunk")
+def upload_media_chunk(
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    file: UploadFile = File(...),
+    note_id: str = Form(None)
+):
+    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    if not temp_dir.exists():
+        raise HTTPException(status_code=400, detail="Invalid upload_id")
+    chunk_path = temp_dir / f"chunk_{chunk_index}"
+    with open(chunk_path, "wb") as f:
+        f.write(file.file.read())
+    return {"status": "ok"}
+
+@router.post("/media/upload/complete")
+def upload_media_complete(
+    upload_id: str = Form(...),
+    filename: str = Form(...),
+    content_type: str = Form(...),
+    note_id: str = Form(None)
+):
+    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    if not temp_dir.exists():
+        raise HTTPException(status_code=400, detail="Invalid upload_id")
+    
+    ext = os.path.splitext(filename)[1]
+    unique_name = f"{uuid.uuid4()}{ext}"
+    
+    # Isolate by note_id if provided
+    upload_base = Path(settings.uploads_path)
+    if note_id:
+        upload_base = upload_base / note_id
+        upload_base.mkdir(parents=True, exist_ok=True)
+        
+    final_path = upload_base / unique_name
+    
+    chunks = sorted(temp_dir.glob("chunk_*"), key=lambda p: int(p.name.split("_")[1]))
+    with open(final_path, "wb") as outfile:
+        for chunk_path in chunks:
+            with open(chunk_path, "rb") as infile:
+                shutil.copyfileobj(infile, outfile)
+    
+    shutil.rmtree(temp_dir)
+    url_path = f"{note_id}/{unique_name}" if note_id else unique_name
+    return {
+        "url": f"/api/media/static/files/{url_path}",
+        "name": filename,
+        "size": final_path.stat().st_size,
+        "type": content_type
+    }
+
+@router.post("/ask", response_model=AskResponse)
+async def ask_question(payload: AskRequest, db: Session = Depends(get_db)) -> AskResponse:
+    if not ai_enabled:
+        return AskResponse(answer="AI is disabled in settings.", citations=[], mode=payload.mode)
+        
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    
+    if payload.mode == "agent":
+        agent_response = await run_agent(db, payload.question, ai_client)
+        return AskResponse(answer=agent_response.answer, citations=agent_response.evidence, mode="agent")
+    elif payload.mode == "chat":
+        answer = await ai_client.answer(payload.question, [], llm_config)
+        return AskResponse(answer=answer, citations=[], mode="chat")
+    else:
+        results = await search_knowledge(payload.question, ai_client=ai_client)
+        citations = await run_in_threadpool(citations_from_results, db, results)
+        answer = await ai_client.answer(payload.question, citations, llm_config)
+        return AskResponse(answer=answer, citations=[Citation(**item) for item in citations], mode="rag")
+
+@router.post("/search")
+async def search_api(payload: SearchRequest, db: Session = Depends(get_db)) -> dict:
+    if not ai_enabled:
+        return {"results": []}
+        
+    results = await search_knowledge(payload.query, ai_client=ai_client, top_k=payload.top_k)
+    return {"results": await run_in_threadpool(citations_from_results, db, results)}
+
+@router.post("/ai/inline")
+async def inline_ai(payload: InlineAIRequest, db: Session = Depends(get_db)):
+    global ai_enabled
+    if not ai_enabled:
+        return StreamingResponse(iter([f"data: {{\"error\": \"AI is disabled in settings.\"}}\n\n"]), media_type="text/event-stream")
+        
+    system_prompts = {
+        "continue": "You are a writing assistant. Continue writing the following text naturally. Return only the new text.",
+        "expand": "You are a writing assistant. Expand the following text with more details and depth. Return only the expanded version.",
+        "summarize": "You are a writing assistant. Summarize the following text concisely. Return only the summary.",
+        "rewrite": "You are a writing assistant. Rewrite the following text to be more professional and clear. Return only the rewritten text.",
+        "translate": "You are a writing assistant. Translate the following text to Chinese (if it is English) or English (if it is Chinese). Return only the translation.",
+        "outline": "You are a writing assistant. Generate a structured outline for the following topic or text. Return only the outline.",
+        "ask": "You are a note-taking and personal knowledge base assistant. Based on the selected text and context, answer the user's intent or improve the text accordingly. Return only the result.",
+    }
+    messages = [
+        {"role": "system", "content": system_prompts.get(payload.action, "You are a helpful writing assistant.")},
+        {"role": "user", "content": f"Context: {payload.context or ''}\n\nInput: {payload.prompt}"}
+    ]
+
+    # check local ai plugin first
+    import logging
+    logging.warning(f"[DEBUG] inline_ai called. ai_enabled={ai_enabled}")
+    if ai_enabled:
+        logging.warning(f"[DEBUG] inline_ai local_ai_manager id: {id(local_ai_manager)}")
+        logging.warning(f"[DEBUG] local_ai_manager.is_ready={local_ai_manager.is_ready}")
+        if not local_ai_manager.is_ready:
+            await local_ai_manager.initialize_model()
+        if local_ai_manager.is_ready:
+            return StreamingResponse(
+                local_ai_manager.generate_chat_stream(
+                    prompt=payload.prompt,
+                    context=payload.context,
+                    action=payload.action
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "X-Accel-Buffering": "no",
+                    "Cache-Control": "no-cache, no-transform",
+                    "Connection": "keep-alive",
+                    "Content-Type": "text/event-stream"
+                }
+            )
+
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    if not model_config.api_key or not model_config.base_url:
+        return StreamingResponse(iter([f"data: {{\"error\": \"AI Config missing (API Key or Base URL is empty). Please check your settings.\"}}\n\n"]), media_type="text/event-stream")
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    
+    async def generate():
+        try:
+            # 如果本地 AI 插件已启用，则优先使用本地模型
+            if ai_enabled:
+                status = local_ai_manager.get_status()
+                if status["is_ready"]:
+                    async for chunk in local_ai_manager.generate_chat_stream_messages(messages):
+                        yield chunk
+                    return
+                elif status["is_loading"]:
+                    yield "Local AI model is still loading, please wait..."
+                    return
+                else:
+                    if status.get("error"):
+                        import json
+                        error_msg = status.get('error', 'Unknown Error')
+                        yield f'data: {json.dumps({"error": f"Local AI Error: {error_msg}. Please check your model file or disable Local AI."})}\n\n'
+                        return
+                    pass
+
+            async for chunk in ai_client.stream_chat(messages, llm_config):
+                yield f'data: {json.dumps({"text": chunk}, ensure_ascii=False)}\n\n'
+            yield 'data: [DONE]\n\n'
+        except Exception as e:
+            import json
+            error_msg = f"Inline AI Error: {str(e)}"
+            yield f'data: {json.dumps({"error": error_msg})}\n\n'
+    
+    return StreamingResponse(
+        generate(), 
+        media_type="text/event-stream", 
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+        }
+    )
+
+@router.post("/chat")
+async def global_chat(payload: AskRequest, db: Session = Depends(get_db)):
+    if not ai_enabled:
+        return StreamingResponse(iter(["AI is disabled in settings."]), media_type="text/plain")
+        
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    
+    if payload.mode == "rag":
+        results = await search_knowledge(payload.question, ai_client=ai_client, top_k=5)
+        citations = await run_in_threadpool(citations_from_results, db, results)
+        citation_block = "\n\n".join(
+            f"[{idx + 1}] {item['title']}\n{item['excerpt']}" for idx, item in enumerate(citations)
+        )
+        messages = [
+            {"role": "system", "content": "You are a personal second-brain assistant. Answer using the provided notes only. Always cite sources as [1], [2] inline."},
+            {"role": "user", "content": f"Question: {payload.question}\n\nContext:\n{citation_block}"}
+        ]
+    else:
+        citations = []
+        messages = [
+            {"role": "system", "content": "You are a helpful second-brain assistant."},
+            {"role": "user", "content": payload.question}
+        ]
+        
+    async def generate():
+        try:
+            if payload.mode == "rag":
+                import json
+                yield f"__CITATIONS__:{json.dumps(citations)}\n"
+            async for chunk in ai_client.stream_chat(messages, llm_config):
+                yield chunk
+        except Exception as e:
+            import json
+            error_msg = f"Streaming Error: {str(e)}"
+            yield f'data: {json.dumps({"error": error_msg})}\n\n'
+            
+    return StreamingResponse(
+        generate(), 
+        media_type="text/plain", 
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+        }
+    )
+
+@router.post("/tags/suggest", response_model=TagSuggestResponse)
+async def suggest_tags(payload: TagSuggestRequest, db: Session = Depends(get_db)):
+    if not ai_enabled:
+        return TagSuggestResponse(tags=[])
+        
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    tags = await ai_client.tags(payload.content, llm_config)
+    return TagSuggestResponse(tags=tags)
+
+from backend.services.spellcheck_engine import spellcheck_engine
+
+@router.post("/text/spellcheck")
+async def text_spellcheck(payload: dict):
+    """Text Spellcheck using pure rule engine (NOT gated by AI plugin toggle)"""
+    text = payload.get("text", "")
+    if not text:
+        return {"errors": []}
+
+    try:
+        # 纯规则引擎：高性能、可控、无模型依赖
+        errors = spellcheck_engine.check(text)
+        return {"errors": errors}
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error in spellcheck_engine: {str(e)}")
+        return {"errors": []}
+
+@router.post("/text/dictionary/import")
+async def import_dictionary(payload: dict):
+    """导入用户自定义词库文本并触发热更新"""
+    text = payload.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty text")
+    
+    try:
+        count = spellcheck_engine.import_from_text(text)
+        return {"status": "success", "count": count, "message": f"Successfully imported {count} rules"}
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error importing dictionary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Backward compatible route (historical naming). Keep it but DO NOT gate by ai_enabled.
+@router.post("/ai/spellcheck")
+async def ai_spellcheck(payload: dict):
+    return await text_spellcheck(payload)
+
+@router.post("/ai/suggest-tags")
+async def ai_suggest_tags(payload: dict):
+    """AI 智能标签建议"""
+    if not ai_enabled:
+        return {"tags": []}
+        
+    content = payload.get("content", "")
+    if not content:
+        return {"tags": []}
+    
+    # 构造 Prompt
+    prompt = f"Generate up to 3 tags, each max 5 characters long, based on the following text. Return them as a comma-separated string only.\n\nText: {content[:1000]}"
+    
+    full_response = ""
+    try:
+        # 使用 blocking equivalent (collecting stream)
+        async for chunk in local_ai_manager.generate_chat_stream_messages([
+            {"role": "system", "content": "You are a tagging assistant. Return ONLY a comma-separated list of tags."},
+            {"role": "user", "content": prompt}
+        ]):
+            full_response += chunk
+            
+        # 解析结果
+        tags = [t.strip() for t in full_response.split(",") if t.strip()]
+        # 限制长度和数量
+        tags = [t[:5] for t in tags][:3]
+        
+        return {"tags": tags}
+    except Exception as e:
+        print(f"[!] Error suggesting tags: {e}")
+        return {"tags": []}
+
+@router.get("/notes/{note_id}/links", response_model=list[NoteResponse])
+def get_note_links(note_id: int, db: Session = Depends(get_db)) -> list[NoteResponse]:
+    """获取当前笔记引用了哪些笔记"""
+    note = get_note(db, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    
+    # 结合手动和 AI 链接
+    target_ids = {link.target_note_id for link in note.links_from}
+    if not target_ids:
+        return []
+    
+    notes = db.scalars(select(Note).where(Note.id.in_(target_ids), Note.deleted_at.is_(None))).all()
+    return [note_to_response(n) for n in notes]
+
+@router.get("/notes/{note_id}/backlinks", response_model=list[NoteResponse])
+def get_note_backlinks(note_id: int, db: Session = Depends(get_db)) -> list[NoteResponse]:
+    """获取有哪些笔记引用了当前笔记"""
+    note = get_note(db, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    
+    # 从 NoteLink 表中查询 target_note_id 为当前笔记的记录
+    source_ids = {link.source_note_id for link in note.links_to}
+    if not source_ids:
+        return []
+    
+    notes = db.scalars(select(Note).where(Note.id.in_(source_ids), Note.deleted_at.is_(None))).all()
+    return [note_to_response(n) for n in notes]
+
+@router.get("/notes/tree", response_model=list[NoteTreeResponse])
+def get_notes_tree(db: Session = Depends(get_db)) -> list[NoteTreeResponse]:
+    # 树形接口也不返回 content
+    roots = list_notes_tree(db, include_content=False)
+    return [note_to_tree_response(note) for note in roots]
+
+@router.post("/folders", response_model=NoteResponse)
+def create_folder_api(payload: NoteCreate, db: Session = Depends(get_db)) -> NoteResponse:
+    from backend.database import with_db_retry
+    @with_db_retry(max_retries=3)
+    def do_create():
+        notebook_id = payload.notebook_id or get_or_create_default_notebook(db).id
+        return create_note(db, title=payload.title, content="", summary="", tags=payload.tags, notebook_id=notebook_id, icon="📂", type=payload.type, parent_id=payload.parent_id, is_folder=True)
+    
+    folder = do_create()
+    return note_to_response(folder)
+
+@router.get("/notes/{note_id}", response_model=NoteResponse)
+def get_note_api(note_id: int, db: Session = Depends(get_db)) -> NoteResponse:
+    """获取单条笔记详情（含 content）"""
+    note = get_note(db, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note_to_response(note)
+
+
+@router.get("/notes", response_model=list[NoteListItemResponse])
+def get_notes(property_name: str | None = None, property_value: str | None = None, db: Session = Depends(get_db)) -> list[NoteListItemResponse]:
+    filter_dict = None
+    if property_name and property_value:
+        filter_dict = {property_name: property_value}
+    # 列表接口默认不返回 content 以优化性能
+    notes = list_notes(db, filter_dict, include_content=False)
+    return [note_to_list_item_response(note) for note in notes]
+
+@router.get("/notes/{note_id}/properties", response_model=list[NotePropertyResponse])
+def get_note_properties_api(note_id: int, db: Session = Depends(get_db)) -> list[NotePropertyResponse]:
+    return [NotePropertyResponse.model_validate(p) for p in get_note_properties(db, note_id)]
+
+@router.post("/notes/{note_id}/properties", response_model=NotePropertyResponse)
+def create_note_property_api(note_id: int, payload: NotePropertyCreate, db: Session = Depends(get_db)) -> NotePropertyResponse:
+    return NotePropertyResponse.model_validate(create_note_property(db, note_id, payload.name, payload.type, payload.value))
+
+@router.patch("/notes/{note_id}/properties/{property_id}", response_model=NotePropertyResponse)
+def update_note_property_api(note_id: int, property_id: int, payload: NotePropertyUpdate, db: Session = Depends(get_db)) -> NotePropertyResponse:
+    prop = update_note_property(db, property_id, payload.name, payload.type, payload.value)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    return NotePropertyResponse.model_validate(prop)
+
+@router.delete("/notes/{note_id}/properties/{property_id}")
+def delete_note_property_api(note_id: int, property_id: int, db: Session = Depends(get_db)) -> dict:
+    if not delete_note_property(db, property_id):
+        raise HTTPException(status_code=404, detail="Property not found")
+    return {"status": "ok"}
+
+@router.get("/trash", response_model=TrashResponse)
+def get_trash(db: Session = Depends(get_db)) -> TrashResponse:
+    return TrashResponse(
+        notes=[note_to_response(note) for note in list_trashed_notes(db)],
+        notebooks=[notebook_to_response(notebook) for notebook in list_trashed_notebooks(db)],
+    )
+
+@router.get("/notebooks", response_model=list[NotebookResponse])
+def get_notebooks(db: Session = Depends(get_db)) -> list[NotebookResponse]:
+    get_or_create_default_notebook(db)
+    return [notebook_to_response(notebook) for notebook in list_notebooks(db)]
+
+@router.post("/notebooks", response_model=NotebookResponse)
+def create_notebook_api(payload: NotebookCreate, db: Session = Depends(get_db)) -> NotebookResponse:
+    return notebook_to_response(create_notebook(db, payload.name, payload.icon))
+
+@router.patch("/notebooks/{notebook_id}", response_model=NotebookResponse)
+def update_notebook_api(notebook_id: int, payload: NotebookUpdate, db: Session = Depends(get_db)) -> NotebookResponse:
+    notebook = update_notebook(db, notebook_id, payload.name, payload.icon)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    return notebook_to_response(notebook)
+
+@router.delete("/notebooks/{notebook_id}")
+def delete_notebook_api(notebook_id: int, db: Session = Depends(get_db)) -> dict:
+    notebook = soft_delete_notebook(db, notebook_id)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found or cannot delete default notebook")
+    return {"status": "ok"}
+
+@router.post("/notebooks/{notebook_id}/restore", response_model=NotebookResponse)
+def restore_notebook_api(notebook_id: int, db: Session = Depends(get_db)) -> NotebookResponse:
+    notebook = restore_notebook(db, notebook_id)
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    return notebook_to_response(notebook)
+
+@router.delete("/notebooks/{notebook_id}/purge")
+def purge_notebook_api(notebook_id: int, db: Session = Depends(get_db)) -> dict:
+    if not purge_notebook(db, notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook not found or cannot purge default notebook")
+    return {"status": "ok"}
+
+@router.post("/notes", response_model=NoteResponse)
+def create_note_api(payload: NoteCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> NoteResponse:
+    return persist_note_sync(
+        db,
+        payload.title,
+        payload.content or "",
+        background_tasks,
+        payload.notebook_id,
+        payload.icon,
+        payload.type,
+        payload.parent_id,
+        payload.is_title_manually_edited,
+        payload.tags,
+        payload.background_paper,
+        payload.sort_key,
+        payload.stickers,
+        payload.sticky_notes,
+    )
+
+@router.put("/notes/{note_id}", response_model=NoteResponse)
+def update_note_api(note_id: int, payload: NoteUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> NoteResponse:
+    existing = get_note(db, note_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Note not found")
+    
+    # 1. 快速更新基本信息 (主流程只做极速的存储操作)
+    update_data = payload.model_dump(exclude_unset=True)
+    
+    title = update_data.get("title", existing.title)
+    content = update_data.get("content", existing.content)
+    background_paper = update_data.get("background_paper", getattr(existing, "background_paper", None))
+    sort_key = update_data.get("sort_key", getattr(existing, "sort_key", None))
+    stickers = update_data.get("stickers", getattr(existing, "stickers", None))
+    sticky_notes = update_data.get("sticky_notes", getattr(existing, "sticky_notes", None))
+    icon = update_data.get("icon", existing.icon)
+    type = update_data.get("type", existing.type)
+    parent_id = update_data.get("parent_id", existing.parent_id)
+    is_title_manually_edited = update_data.get("is_title_manually_edited", (existing.is_title_manually_edited == 1))
+    tags = update_data.get("tags")
+    properties = update_data.get("properties")
+    
+    # 同步更新数据库：仅更新用户直接修改的核心字段
+    from backend.database import with_db_retry
+    @with_db_retry(max_retries=3)
+    def do_quick_update():
+        return update_note(
+            db,
+            note_id,
+            title=title,
+            content=content,
+            summary=existing.summary,
+            tags=tags,
+            icon=icon,
+            type=type,
+            parent_id=parent_id,
+            is_title_manually_edited=is_title_manually_edited,
+            properties=properties,
+            background_paper=background_paper,
+            sort_key=sort_key,
+            stickers=stickers,
+            sticky_notes=sticky_notes,
+        )
+    
+    note = do_quick_update()
+    
+    # 1.5 更新手动链接
+    manual_link_ids = extract_manual_links(content or "")
+    # 即使为空也更新，以防用户删除了所有链接
+    had_manual_links = any(link.link_type == "manual" for link in existing.links_from)
+    if manual_link_ids or had_manual_links:
+        replace_note_links(db, note_id, [(tid, 1.0) for tid in manual_link_ids], link_type="manual")
+
+    # 2. 异步执行耗时的 AI 处理 (摘要、向量化、自动链接)
+    spawn_note_indexing(
+        note.id,
+        title,
+        content or "",
+        tags=tags,
+        icon=icon,
+        type=type,
+        parent_id=parent_id,
+        is_title_manually_edited=is_title_manually_edited,
+    )
+    
+    return note_to_response(note)
+
+@router.patch("/notes/{note_id}/tags", response_model=NoteResponse)
+def update_note_tags_api(note_id: int, tags: list[str], db: Session = Depends(get_db)) -> NoteResponse:
+    note = update_note(db, note_id, tags=tags)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note_to_response(note)
+
+@router.patch("/notes/{note_id}/move", response_model=NoteResponse)
+def move_note_api(note_id: int, payload: NoteMovePayload, db: Session = Depends(get_db)) -> NoteResponse:
+    target_notebook_id = payload.notebook_id or get_or_create_default_notebook(db).id
+    note = move_note(db, note_id, target_notebook_id, payload.position, payload.parent_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note_to_response(note)
+
+@router.post("/notes/bulk-move")
+def bulk_move_notes_api(payload: BulkNoteAction, db: Session = Depends(get_db)) -> dict:
+    notebook_id = payload.notebook_id or get_or_create_default_notebook(db).id
+    notes = bulk_move_notes(db, payload.note_ids, notebook_id, payload.position, payload.parent_id)
+    return {"notes": [note_to_response(note).model_dump() for note in notes]}
+
+@router.post("/notes/bulk-delete")
+def bulk_delete_notes_api(payload: BulkNoteAction, db: Session = Depends(get_db)) -> dict:
+    notes = bulk_soft_delete_notes(db, payload.note_ids)
+    return {"notes": [note_to_response(note).model_dump() for note in notes]}
+
+@router.delete("/notes/{note_id}")
+def delete_note_api(note_id: int, db: Session = Depends(get_db)) -> dict:
+    note = soft_delete_note(db, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"status": "ok"}
+
+@router.post("/notes/{note_id}/restore", response_model=NoteResponse)
+def restore_note_api(note_id: int, db: Session = Depends(get_db)) -> NoteResponse:
+    note = restore_note(db, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note_to_response(note)
+
+@router.delete("/notes/{note_id}/purge")
+def delete_note_purge_api(note_id: int, db: Session = Depends(get_db)) -> dict:
+    if not purge_note(db, note_id):
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"status": "ok"}
+
+@router.delete("/trash/purge")
+def purge_trash_api(db: Session = Depends(get_db)) -> dict:
+    if not purge_trash(db):
+        raise HTTPException(status_code=500, detail="Failed to purge trash")
+    return {"status": "ok"}
+
+# ============================================================
+# 🎵 音乐库接口 (整合自 main.py)
+# ============================================================
+
+@router.get("/media/music-library")
+async def get_music_library():
+    music_dir = Path(settings.music_path)
+    if not music_dir.exists():
+        music_dir.mkdir(parents=True, exist_ok=True)
+    
+    tracks = []
+    # 格式支持放宽
+    extensions = {'.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac'}
+    img_extensions = {'.jpg', '.png', '.jpeg', '.webp'}
+    
+    # Sort for deterministic output
+    files = sorted(list(music_dir.iterdir()))
+    for file in files:
+        if file.suffix.lower() in extensions:
+            title = file.stem
+            cover = None
+            # Match songA.jpg or songA.png for songA.mp3
+            for img_ext in img_extensions:
+                img_file = music_dir / f"{title}{img_ext}"
+                if img_file.exists():
+                    cover = f"/api/media/static/music/{img_file.name}"
+                    break
+            
+            tracks.append({
+                "url": f"/api/media/static/music/{file.name}",
+                "title": title,
+                "artist": "本地音频",
+                "cover": cover,
+                "source": "local"
+            })
+        elif file.suffix.lower() == '.json':
+            try:
+                with open(file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    # 支持 JSON 解析库，扫描 .json 文件
+                    if "url" in data and "title" in data:
+                        tracks.append({
+                            "url": data["url"],
+                            "title": data["title"],
+                            "artist": data.get("artist", "网络直链"),
+                            "cover": data.get("cover"),
+                            "source": "network"
+                        })
+            except Exception:
+                pass
+    return tracks
+
+
+@router.post("/media/music-link")
+async def save_music_link(payload: dict):
+    """保存直链保存接口"""
+    title = payload.get("title")
+    url = payload.get("url")
+    cover = payload.get("cover")
+    if not title or not url:
+        raise HTTPException(status_code=400, detail="Title and URL are required")
+    
+    music_dir = Path(settings.music_path)
+    music_dir.mkdir(parents=True, exist_ok=True)
+    
+    json_path = music_dir / f"{title}.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "title": title, 
+            "url": url, 
+            "cover": cover, 
+            "artist": "网络直链",
+            "source": "network"
+        }, f, ensure_ascii=False, indent=2)
+    
+    return {"status": "success", "path": str(json_path)}
+
+
+@router.post("/media/music-upload")
+def upload_music(file: UploadFile = File(...), cover: UploadFile = File(None)):
+    """上传接口扩展"""
+    music_dir = Path(settings.music_path)
+    music_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 📝 修复：安全处理文件名，防止目录遍历，并确保文件写入
+    safe_filename = Path(file.filename).name if file.filename else f"upload_{uuid.uuid4().hex}"
+    audio_path = music_dir / safe_filename
+    
+    try:
+        with open(audio_path, "wb") as f:
+            f.write(file.file.read())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save audio file: {str(e)}")
+        
+    # Save cover if provided
+    cover_url = None
+    if cover and cover.filename:
+        safe_cover_name = Path(cover.filename).name
+        cover_path = music_dir / safe_cover_name
+        try:
+            with open(cover_path, "wb") as f:
+                f.write(cover.file.read())
+            cover_url = f"/api/media/static/music/{safe_cover_name}"
+        except Exception as e:
+            print(f"[!] Error saving cover: {str(e)}")
+    
+    return {
+        "status": "success",
+        "url": f"/api/media/static/music/{safe_filename}",
+        "cover": cover_url
+    }
+
+# ============================================================
+# 🎵 BGM 播放器接口
+# ============================================================
+
+@router.get("/bgm/list", response_model=list[str])
+def list_bgm():
+    """获取 BGM 文件列表"""
+    bgm_path = Path(settings.data_root) / "bgm"
+    if not bgm_path.exists():
+        bgm_path.mkdir(parents=True, exist_ok=True)
+    
+    files = []
+    for ext in ["*.mp3", "*.wav", "*.ogg"]:
+        files.extend([f.name for f in bgm_path.glob(ext)])
+    return sorted(files)
+
+@router.get("/bgm/stream/{filename}")
+def stream_bgm(filename: str):
+    """流式返回 BGM 文件"""
+    bgm_path = Path(settings.data_root) / "bgm" / filename
+    if not bgm_path.exists():
+        raise HTTPException(status_code=404, detail="BGM file not found")
+
+    # Use FileResponse to avoid tiny line-based chunks produced by iterating a binary file object.
+    return FileResponse(path=str(bgm_path), media_type="audio/mpeg", filename=filename)
+
+# ============================================================
+# 🎨 贴纸系统接口
+# ============================================================
+
+@router.get("/stickers/list", response_model=list[dict])
+def list_stickers():
+    """获取贴纸资源列表"""
+    stickers_path = Path(settings.stickers_path)
+    if not stickers_path.exists():
+        stickers_path.mkdir(parents=True, exist_ok=True)
+        # 尝试从 nova_repo/data/stickers 初始化 (如果是开发环境且 path 不对)
+        dev_data_path = PROJECT_DIR / "data" / "stickers"
+        if dev_data_path.exists() and dev_data_path != stickers_path:
+            for f in dev_data_path.glob("*.*"):
+                if f.suffix.lower() in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]:
+                    shutil.copy2(f, stickers_path / f.name)
+    
+    files = []
+    # 支持常见的图片格式
+    extensions = ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.svg"]
+    for ext in extensions:
+        for f in stickers_path.glob(ext):
+            # 排除生成的缩略图文件本身被列出
+            if f.name.endswith(".thumb.png"):
+                continue
+                
+            url = f"/api/stickers/files/{f.name}"
+            thumb_url = url
+            
+            # 动图特殊处理
+            if f.suffix.lower() in [".gif", ".webp"]:
+                thumb_name = get_or_create_thumbnail(f)
+                if thumb_name:
+                    thumb_url = f"/api/stickers/files/{thumb_name}"
+            
+            files.append({
+                "name": f.name,
+                "url": url,
+                "thumb_url": thumb_url
+            })
+    return sorted(files, key=lambda x: x["name"])
+
+@router.post("/stickers/upload")
+def upload_sticker(file: UploadFile = File(...)):
+    """上传新贴纸"""
+    try:
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+            
+        unique_name = f"{uuid.uuid4()}{ext}"
+        save_path = Path(settings.stickers_path) / unique_name
+        
+        with open(save_path, "wb") as f:
+            f.write(file.file.read())
+            
+        return {
+            "name": unique_name,
+            "url": f"/api/stickers/files/{unique_name}",
+            "original_name": file.filename
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Sticker upload failed: {str(e)}")
+
+@router.get("/stickers/files/{filename}")
+def get_sticker_file(filename: str):
+    """获取贴纸文件内容"""
+    file_path = Path(settings.stickers_path) / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Sticker not found")
+
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(filename)
+
+    # Use FileResponse to avoid tiny line-based chunks produced by iterating a binary file object.
+    return FileResponse(path=str(file_path), media_type=mime_type or "image/png", filename=filename)
+
+@router.delete("/stickers/files/{filename}")
+def delete_sticker_file(filename: str):
+    """物理删除贴纸文件"""
+    file_path = Path(settings.stickers_path) / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Sticker not found")
+    
+    try:
+        os.remove(file_path)
+        return {"status": "ok", "message": f"Sticker {filename} deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete sticker: {str(e)}")
+
+@router.get("/tasks", response_model=list[TaskResponse])
+def get_tasks(db: Session = Depends(get_db)) -> list[TaskResponse]:
+    return [TaskResponse.model_validate(task) for task in list_tasks(db)]
+
+@router.post("/tasks", response_model=TaskResponse)
+def create_task_api(payload: TaskCreate, db: Session = Depends(get_db)) -> TaskResponse:
+    return TaskResponse.model_validate(create_task(db, payload.title, payload.status, payload.priority, payload.task_type, payload.deadline))
+
+@router.post("/tasks/clear-completed")
+def clear_completed_tasks_api(db: Session = Depends(get_db)) -> dict:
+    count = clear_completed_tasks(db)
+    return {"status": "ok", "cleared_count": count}
+
+# ============================================================
+# 😄 表情包系统接口
+# ============================================================
+
+@router.post("/emoticons/upload")
+def upload_emoticon(file: UploadFile = File(...)):
+    """上传新表情"""
+    try:
+        emoticons_path = Path(settings.data_root) / "emoticons"
+        if not emoticons_path.exists():
+            emoticons_path.mkdir(parents=True, exist_ok=True)
+
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+            
+        unique_name = f"{uuid.uuid4()}{ext}"
+        save_path = emoticons_path / unique_name
+        
+        with open(save_path, "wb") as f:
+            f.write(file.file.read())
+            
+        return {
+            "name": unique_name,
+            "url": f"/api/emoticons/static/files/{unique_name}",
+            "original_name": file.filename
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Emoticon upload failed: {str(e)}")
+
+@router.get("/emoticons/files/{filename}")
+def get_emoticon_file(filename: str):
+    """获取表情文件内容"""
+    emoticons_path = Path(settings.data_root) / "emoticons"
+    file_path = emoticons_path / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Emoticon not found")
+
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(filename)
+
+    # Use FileResponse to avoid tiny line-based chunks produced by iterating a binary file object.
+    return FileResponse(path=str(file_path), media_type=mime_type or "image/png", filename=filename)
+
+@router.delete("/emoticons/files/{filename}")
+def delete_emoticon_file(filename: str):
+    """物理删除表情文件"""
+    emoticons_path = Path(settings.data_root) / "emoticons"
+    file_path = emoticons_path / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Emoticon not found")
+    
+    try:
+        os.remove(file_path)
+        return {"status": "ok", "message": f"Emoticon {filename} deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete emoticon: {str(e)}")
+
+@router.patch("/tasks/{task_id:int}", response_model=TaskResponse)
+def update_task_api(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)) -> TaskResponse:
+    task = update_task(db, task_id, title=payload.title, status=payload.status, priority=payload.priority, task_type=payload.task_type, deadline=payload.deadline)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return TaskResponse.model_validate(task)
+
+@router.delete("/tasks/{task_id:int}")
+def delete_task_api(task_id: int, db: Session = Depends(get_db)) -> dict:
+    if not delete_task(db, task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": "ok"}
+
+@router.post("/agent")
+async def agent_api(payload: AgentRequest, db: Session = Depends(get_db)) -> dict:
+    response = await run_agent(db, payload.goal, ai_client)
+    return response.model_dump()
+
+@router.get("/model-config")
+def get_model_config_api(db: Session = Depends(get_db)) -> dict:
+    config = get_or_create_model_config(db)
+    return {
+        "provider": config.provider,
+        "api_key": config.api_key,
+        "base_url": config.base_url,
+        "model_name": config.model_name,
+    }
+
+@router.post("/model-config")
+def update_model_config_api(payload: ModelConfigPayload, db: Session = Depends(get_db)) -> dict:
+    config = update_model_config(db, payload.provider, payload.api_key, payload.base_url, payload.model_name)
+    return {
+        "provider": config.provider,
+        "api_key": config.api_key,
+        "base_url": config.base_url,
+        "model_name": config.model_name,
+    }
+
+# ============================================================
+# 🖥️ 系统管理接口 (Windows 窗口化增强)
+# ============================================================
+
+@router.get("/system/logs")
+async def get_system_logs():
+    """获取实时日志 Buffer"""
+    return {"logs": log_buffer.get_logs()}
+
+@router.post("/system/switch-data-path")
+async def switch_data_path(payload: dict):
+    """切换数据存储路径。如果目标路径不存在数据库，则迁移；如果已存在，则直接切换。"""
+    new_path_str = payload.get("data_path")
+    if not new_path_str:
+        raise HTTPException(status_code=400, detail="Missing data_path")
+    
+    new_path = Path(new_path_str).resolve()
+    old_path = settings.data_root.resolve()
+    
+    if new_path == old_path:
+        return {"status": "ok", "message": "Path is same"}
+
+    try:
+        # 1. 确保新路径父目录存在
+        new_path.mkdir(parents=True, exist_ok=True)
+        
+        # 2. 检查目标路径是否已存在数据库
+        target_db = new_path / "second_brain.db"
+        if not target_db.exists():
+            # 目标路径没有数据库，执行“迁移”逻辑：将当前 data_root 的所有文件剪切/移动到新路径
+            if old_path.exists():
+                print(f"[*] Moving data from {old_path} to {new_path}...")
+                # 遍历旧目录下的所有文件和文件夹
+                for item in old_path.iterdir():
+                    dest = new_path / item.name
+                    # 如果目标已存在，先尝试删除（通常新目录下不会有同名文件）
+                    if dest.exists():
+                        if dest.is_dir():
+                            shutil.rmtree(dest)
+                        else:
+                            dest.unlink()
+                    
+                    # 尝试移动
+                    try:
+                        shutil.move(str(item), str(dest))
+                    except Exception:
+                        if item.is_dir():
+                            shutil.copytree(item, dest, dirs_exist_ok=True)
+                            shutil.rmtree(item)
+                        else:
+                            shutil.copy2(item, dest)
+                            item.unlink()
+        else:
+            # 目标路径已存在数据库，直接切换指向新路径（相当于自动读取新路径的旧数据）
+            print(f"[*] Target database exists at {target_db}, switching engine to use it.")
+
+        # 3. 更新 data_config.json
+        config_path = get_custom_config_path()
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump({"data_path": str(new_path)}, f, indent=4)
+            
+        return {"status": "ok", "message": "路径切换成功，请重启软件生效"}
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to switch data path: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to switch data path: {str(e)}")
+
+@router.get("/system/version")
+async def get_system_version():
+    """读取 VERSION.txt 或 metadata.json 获取详细版本信息"""
+    import sys
+    from backend.config import resource_root
+    
+    res_root = resource_root()
+    metadata_file = res_root / "metadata.json"
+    version_file = res_root / "VERSION.txt"
+    
+    info = {
+        "version": "unknown",
+        "git_commit": "unknown",
+        "build_time": "unknown",
+        "executable": sys.executable,
+    }
+    
+    try:
+        if metadata_file.exists():
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                info.update(data)
+        elif version_file.exists():
+            info["version"] = version_file.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        print(f"[!] Error reading version info: {str(e)}")
+        
+    return info
+
+@router.post("/system/update")
+async def system_update(force: bool = False):
+    """检查更新或执行 git pull origin main"""
+    import shutil as _shutil
+    import sys as _sys
+    import os as _os
+    
+    try:
+        # 1. 确定正确的 git 仓库根目录
+        from backend.config import runtime_root
+        if getattr(_sys, "frozen", False):
+            repo_dir = str(runtime_root())
+        else:
+            repo_dir = str(PROJECT_DIR)
+        
+        # 2. 检查 git 是否可用 (增强检测：主动寻找安装路径)
+        git_cmd = _shutil.which("git")
+        if not git_cmd:
+            # 常见安装路径探测 (Windows)
+            possible_git_paths = [
+                "C:\\Program Files\\Git\\bin\\git.exe",
+                "C:\\Program Files\\Git\\cmd\\git.exe",
+                "C:\\Program Files (x86)\\Git\\bin\\git.exe",
+                "C:\\Program Files (x86)\\Git\\cmd\\git.exe",
+                _os.path.join(_os.environ.get("LOCALAPPDATA", ""), "Programs", "Git", "cmd", "git.exe")
+            ]
+            for path in possible_git_paths:
+                if _os.path.exists(path):
+                    git_cmd = path
+                    break
+        
+        if not git_cmd:
+            return {"status": "error", "output": "❌ 系统未找到 git 命令。\n请确保已安装 Git 并在终端中可访问。\n下载地址: https://git-scm.com/download/win"}
+        
+        # 3. 检查 .git 目录是否存在
+        from pathlib import Path as _Path
+        if not (_Path(repo_dir) / ".git").exists():
+            return {"status": "error", "output": f"❌ 未找到 Git 仓库（.git 目录不存在）\n查找路径: {repo_dir}\n\n请确认您是从源码目录运行，而非只复制了 .exe 文件。"}
+        
+        print(f"[*] Using git at: {git_cmd}")
+        print(f"[*] Git repo dir: {repo_dir}")
+        print("[*] Checking for updates...")
+        
+        # 4. 先执行 fetch 获取远程状态 (设置超时)
+        try:
+            subprocess.run([git_cmd, "fetch", "origin", "main"], cwd=repo_dir, capture_output=True, timeout=15)
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "output": "❌ git fetch 超时 (15s)，请检查网络连接后再重试。"}
+        
+        # 5. 比较本地和远程版本
+        local_res = subprocess.run([git_cmd, "rev-parse", "HEAD"], cwd=repo_dir, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+        remote_res = subprocess.run([git_cmd, "rev-parse", "origin/main"], cwd=repo_dir, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+        
+        local = local_res.stdout.strip()
+        remote = remote_res.stdout.strip()
+        
+        if not local or not remote:
+            return {"status": "error", "output": f"❌ 获取版本号失败。请确保当前分支是 main，且网络通畅。\nLocal: {local[:7]}\nRemote: {remote[:7]}"}
+
+        if local == remote and not force:
+            return {"status": "up-to-date", "output": f"🎉 已是最新版本！无需更新。\n当前版本: {local[:7]}"}
+
+        if not force:
+            return {"status": "pending", "output": f"🔍 发现新版本！\n当前版本: {local[:7]}\n最新版本: {remote[:7]}\n\n请点击「确认更新」下载并安装最新代码。"}
+
+        # 6. 执行更新
+        process = subprocess.run(
+            [git_cmd, "pull", "origin", "main"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore'
+        )
+        output = process.stdout + "\n" + process.stderr
+        print(output)
+        return {"status": "ok", "output": f"✅ 更新完成！\n{output}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/system/restart")
+async def system_restart():
+    """执行 fast_update.bat 脚本"""
+    import sys as _sys
+    try:
+        from backend.config import runtime_root
+        if getattr(_sys, "frozen", False):
+            repo_dir = runtime_root()
+        else:
+            repo_dir = PROJECT_DIR
+            
+        bat_path = repo_dir / "fast_update.bat"
+        if not bat_path.exists():
+            raise HTTPException(status_code=404, detail=f"fast_update.bat not found at {bat_path}")
+        
+        print(f"[*] Restarting application via {bat_path}...")
+        # 启动脚本，不阻塞当前进程
+        subprocess.Popen([str(bat_path)], shell=True, cwd=str(repo_dir))
+        return {"status": "ok", "message": "Restarting..."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/system/open-file")
+async def open_file(payload: dict):
+    """通过系统默认程序打开文件"""
+    file_path_str = payload.get("path")
+    if not file_path_str:
+        raise HTTPException(status_code=400, detail="Missing file path")
+    
+    # 允许打开本地绝对路径或相对于上传目录的路径
+    p = Path(file_path_str)
+    if not p.is_absolute():
+        p = Path(settings.uploads_path) / p.name
+    
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {p}")
+
+    try:
+        import platform
+        system = platform.system()
+        if system == "Windows":
+            os.startfile(str(p))
+        elif system == "Darwin":  # macOS
+            subprocess.run(["open", str(p)])
+        else:  # Linux
+            subprocess.run(["xdg-open", str(p)])
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open file: {str(e)}")
+
+@router.post("/system/import-data")
+async def import_data(payload: dict):
+    """从源目录导入数据并覆盖当前数据。"""
+    source_path_str = payload.get("source_path")
+    if not source_path_str:
+        raise HTTPException(status_code=400, detail="Missing source_path")
+    
+    source_path = Path(source_path_str).resolve()
+    data_root = settings.data_root.resolve()
+    
+    # 1. 验证路径
+    if not source_path.exists() or not source_path.is_dir():
+        raise HTTPException(status_code=400, detail="Invalid source path")
+    
+    # 2. 检查源目录是否包含数据库文件
+    if not (source_path / "second_brain.db").exists():
+        raise HTTPException(status_code=400, detail="second_brain.db not found in source path")
+    
+    # 3. 检查源目录是否等于目标目录
+    if source_path == data_root:
+        raise HTTPException(status_code=400, detail="选择的导入目录与当前数据目录相同，无需导入")
+
+    try:
+        # 4. 关闭所有数据库连接以便文件操作
+        engine.dispose()
+        
+        # 5. 复制数据
+        print(f"[*] Importing data from {source_path} to {data_root}...")
+        
+        # 定义要复制的文件和目录
+        items_to_copy = ["second_brain.db", "chroma_store", "uploads"]
+        
+        for item_name in items_to_copy:
+            src_item = source_path / item_name
+            dest_item = data_root / item_name
+            
+            if src_item.exists():
+                if src_item.is_dir():
+                    # 如果目标存在，先删除
+                    if dest_item.exists():
+                        shutil.rmtree(dest_item)
+                    shutil.copytree(src_item, dest_item)
+                else:
+                    # 如果目标是文件且存在，直接复制会覆盖
+                    shutil.copy2(src_item, dest_item)
+                    
+        return {"status": "ok", "message": "数据导入成功，请重启软件以加载新数据"}
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to import data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to import data: {str(e)}")
+
+
+# ============================================================
+# 🤖 AI 设置相关接口
+# ============================================================
+
+@router.post("/ai/toggle-plugin")
+async def toggle_ai_plugin(payload: dict, background_tasks: BackgroundTasks):
+    """切换 AI 插件启用状态或更新配置 (集成预置模型，实现瞬间就绪)"""
+    global ai_enabled
+    enabled = payload.get("enabled", ai_enabled)
+    num_ctx = payload.get("num_ctx")
+    
+    ai_enabled = enabled
+    
+    # 持久化到 ai_config.json
+    config_path = Path(settings.data_root) / "ai_config.json"
+    config = {"enabled": ai_enabled, "preferred_engine": "auto", "num_ctx": 8192}
+    if config_path.exists():
+        try:
+            with open(config_path, "r") as f:
+                old_config = json.load(f)
+                config.update(old_config)
+        except:
+            pass
+    
+    config["enabled"] = ai_enabled
+    if num_ctx is not None:
+        config["num_ctx"] = num_ctx
+    
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    import logging
+    logging.warning(f"[DEBUG] toggle_ai_plugin called. ai_enabled={ai_enabled}, num_ctx={num_ctx}")
+    
+    if ai_enabled:
+        # 如果只是更新 num_ctx，我们也需要重新初始化模型以使配置生效
+        if num_ctx is not None:
+            await local_ai_manager.stop_ollama_server() # 重启以应用新配置
+
+        logging.warning(f"[DEBUG] toggle_ai_plugin local_ai_manager id: {id(local_ai_manager)}")
+
+        # 1) 确保集成的 Ollama 引擎已下载（ensure_ollama.py）仅限 Windows
+        try:
+            base_dir = Path(__file__).resolve().parent.parent.parent
+            script_path = base_dir / "ensure_ollama.py"
+            if script_path.exists() and sys.platform == "win32":
+                print(f"[*] Dynamically running {script_path}...")
+                process = await asyncio.create_subprocess_exec(sys.executable, str(script_path), cwd=str(base_dir))
+                await process.wait()
+        except Exception as e:
+            print(f"[!] Failed to run ensure_ollama dynamically: {e}")
+
+        # 2) 启动 Ollama（若未启动）
+        try:
+            await local_ai_manager.start_ollama_server()
+        except Exception as e:
+            print(f"[!] Failed to start Ollama server: {e}")
+
+        # 3) 初始化本地 AI
+        await local_ai_manager.initialize_model()
+    else:
+        # 物理级解耦：如果关闭，则彻底停止后端 AI 进程
+        print("[*] AI Plugin disabled. Killing AI processes for physical decoupling...")
+        await local_ai_manager.stop_ollama_server()
+            
+    return {"status": "success", "enabled": ai_enabled, "num_ctx": config.get("num_ctx", 8192)}
+
+@router.post("/ai/toggle")
+async def ai_toggle_api(payload: dict, background_tasks: BackgroundTasks):
+    """Alias for toggle-plugin to match Phase 2 requirements"""
+    return await toggle_ai_plugin(payload, background_tasks)
+
+@router.post("/ai/update-ollama")
+async def update_ollama_api():
+    """手动触发强制更新 Ollama 引擎"""
+    try:
+        base_dir = Path(__file__).resolve().parent.parent.parent
+        script_path = base_dir / "ensure_ollama.py"
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail="Update script not found")
+        
+        # 强制更新逻辑：带上 --force 参数
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, str(script_path), "--force",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(base_dir)
+        )
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode == 0:
+            return {"status": "success", "output": stdout.decode()}
+        else:
+            return {"status": "error", "message": stderr.decode()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/ai/plugin-status")
+async def get_ai_plugin_status():
+    """获取 AI 插件启用状态"""
+    local_status = local_ai_manager.get_status()
+    
+    # 读取 num_ctx
+    num_ctx = 8192
+    config_path = Path(settings.data_root) / "ai_config.json"
+    if config_path.exists():
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                num_ctx = config.get("num_ctx", 8192)
+        except:
+            pass
+            
+    return {
+        "enabled": ai_enabled,
+        "num_ctx": num_ctx,
+        "local_ai_ready": local_status["is_ready"],
+        "local_ai_loading": local_status["is_loading"],
+        "local_ai_error": local_status["error"]
+    }
+
+@router.get("/ai/hardware-check")
+async def hardware_check():
+    """检测系统硬件是否符合 AI 运行要求"""
+    try:
+        # 获取架构
+        arch = platform.machine()
+        # 获取核心数
+        cpu_count = psutil.cpu_count(logical=False) or psutil.cpu_count()
+        # 获取总内存 (GB)
+        total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+        
+        # 判定标准：内存 >= 4GB
+        compatible = total_ram_gb >= 4
+        
+        status_msg = "完美兼容！" if compatible else "内存不足，可能运行缓慢。"
+        details = f"架构: {arch}, 内存: {total_ram_gb:.1f}GB, 核心: {cpu_count}. 状态: {status_msg}"
+        
+        return {
+            "compatible": compatible,
+            "details": details
+        }
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Hardware check failed: {str(e)}")
+        return {
+            "compatible": False,
+            "details": f"检测失败: {str(e)}"
+        }
+
+
+# --- Template Routes ---
+
+@router.get("/templates", response_model=list[NoteTemplateResponse])
+def list_templates_api(db: Session = Depends(get_db)):
+    """List all note templates."""
+    return list_templates(db)
+
+
+@router.post("/templates", response_model=NoteTemplateResponse)
+def create_template_api(payload: NoteTemplateCreate, db: Session = Depends(get_db)):
+    """Create a new note template."""
+    return create_template(
+        db,
+        name=payload.name,
+        content=payload.content,
+        icon=payload.icon,
+        category=payload.category
+    )
+
+
+@router.patch("/templates/{template_id}", response_model=NoteTemplateResponse)
+def update_template_api(template_id: int, payload: NoteTemplateUpdate, db: Session = Depends(get_db)):
+    """Update an existing note template."""
+    template = update_template(
+        db,
+        template_id=template_id,
+        name=payload.name,
+        content=payload.content,
+        icon=payload.icon,
+        category=payload.category
+    )
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+
+@router.delete("/templates/{template_id}")
+def delete_template_api(template_id: int, db: Session = Depends(get_db)):
+    """Delete a note template."""
+    success = delete_template(db, template_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"status": "success"}

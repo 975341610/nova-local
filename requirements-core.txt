@@ -1,0 +1,16 @@
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.38
+pydantic==2.10.6
+pydantic-settings==2.7.1
+python-multipart==0.0.20
+httpx==0.28.1
+chromadb==0.6.3
+pypdf==5.3.0
+keyboard==0.13.5
+plyer==2.1.0
+rembg==2.0.60
+onnxruntime==1.20.1
+Pillow==11.1.0
+psutil
+pyahocorasick==2.0.0

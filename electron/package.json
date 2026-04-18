@@ -1,0 +1,15 @@
+{
+  "name": "nova-electron-shell",
+  "private": true,
+  "version": "0.1.0",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/fsBridge.test.js"
+  },
+  "dependencies": {
+    "electron": "^36.2.1",
+    "yaml": "^2.8.1"
+  }
+}

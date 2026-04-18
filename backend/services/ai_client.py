@@ -1,0 +1,482 @@
+from __future__ import annotations
+
+import json
+import logging
+import asyncio
+import socket
+from urllib.parse import urlparse
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from backend.config import get_settings
+from backend.services.offline_ai import answer_from_context, build_embedding, generate_tags, plan_tasks, summarize_text
+
+
+# Setup AI logger
+def get_ai_logger():
+    settings = get_settings()
+    log_file = settings.data_root / "ai_error.log"
+    logger = logging.getLogger("ai_client")
+    if not logger.handlers:
+        logger.setLevel(logging.WARNING)
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
+    return logger
+
+
+class AIClient:
+    def __init__(self) -> None:
+        self.settings = get_settings()
+        self.logger = get_ai_logger()
+        # 优化连接池：增加最大连接数和保持存活的连接数，提升并发稳定性
+        limits = httpx.Limits(max_keepalive_connections=50, max_connections=100)
+        
+        # 禁用 SSL 验证以兼容各种代理环境 (针对打包后的证书问题)
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        verify = False
+        
+        # 注意：在某些环境中 trust_env=True 可能会因为环境变量解析失败导致启动崩溃
+        try:
+            self.client = httpx.AsyncClient(timeout=60.0, trust_env=True, limits=limits, verify=verify)
+            self.trust_env = True
+        except Exception:
+            self.client = httpx.AsyncClient(timeout=60.0, trust_env=False, limits=limits, verify=verify)
+            self.trust_env = False
+
+    def _get_active_config(self, config: dict[str, str] | None = None) -> dict[str, str]:
+        active = config or {}
+        api_key = active.get("api_key") or self.settings.openclaw_api_key
+        base_url = (active.get("base_url") or self.settings.openclaw_base_url).strip().rstrip("/")
+        model_name = active.get("model_name") or self.settings.default_model
+
+        # 1. URL Normalization: Ensure scheme exists
+        if base_url and not (base_url.startswith("http://") or base_url.startswith("https://")):
+            # If user provided something like 1.2.3.4 or api.openai.com
+            base_url = f"https://{base_url}"
+
+        # 2. Heuristic: Strip full API endpoints if accidentally pasted
+        # Users often paste "https://api.openai.com/v1/chat/completions"
+        for suffix in ["/chat/completions", "/embeddings"]:
+            if base_url.endswith(suffix):
+                base_url = base_url[: -len(suffix)].rstrip("/")
+
+        # 3. Auto-append /v1 if missing (heuristic for common OpenAI proxies)
+        if base_url and not base_url.endswith("/v1") and "vpsairobot.com" in base_url:
+            base_url = f"{base_url}/v1"
+
+        return {
+            "api_key": api_key,
+            "base_url": base_url,
+            "model_name": model_name
+        }
+
+    def _can_call_remote(self, config: dict[str, str] | None = None) -> bool:
+        conf = self._get_active_config(config)
+        return bool(conf["api_key"] and conf["base_url"])
+
+    def _obfuscate_url(self, url: str) -> str:
+        """Hide host components if it's sensitive, but show domain for debugging."""
+        parsed = urlparse(url)
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+    async def _check_connectivity(self, url: str) -> str | None:
+        """
+        Verify DNS resolution and TCP connectivity to the base URL host.
+        Returns an error message if failed, else None.
+        """
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        if not host:
+            return "Error: Invalid Hostname. Please check your AI API base URL setting."
+
+        # Detect Anthropic Endpoint
+        if "api.anthropic.com" in host or "/v1/messages" in url:
+            return (
+                "Error: 检测到 Anthropic 官方端点。\n"
+                "当前版本仅支持 OpenAI 兼容协议。若要使用 Claude，请配置 OpenAI 兼容的转发网关 "
+                "(如 One-API, New-API) 或中转服务，并将 Base URL 指向该网关。"
+            )
+
+        try:
+            # 1. DNS Resolution Check
+            resolved = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: socket.getaddrinfo(host, port)
+            )
+            ips = {info[4][0] for info in resolved}
+            self.logger.info(f"DNS resolved {host} to: {list(ips)}")
+
+            # 2. TCP Connect Check
+            # Windows error 10061 (Connection Refused) or 10060 (Timeout)
+            def _tcp_check():
+                with socket.create_connection((host, port), timeout=5) as _:
+                    return True
+            
+            await asyncio.get_running_loop().run_in_executor(None, _tcp_check)
+            return None
+        except socket.gaierror as e:
+            err_str = f"域名解析失败 ({host}): [Errno {e.errno}] {str(e)}"
+            self.logger.error(f"Connectivity Check Failed (DNS): {err_str}")
+            return f"Error: {err_str}\n请检查网络连接或域名是否输入正确。"
+        except (socket.timeout, TimeoutError):
+            err_str = f"连接超时 ({host}:{port})"
+            self.logger.error(f"Connectivity Check Failed (Timeout): {err_str}")
+            return f"Error: {err_str}\n请确认 API 地址可达，或检查代理/防火墙设置。"
+        except ConnectionRefusedError:
+            err_str = f"连接被拒绝 ({host}:{port})"
+            self.logger.error(f"Connectivity Check Failed (Refused): {err_str}")
+            return f"Error: {err_str}\n目标服务器拒绝连接，请检查端口号或代理配置。"
+        except Exception as e:
+            err_str = f"连接预检异常: {str(e)}"
+            self.logger.error(f"Connectivity Check Failed: {err_str}")
+            return f"Error: {err_str}"
+
+    async def embed(self, text: str, config: dict[str, str] | None = None) -> list[float]:
+        if not self._can_call_remote(config):
+            return build_embedding(text, self.settings.embedding_dimension)
+
+        conf = self._get_active_config(config)
+        full_url = f"{conf['base_url']}/embeddings"
+        
+        # Pre-flight check
+        conn_error = await self._check_connectivity(conf['base_url'])
+        if conn_error:
+            self.logger.error(f"Embed Pre-flight Error: {conn_error}")
+            return build_embedding(text, self.settings.embedding_dimension)
+
+        headers = {"Authorization": f"Bearer {conf['api_key']}", "Content-Type": "application/json"}
+        payload = {
+            "model": conf["model_name"],
+            "input": text,
+        }
+        try:
+            self.logger.info(f"Embed Request | URL: {self._obfuscate_url(full_url)} | trust_env: {self.trust_env}")
+            response = await self.client.post(full_url, headers=headers, json=payload, timeout=10.0)
+            if response.status_code != 200:
+                err_msg = self._translate_error(response)
+                self.logger.error(f"Embed Status Error: {err_msg} | URL: {conf['base_url']}")
+                return build_embedding(text, self.settings.embedding_dimension)
+            body = response.json()
+            return body["data"][0]["embedding"]
+        except Exception as e:
+            self.logger.error(f"Embed Exception: {str(e)} | URL: {conf['base_url']}")
+            return build_embedding(text, self.settings.embedding_dimension)
+
+    async def summarize(self, text: str, config: dict[str, str] | None = None) -> str:
+        prompt = f"Summarize this note in two concise sentences:\n\n{text[:4000]}"
+        response = await self._chat_completion(prompt, config)
+        return response or summarize_text(text)
+
+    async def tags(self, text: str, config: dict[str, str] | None = None) -> list[str]:
+        prompt = (
+            "Analyze the following note and extract up to 5 core keywords as tags. "
+            "Return ONLY a JSON array of strings. Each tag should be a single word or a short phrase. "
+            "Do not include full sentences or summary text. "
+            "Example: [\"AI\", \"Productivity\", \"Recipe\"]\n\n"
+            f"Content: {text[:3000]}"
+        )
+        response = await self._chat_completion(prompt, config)
+        if response:
+            try:
+                # Basic cleaning of the response in case AI includes markdown formatting
+                cleaned_response = response.strip()
+                if cleaned_response.startswith("```json"):
+                    cleaned_response = cleaned_response[7:-3].strip()
+                elif cleaned_response.startswith("```"):
+                    cleaned_response = cleaned_response[3:-3].strip()
+                
+                data = json.loads(cleaned_response)
+                if isinstance(data, list):
+                    # Deduplicate and clean
+                    unique_tags = []
+                    seen = set()
+                    for item in data:
+                        tag = str(item).strip().title() # Normalize to Title Case
+                        if tag.lower() not in seen and tag:
+                            unique_tags.append(tag)
+                            seen.add(tag.lower())
+                    return unique_tags[:5]
+            except json.JSONDecodeError:
+                pass
+        return generate_tags(text)
+
+    async def answer(self, question: str, contexts: list[dict[str, Any]], config: dict[str, str] | None = None) -> str:
+        # If no contexts provided but remote is configured, we allow remote call (Chat mode)
+        if not contexts and not self._can_call_remote(config):
+            return answer_from_context(question, contexts)
+        
+        # If remote is available, use it even if contexts is empty
+        if self._can_call_remote(config):
+            if contexts:
+                citation_block = "\n\n".join(
+                    f"[{idx + 1}] {item['title']}\n{item['excerpt']}" for idx, item in enumerate(contexts)
+                )
+                prompt = (
+                    "You are a personal second-brain assistant. Answer using the provided notes only. "
+                    "Always cite sources as [1], [2] inline.\n\n"
+                    f"Question: {question}\n\nContext:\n{citation_block}"
+                )
+            else:
+                prompt = question # Global Chat mode
+
+            response = await self._chat_completion(prompt, config)
+            # If we get an error string, return it directly instead of fallback
+            if response and response.startswith("Error:"):
+                return response
+            if response:
+                return response
+
+        return answer_from_context(question, contexts)
+
+    async def plan(self, goal: str, contexts: list[dict[str, Any]], config: dict[str, str] | None = None) -> list[str]:
+        if not self._can_call_remote(config):
+            return plan_tasks(goal, [item["excerpt"] for item in contexts])
+        prompt = (
+            "Break the user goal into 3 to 5 actionable TODO items. Return a JSON array of strings only.\n\n"
+            f"Goal: {goal}\n\nKnowledge:\n" + "\n".join(item["excerpt"] for item in contexts[:4])
+        )
+        response = await self._chat_completion(prompt, config)
+        if response:
+            try:
+                cleaned_response = response.strip()
+                if cleaned_response.startswith("```json"):
+                    cleaned_response = cleaned_response[7:-3].strip()
+                elif cleaned_response.startswith("```"):
+                    cleaned_response = cleaned_response[3:-3].strip()
+                
+                data = json.loads(cleaned_response)
+                if isinstance(data, list):
+                    return [str(item) for item in data][:5]
+            except json.JSONDecodeError:
+                pass
+        return plan_tasks(goal, [item["excerpt"] for item in contexts])
+
+    def _format_exception(self, e: Exception, url: str) -> str:
+        err_msg = str(e)
+        if "All connection attempts failed" in err_msg:
+            parsed = urlparse(url)
+            host = parsed.hostname
+            return (
+                f"Error: 无法连接到服务器 ({host})。所有连接尝试均失败。\n"
+                "可能原因：\n"
+                "1. 系统代理设置不正确 (或正在拦截该请求)。\n"
+                "2. 目标 API 域名在中国大陆可能无法直接访问，需要正确配置 VPN/中转网关。\n"
+                "3. 填写的 Base URL 端口号错误 (默认 https 为 443)。"
+            )
+        return f"Error: {err_msg}"
+
+    def _handle_cloudflare_error(self, response: httpx.Response) -> str | None:
+        """
+        Identify HTML error pages (Content-Type text/html or response body contains <!DOCTYPE html>)
+        and provide a concise Chinese error message for Cloudflare 521-524.
+        """
+        content_type = response.headers.get("Content-Type", "")
+        body_peek = response.text[:200]
+        
+        is_html = "text/html" in content_type or "<!DOCTYPE html>" in body_peek
+        if not is_html and response.status_code < 500:
+            return None
+
+        # Detect Cloudflare specific errors
+        server = response.headers.get("Server", "").lower()
+        is_cloudflare = "cloudflare" in server
+        
+        status_code = response.status_code
+        if is_cloudflare or is_html:
+            if status_code == 521:
+                return "Error: [Cloudflare 521] Web Server Is Down (源站 Web 服务已关闭)。"
+            elif status_code == 522:
+                return "Error: [Cloudflare 522] Connection Timed Out (源站连接超时)。建议检查 base_url 是否可直接访问，或尝试更换 OpenAI-compatible 网关。"
+            elif status_code == 523:
+                return "Error: [Cloudflare 523] Origin Is Unreachable (源站不可达)。请检查您的网关/中转服务器配置。"
+            elif status_code == 524:
+                return "Error: [Cloudflare 524] A Timeout Occurred (源站响应超时)。"
+            
+            if is_html:
+                return f"Error: 收到非预期 HTML 响应 (HTTP {status_code})。请检查 API 地址是否正确，或是否被代理/防火墙拦截。"
+                
+        return None
+
+    def _translate_error(self, response: httpx.Response) -> str:
+        code = response.status_code
+        # 常见错误码翻译
+        translations = {
+            400: "请求参数错误 (Bad Request)",
+            401: "API Key无效或未授权",
+            403: "访问被拒绝 (Forbidden)",
+            404: "模型名或路径错误 (Not Found)",
+            429: "请求频率过高/达到限额",
+            500: "模型服务内部错误 (Internal Server Error)",
+            502: "网关错误 (Bad Gateway)",
+            503: "服务不可用 (Service Unavailable)",
+            504: "网关超时 (Gateway Timeout)",
+        }
+        
+        cn_msg = translations.get(code, "未知 API 错误")
+        
+        # 提取原生报错信息
+        raw_info = ""
+        try:
+            # httpx response.json() 自动处理 utf-8。
+            # 如果是智谱等厂商返回的含有 \u60a8 的字符串，json.loads 会正确反序列化为中文。
+            body = response.json()
+            if isinstance(body, dict):
+                error_obj = body.get("error")
+                if isinstance(error_obj, dict):
+                    raw_info = error_obj.get("message") or str(error_obj)
+                else:
+                    raw_info = body.get("message") or body.get("msg") or str(body)
+        except Exception:
+            raw_info = response.text[:200]
+
+        if raw_info:
+            return f"API Error {code}: {cn_msg}。详细信息: {raw_info}"
+        return f"API Error {code}: {cn_msg}"
+
+    async def _chat_completion(self, prompt: str, config: dict[str, str] | None = None) -> str:
+        conf = self._get_active_config(config)
+        if not (conf["api_key"] and conf["base_url"]):
+            return "Error: AI Config (API Key or Base URL) is missing in Settings."
+
+        # Pre-flight check
+        conn_error = await self._check_connectivity(conf['base_url'])
+        if conn_error:
+            return conn_error
+
+        full_url = f"{conf['base_url']}/chat/completions"
+        headers = {"Authorization": f"Bearer {conf['api_key']}", "Content-Type": "application/json"}
+        payload = {
+            "model": conf["model_name"],
+            "messages": [
+                {"role": "system", "content": "You are a reliable second-brain assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+        }
+        try:
+            self.logger.info(f"Chat Request | URL: {self._obfuscate_url(full_url)} | trust_env: {self.trust_env}")
+            response = await self.client.post(full_url, headers=headers, json=payload, timeout=30.0)
+            if response.status_code != 200:
+                # Check for Cloudflare/HTML errors first
+                cf_error = self._handle_cloudflare_error(response)
+                if cf_error:
+                    self.logger.error(f"Chat CF/HTML Error: {cf_error} | URL: {conf['base_url']}")
+                    return cf_error
+
+                # Use the new global error translator
+                err_msg = self._translate_error(response)
+                self.logger.error(f"Chat Error: {err_msg} | URL: {conf['base_url']}")
+                return err_msg
+            body = response.json()
+            return body["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            err_msg = self._format_exception(e, conf['base_url'])
+            self.logger.error(f"Chat Exception: {err_msg} | URL: {conf['base_url']}")
+            return err_msg
+
+    async def stream_chat(self, messages: list[dict[str, str]], config: dict[str, str] | None = None):
+        conf = self._get_active_config(config)
+        
+        def format_sse_error(msg: str) -> str:
+            return f'data: {json.dumps({"error": msg}, ensure_ascii=False)}\n\n'
+
+        if not (conf["api_key"] and conf["base_url"]):
+            yield format_sse_error("AI Config missing (API Key or Base URL is empty). Please check your settings.")
+            return
+
+        # Pre-flight check
+        conn_error = await self._check_connectivity(conf['base_url'])
+        if conn_error:
+            yield format_sse_error(conn_error)
+            return
+
+        full_url = f"{conf['base_url']}/chat/completions"
+        headers = {"Authorization": f"Bearer {conf['api_key']}", "Content-Type": "application/json"}
+        payload = {
+            "model": conf["model_name"],
+            "messages": messages,
+            "temperature": 0.7,
+            "stream": True,
+        }
+        
+        first_token_timeout = 60.0 # Increased for stability (e.g. DeepSeek R1)
+        
+        for attempt in range(3):
+            try:
+                self.logger.info(f"Stream Request (Attempt {attempt+1}) | URL: {self._obfuscate_url(full_url)} | trust_env: {self.trust_env}")
+                async with self.client.stream("POST", full_url, headers=headers, json=payload, timeout=60.0) as response:
+                    # Handle non-200 status codes manually to yield SSE error
+                    if response.status_code != 200:
+                        await response.aread() # Must read content before accessing response.text
+                        
+                        cf_error = self._handle_cloudflare_error(response)
+                        if cf_error:
+                            self.logger.error(f"Stream CF/HTML Error: {cf_error} | URL: {conf['base_url']}")
+                            yield format_sse_error(cf_error)
+                            return
+
+                        # Use the new global error translator
+                        err_msg = self._translate_error(response)
+                        self.logger.error(f"Stream Status Error: {err_msg} | URL: {conf['base_url']}")
+                        yield format_sse_error(err_msg)
+                        return
+
+                    got_first_token = False
+                    lines_iter = response.aiter_lines()
+                    
+                    while True:
+                        try:
+                            if not got_first_token:
+                                line = await asyncio.wait_for(anext(lines_iter), timeout=first_token_timeout)
+                            else:
+                                line = await anext(lines_iter)
+                        except (asyncio.TimeoutError, TimeoutError):
+                            raise Exception(f"First token timeout after {first_token_timeout}s")
+                        except StopAsyncIteration:
+                            break
+                        
+                        line = line.strip()
+                        if not line:
+                            continue
+                        
+                        # Compatible with both SSE (data: {JSON}) and JSONL ({JSON})
+                        content_str = line
+                        if line.startswith("data:"):
+                            content_str = line[5:].strip()
+                        
+                        if content_str == "[DONE]":
+                            break
+                        
+                        try:
+                            if not content_str.startswith("{"):
+                                continue
+                                
+                            data = json.loads(content_str)
+                            choices = data.get("choices", [])
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                got_first_token = True
+                                yield content
+                        except json.JSONDecodeError:
+                            if line.startswith("data:"):
+                                self.logger.warning(f"Failed to parse SSE line: {line}")
+                            continue
+                return # Success
+            except Exception as e:
+                err_msg = self._format_exception(e, conf['base_url'])
+                if attempt == 2:
+                    self.logger.error(f"Stream Error: {err_msg} | URL: {conf['base_url']}")
+                    yield format_sse_error(err_msg)
+                else:
+                    self.logger.warning(f"Stream attempt {attempt+1} failed: {err_msg}. Retrying...")
+                    await asyncio.sleep(1)
+                    continue

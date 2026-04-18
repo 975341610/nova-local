@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+node_modules/
+dist/
+.env
+data/
+backend/backend.log
+.venv/
+*.log
+out.txt
+cc/
