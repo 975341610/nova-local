@@ -4,7 +4,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { EditorView } from '@tiptap/pm/view';
 import { Node } from '@tiptap/pm/model';
 import { api } from '../../../lib/api';
-import { buildSpellcheckSuggestionDetail, findSpellcheckErrorAtPos } from './spellcheckHelpers';
+import { findSpellcheckErrorAtPos } from './spellcheckHelpers';
 
 export const spellcheckPluginKey = new PluginKey('ai-spellcheck-plugin');
 
@@ -20,6 +20,13 @@ export interface SpellcheckError {
   reason: string;
   from: number;
   to: number;
+}
+
+export interface SpellcheckTextblockTarget {
+  text: string;
+  rangeFrom: number;
+  rangeTo: number;
+  typeName: string;
 }
 
 function buildDecorationsFromErrors(errors: SpellcheckError[]) {
@@ -101,6 +108,197 @@ export function findSpellcheckErrorFromTarget(
   return errors.find((error) => error.from === from && error.to === to) ?? null;
 }
 
+export function findSpellcheckErrorFromCoords(
+  errors: SpellcheckError[],
+  posAtCoords: ((coords: { left: number; top: number }) => { pos: number } | null) | null | undefined,
+  coords: { left: number; top: number },
+) {
+  if (!posAtCoords) {
+    return null;
+  }
+
+  const resolved = posAtCoords(coords);
+  return findSpellcheckErrorAtPos(errors, resolved?.pos);
+}
+
+export function findSpellcheckErrorFromRenderedRects(
+  errors: SpellcheckError[],
+  coordsAtPos: ((pos: number) => { left: number; right: number; top: number; bottom: number }) | null | undefined,
+  point: { left: number; top: number },
+  tolerance = 2,
+) {
+  if (!coordsAtPos) {
+    return null;
+  }
+
+  for (const error of errors) {
+    try {
+      const startRect = coordsAtPos(error.from);
+      const endRect = coordsAtPos(error.to);
+      const left = Math.min(startRect.left, endRect.left) - tolerance;
+      const right = Math.max(startRect.right, endRect.right) + tolerance;
+      const top = Math.min(startRect.top, endRect.top) - tolerance;
+      const bottom = Math.max(startRect.bottom, endRect.bottom) + tolerance;
+
+      if (point.left >= left && point.left <= right && point.top >= top && point.top <= bottom) {
+        return error;
+      }
+    } catch (_error) {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+export function findSpellcheckErrorFromCaretPoint(
+  errors: SpellcheckError[],
+  resolvePosAtPoint: ((point: { left: number; top: number }) => number | null) | null | undefined,
+  point: { left: number; top: number },
+) {
+  if (!resolvePosAtPoint) {
+    return null;
+  }
+
+  const pos = resolvePosAtPoint(point);
+  return findSpellcheckErrorAtPos(errors, pos);
+}
+
+export function findSpellcheckErrorFromPointProbes(
+  resolveErrorAtPoint: ((point: { left: number; top: number }) => SpellcheckError | null) | null | undefined,
+  point: { left: number; top: number },
+  probes: Array<{ dx: number; dy: number }> = [
+    { dx: 0, dy: 0 },
+    { dx: 0, dy: -4 },
+    { dx: 0, dy: -8 },
+    { dx: -3, dy: 0 },
+    { dx: 3, dy: 0 },
+    { dx: 0, dy: 4 },
+    { dx: -3, dy: -4 },
+    { dx: 3, dy: -4 },
+  ],
+) {
+  if (!resolveErrorAtPoint) {
+    return null;
+  }
+
+  for (const probe of probes) {
+    const match = resolveErrorAtPoint({
+      left: point.left + probe.dx,
+      top: point.top + probe.dy,
+    });
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+export function findSpellcheckErrorsInRange(
+  errors: SpellcheckError[],
+  rangeFrom: number,
+  rangeTo: number,
+) {
+  return errors.filter((error) => error.from >= rangeFrom && error.to <= rangeTo);
+}
+
+export function findClosestSpellcheckErrorByPoint(
+  errors: SpellcheckError[],
+  coordsAtPos: ((pos: number) => { left: number; right: number; top: number; bottom: number }) | null | undefined,
+  point: { left: number; top: number },
+  maxDistance = 18,
+) {
+  if (!coordsAtPos || errors.length === 0) {
+    return null;
+  }
+
+  let closestError: SpellcheckError | null = null;
+  let closestDistance = Number.POSITIVE_INFINITY;
+
+  for (const error of errors) {
+    try {
+      const startRect = coordsAtPos(error.from);
+      const endRect = coordsAtPos(error.to);
+      const left = Math.min(startRect.left, endRect.left);
+      const right = Math.max(startRect.right, endRect.right);
+      const top = Math.min(startRect.top, endRect.top);
+      const bottom = Math.max(startRect.bottom, endRect.bottom);
+
+      const dx = point.left < left ? left - point.left : point.left > right ? point.left - right : 0;
+      const dy = point.top < top ? top - point.top : point.top > bottom ? point.top - bottom : 0;
+      const distance = Math.hypot(dx, dy);
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestError = error;
+      }
+    } catch (_error) {
+      continue;
+    }
+  }
+
+  return closestDistance <= maxDistance ? closestError : null;
+}
+
+export function findSpellcheckErrorsMatchingBlockText(
+  errors: SpellcheckError[],
+  blockText: string | null | undefined,
+) {
+  const normalized = blockText?.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  return errors.filter((error) => normalized.includes(error.word));
+}
+
+export function collectSpellcheckTextblocks(doc: Node) {
+  const blocks: SpellcheckTextblockTarget[] = [];
+
+  doc.descendants((node: Node, pos: number) => {
+    const text = node.textContent?.trim();
+    if (node.isTextblock && text) {
+      blocks.push({
+        text: node.textContent,
+        rangeFrom: pos + 1,
+        rangeTo: pos + node.nodeSize - 1,
+        typeName: node.type.name,
+      });
+    }
+    return true;
+  });
+
+  return blocks;
+}
+
+export function getSpellcheckTextblockAtPos(doc: Node, pos: number) {
+  let matched: SpellcheckTextblockTarget | null = null;
+
+  doc.descendants((node: Node, nodePos: number) => {
+    const text = node.textContent?.trim();
+    if (!node.isTextblock || !text) {
+      return true;
+    }
+
+    const rangeFrom = nodePos + 1;
+    const rangeTo = nodePos + node.nodeSize - 1;
+    if (pos >= rangeFrom && pos <= rangeTo) {
+      matched = {
+        text: node.textContent,
+        rangeFrom,
+        rangeTo,
+        typeName: node.type.name,
+      };
+      return false;
+    }
+
+    return true;
+  });
+
+  return matched;
+}
+
 export function mergeSpellcheckErrorsForRange(
   existingErrors: SpellcheckError[],
   nextErrors: SpellcheckError[],
@@ -128,22 +326,25 @@ export function mapSpellcheckErrors(
     .filter((error) => error.to > error.from);
 }
 
-function mapSpellcheckResultsToParagraph(
-  view: EditorView,
+export function mapSpellcheckResultsToParagraph(
+  view: EditorView | null,
   text: string,
   errors: Array<{ word: string; suggestion: string; reason: string; offset: number }>,
+  explicitRangeFrom?: number | null,
 ) {
   const mappedErrors: SpellcheckError[] = [];
   const decorations: Decoration[] = [];
-  let latestStartPos = -1;
+  let latestStartPos = typeof explicitRangeFrom === 'number' ? explicitRangeFrom - 1 : -1;
 
-  view.state.doc.descendants((node: Node, pos: number) => {
-    if (node.isBlock && node.textContent === text) {
-      latestStartPos = pos;
-      return false;
-    }
-    return true;
-  });
+  if (latestStartPos === -1 && view) {
+    view.state.doc.descendants((node: Node, pos: number) => {
+      if (node.isBlock && node.textContent === text) {
+        latestStartPos = pos;
+        return false;
+      }
+      return true;
+    });
+  }
 
   if (latestStartPos === -1) {
     return { mappedErrors, decorations, rangeFrom: null, rangeTo: null };
@@ -180,12 +381,17 @@ export const AISpellcheck = Extension.create<AISpellcheckOptions>({
       errors: [] as SpellcheckError[],
       isChecking: false,
       isDisabled: false,
-      async runCheck(view: EditorView, text: string) {
+      async runCheck(view: EditorView, text: string, explicitRangeFrom?: number | null) {
         if (isGlobalSpellcheckDisabled || this.isChecking || this.isDisabled) return;
         this.isChecking = true;
         try {
           const result = await api.spellcheck(text);
-          const { mappedErrors, rangeFrom, rangeTo } = mapSpellcheckResultsToParagraph(view, text, result.errors || []);
+          const { mappedErrors, rangeFrom, rangeTo } = mapSpellcheckResultsToParagraph(
+            view,
+            text,
+            result.errors || [],
+            explicitRangeFrom,
+          );
 
           if (rangeFrom !== null && rangeTo !== null) {
             this.errors = mergeSpellcheckErrorsForRange(this.errors, mappedErrors, rangeFrom, rangeTo);
@@ -220,27 +426,6 @@ export const AISpellcheck = Extension.create<AISpellcheckOptions>({
     const { options, storage } = this;
     let debounceTimer: any = null;
 
-    const openSuggestionForError = (
-      view: EditorView,
-      error: SpellcheckError,
-      targetRect?: Pick<DOMRect, 'top' | 'left' | 'right' | 'bottom'> | null,
-    ) => {
-      const startCoords = targetRect ?? view.coordsAtPos(error.from);
-      const endCoords = targetRect ?? view.coordsAtPos(error.to);
-      const noteIdAttr = view.dom.closest('[data-note-id]')?.getAttribute('data-note-id');
-      const parsedNoteId = noteIdAttr ? Number(noteIdAttr) : null;
-      const detail = buildSpellcheckSuggestionDetail(error, startCoords, endCoords);
-
-      window.dispatchEvent(new CustomEvent('open-spellcheck-suggestion', {
-        detail: {
-          ...detail,
-          noteId: Number.isFinite(parsedNoteId) ? parsedNoteId : null,
-        },
-      }));
-
-      return true;
-    };
-
     return [
       new Plugin({
         key: spellcheckPluginKey,
@@ -271,47 +456,19 @@ export const AISpellcheck = Extension.create<AISpellcheckOptions>({
           decorations(state) {
             return spellcheckPluginKey.getState(state);
           },
-          handleClick: (view, pos, _event) => {
-            const error = findSpellcheckErrorAtPos(storage.errors, pos);
-            if (error) {
-              return openSuggestionForError(view, error);
-            }
-            return false;
-          },
           handleDOMEvents: {
-            click: (view, event) => {
-              if (isGlobalSpellcheckDisabled || storage.isDisabled) return false;
-              if (!(event instanceof MouseEvent)) return false;
-
-              const parsedError = parseSpellcheckErrorFromTarget(event.target);
-              const marker = findSpellcheckMarkerFromTarget(event.target);
-              if (parsedError && marker) {
-                return openSuggestionForError(view, parsedError, marker.getBoundingClientRect());
-              }
-
-              const domMatchedError = findSpellcheckErrorFromTarget(storage.errors, event.target);
-              if (domMatchedError) {
-                return openSuggestionForError(view, domMatchedError);
-              }
-
-              const pos = view.posAtCoords({ left: event.clientX, top: event.clientY });
-              const error = findSpellcheckErrorAtPos(storage.errors, pos?.pos);
-              if (error) {
-                return openSuggestionForError(view, error);
-              }
-              return false;
-            },
             compositionend: (view, _event) => {
               if (isGlobalSpellcheckDisabled || storage.isDisabled) return false;
               // Trigger spellcheck immediately when Chinese input method completion
               const { selection } = view.state;
               const node = selection.$from.parent;
+              const rangeFrom = selection.$from.start();
               
               if (node.type.name === 'paragraph' && node.textContent.trim().length > 0) {
                 // We use a small delay to let the DOM update before reading content
                 setTimeout(() => {
                   if (isGlobalSpellcheckDisabled || storage.isDisabled) return;
-                  this.storage.runCheck(view, node.textContent);
+                  this.storage.runCheck(view, node.textContent, rangeFrom);
                 }, 100);
               }
               return false;
@@ -347,7 +504,7 @@ export const AISpellcheck = Extension.create<AISpellcheckOptions>({
                 // Only check if it's a paragraph and has content
                 if (node.type.name !== 'paragraph' || node.textContent.trim().length === 0) return;
                 
-                await storage.runCheck(view, node.textContent);
+                await storage.runCheck(view, node.textContent, state.selection.$from.start());
               }, options.debounceMs);
             },
             destroy: () => {

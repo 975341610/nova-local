@@ -58,13 +58,14 @@ import { EditorHeader } from '../editor/EditorHeader';
 import { PropertyPanel } from '../editor/PropertyPanel';
 import { getSuggestionConfig } from '../notion/SlashMenuConfig';
 import { getNoteLinkSuggestionConfig } from './extensions/NoteLinkConfig';
+import { buildPendingSwitchSavePayload, shouldApplySavedDraftToCurrentNote, syncLatestDraftWithIncomingNote } from '../../lib/editorDraftSync';
 import { promptCompat } from '../../lib/promptCompat';
 import { useAI } from '../../contexts/AIContext';
 import { TableOfContents } from './components/TableOfContents';
 import { EmoticonPanel } from '../editor/EmoticonPanel';
 import { SpellcheckSuggestionCard } from './components/SpellcheckSuggestionCard';
-import { isSpellcheckDetailForNote } from './extensions/spellcheckHelpers';
-import { findSpellcheckMarkerFromTarget, parseSpellcheckErrorFromTarget } from './extensions/AISpellcheck';
+import { buildSpellcheckSuggestionDetail, findSpellcheckErrorAtPos } from './extensions/spellcheckHelpers';
+import { collectSpellcheckTextblocks, findClosestSpellcheckErrorByPoint, findSpellcheckErrorFromCaretPoint, findSpellcheckErrorFromCoords, findSpellcheckErrorFromPointProbes, findSpellcheckErrorFromRenderedRects, findSpellcheckErrorFromTarget, findSpellcheckErrorsInRange, findSpellcheckErrorsMatchingBlockText, findSpellcheckMarkerFromTarget, getSpellcheckTextblockAtPos, parseSpellcheckErrorFromTarget } from './extensions/AISpellcheck';
 import {
   dragHandleComputePositionConfig,
   getDragHandleElement,
@@ -519,6 +520,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [isEmoticonPanelOpen, setIsEmoticonPanelOpen] = useState(false);
   const [backgroundPaper, setBackgroundPaper] = useState<BackgroundPaperType>(note?.background_paper || 'none');
   const [spellcheckError, setSpellcheckError] = useState<{ error: any, rect: any } | null>(null);
+  const [editorViewReadyToken, setEditorViewReadyToken] = useState(0);
   const blockMenuRef = useRef<HTMLDivElement>(null);
   const emoticonPanelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -530,6 +532,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   slashItemsRef.current = NOVA_BLOCK_SLASH_ITEMS;
   
   // 淇濇寔瀵规渶鏂?note 鐨勫紩鐢紝闃叉鍦?useEditor 闂寘涓嬁鍒版棫鐨?state 瀵艰嚧灞炴€ц瑕嗙洊
+  const [prevNoteId, setPrevNoteId] = useState<number | string | undefined>(note?.id);
   const latestNoteRef = useRef(note);
   const isSavingRef = useRef(false);
   const queuedPayloadRef = useRef<any | null>(null);
@@ -583,8 +586,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
 
   useEffect(() => {
-    latestNoteRef.current = note;
-  }, [note]);
+    latestNoteRef.current = syncLatestDraftWithIncomingNote(latestNoteRef.current, note, prevNoteId);
+  }, [note, prevNoteId]);
 
   const handleStickersChange = useCallback((newStickers: StickerData[]) => {
     setStickers(newStickers);
@@ -772,10 +775,14 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       // @ts-ignore
       editor.commands.ensureHeadingIds();
       updateOutline(editor);
+      setEditorViewReadyToken((value) => value + 1);
     },
     editorProps: {
       attributes: {
-        class: 'novablock-editor prose prose-stone dark:prose-invert max-w-none focus:outline-none min-h-[500px] w-full mx-auto pt-4 px-12 mb-32 font-sans text-foreground selection:bg-primary/20'
+        class: 'novablock-editor prose prose-stone dark:prose-invert max-w-none focus:outline-none min-h-[500px] w-full mx-auto pt-4 px-12 mb-32 font-sans text-foreground selection:bg-primary/20',
+        spellcheck: 'false',
+        autocorrect: 'off',
+        autocapitalize: 'off',
       },
       handleKeyDown: (view, event) => {
         // `/e` + Enter -> 鎵撳紑琛ㄦ儏闈㈡澘锛堥樆姝㈡崲琛岋紝骞跺垹闄よЕ鍙戞枃鏈級
@@ -815,6 +822,91 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       return null;
     }
   }, [editor]);
+
+  const getSpellcheckPosFromCaretPoint = useCallback((point: { left: number; top: number }) => {
+    if (!editor || editor.isDestroyed || !editor.isInitialized) {
+      return null;
+    }
+
+    const documentLike = editor.view.dom.ownerDocument ?? document;
+    try {
+      if (typeof documentLike.caretPositionFromPoint === 'function') {
+        const caret = documentLike.caretPositionFromPoint(point.left, point.top);
+        if (caret?.offsetNode) {
+          return editor.view.posAtDOM(caret.offsetNode, caret.offset ?? 0);
+        }
+      }
+
+      const anyDocument = documentLike as Document & {
+        caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      };
+      if (typeof anyDocument.caretRangeFromPoint === 'function') {
+        const range = anyDocument.caretRangeFromPoint(point.left, point.top);
+        if (range?.startContainer) {
+          return editor.view.posAtDOM(range.startContainer, range.startOffset ?? 0);
+        }
+      }
+    } catch (_error) {
+      return null;
+    }
+
+    return null;
+  }, [editor]);
+
+  const getSpellcheckTextblockFromTarget = useCallback((target: EventTarget | null) => {
+    if (!editor || editor.isDestroyed || !editor.isInitialized) {
+      return null;
+    }
+
+    const targetLike = target as {
+      closest?: (selector: string) => HTMLElement | null;
+      parentElement?: HTMLElement | null;
+    } | null;
+    const element = typeof Element !== 'undefined' && target instanceof Element
+      ? target
+      : typeof globalThis.Node !== 'undefined' && target instanceof globalThis.Node
+        ? target.parentElement
+        : typeof targetLike?.closest === 'function'
+          ? targetLike
+          : targetLike?.parentElement ?? null;
+
+    if (!element || typeof element.closest !== 'function') {
+      return null;
+    }
+
+    const blockElement = element.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th');
+    if (!blockElement) {
+      return null;
+    }
+
+    try {
+      const blockPos = editor.view.posAtDOM(blockElement, 0);
+      return getSpellcheckTextblockAtPos(editor.state.doc, blockPos + 1) as { text: string; rangeFrom: number } | null;
+    } catch (_error) {
+      return null;
+    }
+  }, [editor]);
+
+  const getSpellcheckBlockTextFromTarget = useCallback((target: EventTarget | null) => {
+    const targetLike = target as {
+      closest?: (selector: string) => HTMLElement | null;
+      parentElement?: HTMLElement | null;
+      textContent?: string | null;
+    } | null;
+    const element = typeof Element !== 'undefined' && target instanceof Element
+      ? target
+      : typeof globalThis.Node !== 'undefined' && target instanceof globalThis.Node
+        ? target.parentElement
+        : typeof targetLike?.closest === 'function'
+          ? targetLike
+          : targetLike?.parentElement ?? null;
+
+    if (!element || typeof element.closest !== 'function') {
+      return null;
+    }
+
+    return element.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th')?.textContent ?? null;
+  }, []);
 
   const scheduleDragHandleReposition = useCallback(() => {
     const editorDom = getEditorViewDom();
@@ -1186,19 +1278,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     };
     window.addEventListener('ai-action', handleAIAction);
 
-    const handleSpellcheckOpen = (e: any) => {
-      if (e.detail?.noteId == null || isSpellcheckDetailForNote(note?.id ?? null, e.detail)) {
-        setSpellcheckError(e.detail);
-      }
-    };
-    window.addEventListener('open-spellcheck-suggestion', handleSpellcheckOpen);
-
     return () => {
       window.removeEventListener('add-sticky-note', handleAddSticker as EventListener);
       window.removeEventListener('open-emoticon-panel', handleOpenEmoticon);
       window.removeEventListener('ai-write', handleAIWrite as EventListener);
       window.removeEventListener('ai-action', handleAIAction);
-      window.removeEventListener('open-spellcheck-suggestion', handleSpellcheckOpen);
     };
   }, [editor, stickers, stickyNotes, handleStickersChange, handleStickyNotesChange, note?.id, onSave]);
 
@@ -1221,41 +1305,230 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }
 
     editorDom.removeAttribute('data-note-id');
-  }, [getEditorViewDom, note?.id]);
+  }, [getEditorViewDom, note?.id, editor, editorViewReadyToken]);
 
   useEffect(() => {
     const editorDom = getEditorViewDom();
-    if (!editorDom) {
+    if (!editorDom || !editor || editor.isDestroyed || !editor.isInitialized) {
+      console.info('[spellcheck-debug] listener-skip', {
+        noteId: note?.id ?? null,
+        hasEditor: Boolean(editor),
+        hasEditorDom: Boolean(editorDom),
+        isDestroyed: Boolean(editor?.isDestroyed),
+        isInitialized: Boolean(editor?.isInitialized),
+      });
       return;
     }
 
-    const handleSpellcheckMarkerClick = (event: MouseEvent) => {
-      const marker = findSpellcheckMarkerFromTarget(event.target);
-      const parsedError = parseSpellcheckErrorFromTarget(event.target);
-      if (!marker || !parsedError) {
+    console.info('[spellcheck-debug] listener-bound', {
+      noteId: note?.id ?? null,
+      aiErrors: ((editor.storage as any)?.aiSpellcheck?.errors ?? []).length,
+    });
+
+    const handleSpellcheckMarkerMouseDown = async (event: MouseEvent) => {
+      if (event.button !== 0) {
         return;
       }
 
+      const marker = findSpellcheckMarkerFromTarget(event.target);
+      const cachedErrors = ((editor.storage as any)?.aiSpellcheck?.errors ?? []);
+      const clickedPos = editor.view?.posAtCoords?.({ left: event.clientX, top: event.clientY })?.pos ?? null;
+      const clickedBlockFromTarget = getSpellcheckTextblockFromTarget(event.target);
+      const clickedBlockTextFromTarget = getSpellcheckBlockTextFromTarget(event.target);
+
+      let parsedError = marker
+        ? (
+          parseSpellcheckErrorFromTarget(event.target)
+          ?? findSpellcheckErrorFromTarget(cachedErrors, event.target)
+        )
+        : findSpellcheckErrorFromCoords(
+          cachedErrors,
+          editor.view?.posAtCoords?.bind(editor.view),
+          { left: event.clientX, top: event.clientY },
+        );
+
+      if (!parsedError) {
+        const targetBlockErrors = clickedBlockFromTarget
+          ? findSpellcheckErrorsInRange(
+            cachedErrors,
+            clickedBlockFromTarget.rangeFrom,
+            clickedBlockFromTarget.rangeFrom + clickedBlockFromTarget.text.length,
+          )
+          : [];
+
+        if (targetBlockErrors.length === 1) {
+          parsedError = targetBlockErrors[0];
+        } else if (targetBlockErrors.length > 1) {
+          parsedError = findClosestSpellcheckErrorByPoint(
+            targetBlockErrors,
+            editor.view?.coordsAtPos?.bind(editor.view),
+            { left: event.clientX, top: event.clientY },
+          );
+        }
+      }
+
+      if (!parsedError) {
+        const textMatchedErrors = findSpellcheckErrorsMatchingBlockText(cachedErrors, clickedBlockTextFromTarget);
+        if (textMatchedErrors.length === 1) {
+          parsedError = textMatchedErrors[0];
+        } else if (textMatchedErrors.length > 1) {
+          parsedError = findClosestSpellcheckErrorByPoint(
+            textMatchedErrors,
+            editor.view?.coordsAtPos?.bind(editor.view),
+            { left: event.clientX, top: event.clientY },
+          );
+        }
+      }
+
+      if (!parsedError) {
+        parsedError = findSpellcheckErrorFromPointProbes(
+          (point) => findSpellcheckErrorFromCaretPoint(
+            cachedErrors,
+            getSpellcheckPosFromCaretPoint,
+            point,
+          ),
+          { left: event.clientX, top: event.clientY },
+        );
+      }
+
+      if (!parsedError) {
+        parsedError = findSpellcheckErrorFromRenderedRects(
+          cachedErrors,
+          editor.view?.coordsAtPos?.bind(editor.view),
+          { left: event.clientX, top: event.clientY },
+        );
+      }
+
+      if (!parsedError && typeof clickedPos === 'number') {
+        const spellcheckStorage = (editor.storage as any)?.aiSpellcheck;
+        const clickedBlock = getSpellcheckTextblockAtPos(editor.state.doc, clickedPos) as { text: string; rangeFrom: number } | null;
+        const clickedBlockText = clickedBlock ? clickedBlock.text : null;
+        const clickedBlockRangeFrom = clickedBlock ? clickedBlock.rangeFrom : null;
+        const clickedBlockRangeTo = clickedBlock ? clickedBlock.rangeFrom + clickedBlock.text.length : null;
+
+        if (clickedBlockText && typeof clickedBlockRangeFrom === 'number' && spellcheckStorage?.runCheck) {
+          try {
+            await spellcheckStorage.runCheck(editor.view, clickedBlockText, clickedBlockRangeFrom);
+            const refreshedErrors = ((editor.storage as any)?.aiSpellcheck?.errors ?? []);
+            parsedError = findSpellcheckErrorAtPos(refreshedErrors, clickedPos);
+            if (!parsedError && typeof clickedBlockRangeTo === 'number') {
+              const blockErrors = findSpellcheckErrorsInRange(
+                refreshedErrors,
+                clickedBlockRangeFrom,
+                clickedBlockRangeTo,
+              );
+              parsedError = blockErrors.length === 1
+                ? blockErrors[0]
+                : findClosestSpellcheckErrorByPoint(
+                  blockErrors,
+                  editor.view?.coordsAtPos?.bind(editor.view),
+                  { left: event.clientX, top: event.clientY },
+                );
+            }
+          } catch (_error) {
+            // Ignore and fall through to debug logging below.
+          }
+        }
+      }
+
+      if (!marker && !parsedError) {
+        let blockErrorsCount = 0;
+        if (clickedBlockFromTarget) {
+          blockErrorsCount = findSpellcheckErrorsInRange(
+            cachedErrors,
+            clickedBlockFromTarget.rangeFrom,
+            clickedBlockFromTarget.rangeFrom + clickedBlockFromTarget.text.length,
+          ).length;
+        } else if (typeof clickedPos === 'number') {
+          const clickedBlock = getSpellcheckTextblockAtPos(editor.state.doc, clickedPos) as { text: string; rangeFrom: number } | null;
+          if (clickedBlock) {
+            blockErrorsCount = findSpellcheckErrorsInRange(
+              cachedErrors,
+              clickedBlock.rangeFrom,
+              clickedBlock.rangeFrom + clickedBlock.text.length,
+            ).length;
+          }
+        }
+        console.info('[spellcheck-debug] non-ai-click', {
+          noteId: note?.id ?? null,
+          targetNode: (event.target as any)?.nodeName ?? null,
+          targetClass: (event.target as any)?.className ?? null,
+          aiErrors: cachedErrors.length,
+          blockErrors: blockErrorsCount,
+        });
+        return;
+      }
+
+      if (!parsedError) {
+        console.info('[spellcheck-debug] marker-hit-without-error', {
+          noteId: note?.id ?? null,
+          targetClass: (event.target as any)?.className ?? null,
+        });
+        return;
+      }
+
+      console.info('[spellcheck-debug] marker-hit', {
+        noteId: note?.id ?? null,
+        word: parsedError.word,
+        suggestion: parsedError.suggestion,
+        from: parsedError.from,
+        to: parsedError.to,
+      });
+
       event.preventDefault();
       event.stopPropagation();
+      event.stopImmediatePropagation?.();
 
-      const rect = marker.getBoundingClientRect();
-      setSpellcheckError({
-        error: parsedError,
-        rect: {
-          top: rect.top,
-          left: rect.left,
-          width: rect.width,
-          height: rect.height,
-        },
-      });
+      const rect = marker
+        ? marker.getBoundingClientRect()
+        : (() => {
+          try {
+            const startRect = editor.view.coordsAtPos(parsedError.from);
+            const endRect = editor.view.coordsAtPos(parsedError.to);
+            return {
+              top: Math.min(startRect.top, endRect.top),
+              left: Math.min(startRect.left, endRect.left),
+              right: Math.max(startRect.right, endRect.right),
+              bottom: Math.max(startRect.bottom, endRect.bottom),
+              width: Math.max(endRect.right - startRect.left, 0),
+              height: Math.max(startRect.bottom - startRect.top, 0),
+            };
+          } catch (_error) {
+            return {
+              top: event.clientY,
+              left: event.clientX,
+              right: event.clientX,
+              bottom: event.clientY,
+              width: 0,
+              height: 0,
+            };
+          }
+        })();
+      setSpellcheckError(buildSpellcheckSuggestionDetail(
+        parsedError,
+        rect,
+        rect,
+      ));
     };
 
-    editorDom.addEventListener('click', handleSpellcheckMarkerClick, true);
+    editorDom.addEventListener('mousedown', handleSpellcheckMarkerMouseDown, true);
     return () => {
-      editorDom.removeEventListener('click', handleSpellcheckMarkerClick, true);
+      editorDom.removeEventListener('mousedown', handleSpellcheckMarkerMouseDown, true);
     };
-  }, [getEditorViewDom, note?.id]);
+  }, [getEditorViewDom, getSpellcheckBlockTextFromTarget, getSpellcheckPosFromCaretPoint, getSpellcheckTextblockFromTarget, note?.id, editor, editorViewReadyToken]);
+
+  useEffect(() => {
+    if (!spellcheckError) {
+      return;
+    }
+
+    console.info('[spellcheck-debug] popup-state-set', {
+      noteId: note?.id ?? null,
+      word: spellcheckError.error?.word ?? null,
+      suggestion: spellcheckError.error?.suggestion ?? null,
+      rect: spellcheckError.rect ?? null,
+    });
+  }, [note?.id, spellcheckError]);
 
   useEffect(() => {
     if (!editor || editor.isDestroyed || !editor.isInitialized || !note?.id) {
@@ -1272,17 +1545,20 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         return;
       }
 
-      editor.state.doc.descendants((node: any) => {
-        if (node.type?.name === 'paragraph' && node.textContent?.trim()) {
-          try {
-            void spellcheckStorage.runCheck(editor.view, node.textContent);
-          } catch (_error) {
-            return false;
+      const spellcheckTargets = collectSpellcheckTextblocks(editor.state.doc);
+      void (async () => {
+        for (const target of spellcheckTargets) {
+          if (editor.isDestroyed || !editor.isInitialized) {
+            break;
           }
-          return false;
+
+          try {
+            await spellcheckStorage.runCheck(editor.view, target.text, target.rangeFrom);
+          } catch (_error) {
+            break;
+          }
         }
-        return true;
-      });
+      })();
     }, 250);
 
     return () => window.clearTimeout(timerId);
@@ -1302,8 +1578,14 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       setIsSaving(true);
       try {
         const savedNote = await onSave(nextPayload);
-        latestNoteRef.current = savedNote ? { ...nextPayload, ...savedNote } : nextPayload;
-        if (editor?.getHTML() === latestNoteRef.current?.content) {
+        const mergedSavedNote = savedNote ? { ...nextPayload, ...savedNote } : nextPayload;
+        if (shouldApplySavedDraftToCurrentNote(latestNoteRef.current, mergedSavedNote)) {
+          latestNoteRef.current = mergedSavedNote;
+        }
+        if (
+          shouldApplySavedDraftToCurrentNote(latestNoteRef.current, mergedSavedNote)
+          && editor?.getHTML() === mergedSavedNote?.content
+        ) {
           setIsDirty(false);
         }
         setLastSavedAt(new Date().toLocaleTimeString());
@@ -1571,21 +1853,42 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     return () => cancelAnimationFrame(animId);
   }, []);
 
-  const [prevNoteId, setPrevNoteId] = useState<number | string | undefined>(note?.id);
-
   // 鍚屾鍐呭 (浠呭湪鍒囨崲绗旇锛屾垨缂栬緫鍣ㄥ畬鍏ㄤ负绌轰絾鏈夊唴瀹规椂)
   useEffect(() => {
     if (!editor || !note?.id) return;
     
     if (note.id !== prevNoteId) {
+      const pendingSwitchSave = buildPendingSwitchSavePayload({
+        currentDraft: latestNoteRef.current,
+        previousNoteId: prevNoteId,
+        isDirty,
+        html: editor.getHTML(),
+      });
+
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+
+      if (pendingSwitchSave) {
+        queuedPayloadRef.current = null;
+        void onSave(pendingSwitchSave).catch((err) => {
+          console.error('Failed to flush previous note before switching:', err);
+          onNotify?.('切换前保存旧笔记失败', 'error');
+        });
+      }
+
       editor.commands.setContent(note.content || '<p></p>', { emitUpdate: false });
       // 鍒囨崲鍐呭鍚庯紝寮哄埗琛ラ綈 ID 骞舵洿鏂板ぇ绾?
       // @ts-ignore
       editor.commands.ensureHeadingIds();
+      latestNoteRef.current = note;
+      queuedPayloadRef.current = null;
+      setIsDirty(false);
       setPrevNoteId(note.id);
       updateOutline(editor);
     }
-  }, [note?.id, note?.content, editor, prevNoteId, updateOutline]);
+  }, [editor, isDirty, note, onNotify, onSave, prevNoteId, updateOutline]);
 
   // 鍚屾棰勮/缂栬緫妯″紡
   useEffect(() => {
@@ -2336,6 +2639,18 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
                 setSpellcheckError(null);
                 onNotify?.('已修正错别字', 'success');
+
+                const spellcheckStorage = (editor.storage as any)?.aiSpellcheck;
+                const refreshedBlock = getSpellcheckTextblockAtPos(editor.state.doc, error.from) as { text: string; rangeFrom: number } | null;
+                const refreshedBlockText = refreshedBlock ? refreshedBlock.text : null;
+                const refreshedBlockRangeFrom = refreshedBlock ? refreshedBlock.rangeFrom : null;
+                if (spellcheckStorage?.runCheck && refreshedBlockText && typeof refreshedBlockRangeFrom === 'number') {
+                  window.setTimeout(() => {
+                    if (!editor.isDestroyed && editor.isInitialized) {
+                      void spellcheckStorage.runCheck(editor.view, refreshedBlockText, refreshedBlockRangeFrom);
+                    }
+                  }, 0);
+                }
               }
             }}
           />
