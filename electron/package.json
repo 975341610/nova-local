@@ -9,7 +9,7 @@
     "test": "node --test test/fsBridge.test.js"
   },
   "dependencies": {
-    "chokidar": "^5.0.0",
+    "chokidar": "^3.6.0",
     "electron": "^36.2.1",
     "yaml": "^2.8.1"
   }
