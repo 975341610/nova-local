@@ -9,6 +9,8 @@ import { applyThemeConfig, getThemeConfig } from './lib/themeUtils'
 import type { Note, NoteTemplate } from './lib/types'
 import { api } from './lib/api'
 import { extractLinkedNoteIds, getNotesNeedingFilenameSync, shouldRenameNoteFile } from './lib/noteSync'
+import { searchIndex, type SearchableNote } from './lib/searchIndex'
+import { buildSearchableText } from './lib/searchUtils'
 import { migrateLegacyNotes, parseLegacyNotes, shouldRunLegacyMigration } from './lib/legacyLocalMigration'
 import { AnimatePresence, motion } from 'framer-motion'
 import { MusicProvider, useMusicControls } from './contexts/MusicContext'
@@ -200,6 +202,20 @@ function App() {
 
     setNotes(prev => loadedNotes.map(note => mergeNote(prev.find(item => item.id === note.id), note)))
     setCurrentNoteId(prev => pickCurrentNoteId(loadedNotes, nextPreferredId ?? prev))
+
+    // 构建全文搜索索引
+    searchIndex.buildIndex(
+      loadedNotes
+        .filter((n) => !n.is_folder)
+        .map((n) => ({
+          id: n.id,
+          title: n.title,
+          content: buildSearchableText(n),
+          tags: n.tags || [],
+          type: n.type,
+        }))
+    )
+
     return loadedNotes
   }, [])
 
@@ -361,6 +377,17 @@ function App() {
       const nextNote = mergeNote(undefined, created)
       setNotes(prev => [...prev, nextNote])
 
+      // 增量添加全文搜索索引
+      if (!nextNote.is_folder) {
+        searchIndex.addNote({
+          id: nextNote.id,
+          title: nextNote.title,
+          content: buildSearchableText(nextNote),
+          tags: nextNote.tags || [],
+          type: nextNote.type,
+        })
+      }
+
       if (!isFolder) {
         setCurrentNoteId(nextNote.id)
         setActiveView('notes')
@@ -423,6 +450,9 @@ function App() {
         const idsToRemove = new Set([idToDelete, ...getDescendants(idToDelete, snapshot)])
         const remaining = snapshot.filter(note => !idsToRemove.has(note.id))
 
+        // 移除索引
+        idsToRemove.forEach(id => searchIndex.removeNote(id))
+
         setNotes(remaining)
         setCurrentNoteId(prev => idsToRemove.has(prev ?? -1) ? pickCurrentNoteId(remaining) : prev)
         return
@@ -435,6 +465,9 @@ function App() {
         api.updateNote(child.id, { parent_id: nextParentId, sort_key: child.sort_key })
       )))
       await api.deleteNote(idToDelete)
+
+      // 移除索引
+      searchIndex.removeNote(idToDelete)
 
       const remaining = snapshot
         .filter(note => note.id !== idToDelete)
@@ -586,6 +619,18 @@ function App() {
     try {
       const updated = await api.updateNote(targetId, payloadWithFilePath)
       applyNotePatch(targetId, updated)
+
+      // 增量更新全文搜索索引
+      if (!updated.is_folder) {
+        searchIndex.updateNote({
+          id: updated.id,
+          title: updated.title,
+          content: buildSearchableText(updated),
+          tags: updated.tags || [],
+          type: updated.type,
+        })
+      }
+
       if (!shouldSkipRenameSync) {
         scheduleFileRename(updated)
       }

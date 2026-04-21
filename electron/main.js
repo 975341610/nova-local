@@ -189,10 +189,19 @@ function registerIpcHandlers() {
 }
 
 app.whenReady().then(async () => {
-  await fsBridge.ensureStructure();
+  await fsBridge.ensureBaseDirs();
   await ensureBackend();
   registerIpcHandlers();
   createMainWindow();
+
+  // 异步修复元数据和初始化 ID 缓存
+  setImmediate(async () => {
+    await fsBridge.repairVaultMetadata();
+    await fsBridge.initializeMaxId();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('vault:ready');
+    }
+  });
 
   watcher = createVaultWatcher(VAULT_ROOT, (payload) => {
     if (!mainWindow || mainWindow.isDestroyed()) {

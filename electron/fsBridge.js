@@ -452,12 +452,27 @@ function createFsBridge(options) {
   const vaultRoot = options.vaultRoot;
   const trashRoot = path.join(vaultRoot, TRASH_DIR_NAME);
 
-  async function ensureStructure() {
+  let _maxId = 0;
+  let _isIdInitialized = false;
+
+  async function ensureBaseDirs() {
     await ensureDir(vaultRoot);
     await ensureDir(trashRoot);
     await ensureDir(path.join(vaultRoot, '_assets'));
     await ensureDir(path.join(vaultRoot, '_templates'));
     await ensureDefaultNotebook();
+  }
+
+  async function initializeMaxId() {
+    if (_isIdInitialized) return;
+    const ids = new Set();
+    await walkForIds(vaultRoot, ids);
+    _maxId = ids.size ? Math.max(...ids) : 0;
+    _isIdInitialized = true;
+  }
+
+  async function ensureStructure() {
+    await ensureBaseDirs();
     await repairVaultMetadata();
   }
 
@@ -804,15 +819,19 @@ function createFsBridge(options) {
   }
 
   async function nextNoteId() {
-    const ids = new Set();
-    await walkForIds(vaultRoot, ids);
-    return (ids.size ? Math.max(...ids) : 0) + 1;
+    if (!_isIdInitialized) {
+      await initializeMaxId();
+    }
+    _maxId += 1;
+    return _maxId;
   }
 
   async function nextNotebookId() {
-    const ids = new Set();
-    await walkForIds(vaultRoot, ids);
-    return (ids.size ? Math.max(...ids) : 0) + 1;
+    if (!_isIdInitialized) {
+      await initializeMaxId();
+    }
+    _maxId += 1;
+    return _maxId;
   }
 
   async function parseNoteFile(notePath, notebook, parentId, includeContent) {
@@ -1286,6 +1305,9 @@ function createFsBridge(options) {
     createFolder,
     updateNote,
     deleteNote,
+    ensureBaseDirs,
+    repairVaultMetadata,
+    initializeMaxId,
   };
 }
 
