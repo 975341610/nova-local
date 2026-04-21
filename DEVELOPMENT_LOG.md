@@ -1294,5 +1294,9 @@ Fixed Flip Clock animation pure CSS
   - 原本每次创建笔记都需要 `walkForIds` 全量遍历文件系统查找最大 ID。
   - 现在在主进程启动时通过 `_maxId` 进行一次性缓存，之后每次创建都在内存中自增 (`++_maxId`)，彻底解决大量笔记时创建新笔记的卡顿问题。
 
+- **[P1] React 渲染性能与虚拟列表 (Virtualization)**: 
+  - 引入 `zustand` 替代 `App.tsx` 中的全局 `notes` state 传递。通过将状态细粒度化（如 `useNoteTreeData` Selector），将笔记的“元数据”（结构/标题）和“正文内容”解耦，彻底消灭了“编辑器内每打一个字，侧边栏都会发生全量 React 重绘”的性能毒瘤。
+  - 引入 `react-virtuoso` 对左侧边栏 `SidebarTree` 进行了虚拟列表重构。编写了树形结构展平算法 (`flattenTree`)，使 DOM 树中永远只渲染可视区域的几十个节点，即使加载 2000+ 笔记，滚动和渲染依然保持流畅度。
+
 ### 测试保证
 - 修复了相关文件的测试环境，保证原有测试用例（`npm test` 或 `vitest`）在引入新逻辑后依然全部通过，维护了良好的 TDD 规范。
