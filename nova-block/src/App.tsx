@@ -19,6 +19,7 @@ import { TodoProvider } from './contexts/TodoContext'
 import { AIProvider } from './contexts/AIContext'
 import { FloatingMusicCapsule } from './components/widgets/FloatingMusicCapsule'
 import { PlaylistPopover } from './components/widgets/PlaylistPopover'
+import { useNoteStore } from './store/useNoteStore'
 
 function MusicGlobalUI() {
   const { playlistPopoverAnchor, closePlaylist } = useMusicControls()
@@ -59,8 +60,14 @@ const LEGACY_MIGRATION_FLAG = 'nova-block-vault-migration-completed'
 
 function App() {
   const [theme] = useState<'dark' | 'light'>('light')
-  const [notes, setNotes] = useState<Note[]>([])
-  const [currentNoteId, setCurrentNoteId] = useState<number | null>(null)
+  const notes = useNoteStore((state) => state.notes)
+  const setNotes = useNoteStore((state) => state.setNotes)
+  const currentNoteId = useNoteStore((state) => state.currentNoteId)
+  const setCurrentNoteId = useNoteStore((state) => state.setCurrentNoteId)
+  const updateNote = useNoteStore((state) => state.updateNote)
+  const deleteNote = useNoteStore((state) => state.deleteNote)
+  const addNote = useNoteStore((state) => state.addNote)
+
   const [activeView, setActiveView] = useState<'notes'>('notes')
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -70,16 +77,11 @@ function App() {
     mode: 'select' | 'save'
     parentId: string | null
   }>({ isOpen: false, mode: 'select', parentId: null })
-  const notesRef = useRef<Note[]>([])
   const renameTimersRef = useRef<Map<number, number>>(new Map())
 
   const toggleSidebar = (collapsed: boolean) => {
     setIsSidebarCollapsed(collapsed)
   }
-
-  useEffect(() => {
-    notesRef.current = notes
-  }, [notes])
 
   useEffect(() => {
     return () => {
@@ -92,20 +94,18 @@ function App() {
 
   const applyNotePatch = useCallback((targetId: number, patch: Partial<Note>) => {
     const nextId = typeof patch.id === 'number' ? patch.id : targetId
-
-    setNotes(prev => prev.map(note => (
-      note.id === targetId
-        ? mergeNote(note, {
-            ...patch,
-            id: nextId,
-          } as Note)
-        : note
-    )))
+    const existing = useNoteStore.getState().notes.find(n => n.id === targetId)
+    
+    updateNote(targetId, {
+      ...patch,
+      ...(existing ? mergeNote(existing, patch as Note) : {}),
+      id: nextId,
+    })
 
     if (nextId !== targetId) {
-      setCurrentNoteId(prev => prev === targetId ? nextId : prev)
+      setCurrentNoteId(prev => (prev === targetId ? nextId : prev) as any)
     }
-  }, [])
+  }, [updateNote, setCurrentNoteId])
 
   const scheduleFileRename = useCallback((noteLike: Partial<Note>) => {
     if (typeof noteLike.id !== 'number') {
@@ -129,7 +129,7 @@ function App() {
     const timerId = window.setTimeout(async () => {
       renameTimersRef.current.delete(noteLike.id!)
 
-      const latest = notesRef.current.find(note => (
+      const latest = useNoteStore.getState().notes.find(note => (
         note.id === noteLike.id ||
         (noteLike.file_path ? note.file_path === noteLike.file_path : false)
       ))
@@ -200,8 +200,9 @@ function App() {
       loadedNotes = await api.listNotes(true)
     }
 
-    setNotes(prev => loadedNotes.map(note => mergeNote(prev.find(item => item.id === note.id), note)))
-    setCurrentNoteId(prev => pickCurrentNoteId(loadedNotes, nextPreferredId ?? prev))
+    const prevNotes = useNoteStore.getState().notes
+    setNotes(loadedNotes.map(note => mergeNote(prevNotes.find(item => item.id === note.id), note)))
+    setCurrentNoteId((prev: number | null) => pickCurrentNoteId(loadedNotes, nextPreferredId ?? prev))
 
     // 构建全文搜索索引
     searchIndex.buildIndex(
@@ -590,7 +591,7 @@ function App() {
       return
     }
 
-    const persistedNote = notesRef.current.find(note => (
+    const persistedNote = useNoteStore.getState().notes.find(note => (
       note.id === targetId ||
       (payload.file_path ? note.file_path === payload.file_path : false)
     ))
@@ -682,8 +683,6 @@ function App() {
               <div className="absolute inset-0 opacity-[0.4] pointer-events-none z-0" style={{ backgroundImage: 'var(--paper-texture)' }} />
 
               <SidebarTree
-                initialNodes={treeNodes}
-                notes={notes}
                 selectedNodeId={currentNoteId?.toString() ?? null}
                 onNodeSelect={handleSelectNode}
                 onNodeAdd={handleAddNote}
@@ -733,7 +732,6 @@ function App() {
                     currentNote.type === 'canvas' ? (
                       <CanvasEditor
                         note={currentNote}
-                        notes={notes}
                         onSave={handleSave}
                         onNotify={(text, tone) => console.log(`[NovaNotify] ${tone}: ${text}`)}
                       />
@@ -760,7 +758,6 @@ function App() {
               <CommandPalette
                 isOpen={isCommandPaletteOpen}
                 onClose={() => setIsCommandPaletteOpen(false)}
-                notes={notes}
                 onSelectNote={(note) => handleSelectNode(note.id.toString())}
               />
 

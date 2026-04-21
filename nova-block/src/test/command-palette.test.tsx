@@ -16,6 +16,7 @@ vi.mock('../lib/api', () => ({
 }))
 
 import CommandPalette from '../components/search/CommandPalette'
+import { useNoteStore } from '../store/useNoteStore'
 
 const baseNote: Note = {
   id: 1,
@@ -37,9 +38,13 @@ const baseNote: Note = {
 describe('CommandPalette', () => {
   beforeEach(() => {
     apiMock.getNote.mockReset()
+    useNoteStore.getState().setNotes([])
   })
 
   it('hydrates unopened note bodies so quick search can match note content', async () => {
+    const notes = [{ ...baseNote, id: 12, title: '未打开笔记', content: undefined }]
+    useNoteStore.getState().setNotes(notes as any)
+    
     apiMock.getNote.mockResolvedValue({
       ...baseNote,
       id: 12,
@@ -51,7 +56,6 @@ describe('CommandPalette', () => {
       <CommandPalette
         isOpen
         onClose={() => {}}
-        notes={[{ ...baseNote, id: 12, title: '未打开笔记', content: undefined }]}
         onSelectNote={() => {}}
       />,
     )

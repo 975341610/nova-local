@@ -5,6 +5,13 @@ export interface TreeNode {
   title: string;
   isFolder?: boolean;
   children?: TreeNode[];
+  icon?: string;
+}
+
+export interface FlattenedNode extends TreeNode {
+  level: number;
+  isExpanded: boolean;
+  hasChildren: boolean;
 }
 
 /**
@@ -97,6 +104,35 @@ export function buildTree(nodes: TreeNode[]): TreeNode[] {
   });
 
   return rootNodes;
+}
+
+/**
+ * 将树形结构展平为一维数组，用于虚拟列表
+ */
+export function flattenTree(
+  nodes: TreeNode[],
+  expandedIds: Set<string>,
+  level = 0
+): FlattenedNode[] {
+  const result: FlattenedNode[] = [];
+
+  nodes.forEach((node) => {
+    const isExpanded = expandedIds.has(node.id);
+    const hasChildren = !!(node.children && node.children.length > 0);
+
+    result.push({
+      ...node,
+      level,
+      isExpanded,
+      hasChildren,
+    });
+
+    if (isExpanded && node.children) {
+      result.push(...flattenTree(node.children, expandedIds, level + 1));
+    }
+  });
+
+  return result;
 }
 
 /**

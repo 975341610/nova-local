@@ -4,20 +4,20 @@ import { Search, FileText, Command, ArrowRight } from 'lucide-react';
 import { api } from '../../lib/api';
 import { getNotesMissingContent, searchNotes } from '../../lib/searchUtils';
 import type { Note } from '../../lib/types';
+import { useNoteStore } from '../../store/useNoteStore';
 
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
-  notes: Note[];
   onSelectNote: (note: Note) => void;
 }
 
 const CommandPalette: React.FC<CommandPaletteProps> = ({
   isOpen,
   onClose,
-  notes,
   onSelectNote,
 }) => {
+  const notes = useNoteStore((state) => state.notes);
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);

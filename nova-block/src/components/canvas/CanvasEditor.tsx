@@ -49,6 +49,7 @@ import type { Note } from '../../lib/types';
 import { BaseNode } from './BaseNode';
 import { api, formatUrl } from '../../lib/api';
 import { promptCompat } from '../../lib/promptCompat';
+import { useNoteStore } from '../../store/useNoteStore';
 
 type CanvasTextNodeData = {
   title: string;
@@ -117,7 +118,6 @@ type CanvasSerialized = {
 
 type CanvasEditorProps = {
   note: Note | null;
-  notes: Note[];
   onSave: (payload: Partial<Note>) => Promise<Partial<Note> | void> | void;
   onNotify?: (text: string, tone: 'success' | 'error' | 'info') => void;
 };
@@ -529,15 +529,14 @@ function GroupNode(props: NodeProps<CanvasGroupNode>) {
 
 function NotePickerModal({
   isOpen,
-  notes,
   onClose,
   onSelect,
 }: {
   isOpen: boolean;
-  notes: Note[];
   onClose: () => void;
   onSelect: (note: Note) => void;
 }) {
+  const notes = useNoteStore(state => state.notes);
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -822,7 +821,8 @@ function SelectionToolbar({ selectedNodes, onGroup, onRemove }: { selectedNodes:
   );
 }
 
-function CanvasBoard({ note, notes, onSave, onNotify }: CanvasEditorProps) {
+function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
+  const notes = useNoteStore(state => state.notes);
   const parsedContent = useMemo(() => parseCanvasContent(note?.content), [note?.content]);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(parsedContent.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(parsedContent.edges);

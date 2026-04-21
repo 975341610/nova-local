@@ -19,34 +19,43 @@ vi.mock('../components/sidebar/BacklinksPanel', () => ({
   ),
 }))
 
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: ({ data, itemContent, style }: any) => (
+    <div style={style}>
+      {data.map((item: any, index: number) => itemContent(index, item))}
+    </div>
+  ),
+}))
+
 import { SidebarTree } from '../components/sidebar/SidebarTree'
+import { useNoteStore } from '../store/useNoteStore'
 
 describe('SidebarTree', () => {
   it('passes the current note id and notes to backlinks on first open without requiring a note switch', () => {
+    const notes = [
+      {
+        id: 31,
+        title: '当前笔记',
+        icon: '📝',
+        summary: '',
+        content: '<p>[[测试]]</p>',
+        is_title_manually_edited: false,
+        tags: [],
+        properties: [],
+        links: [],
+        notebook_id: null,
+        parent_id: null,
+        position: 0,
+        sort_key: 'm',
+        is_folder: false,
+        created_at: '2026-04-18T00:00:00.000Z',
+      },
+    ]
+    useNoteStore.getState().setNotes(notes as any)
+    useNoteStore.getState().setCurrentNoteId(31)
+
     const { container } = render(
       <SidebarTree
-        initialNodes={[
-          { id: '31', parentId: null, sortKey: 'm', title: '当前笔记', isFolder: false },
-        ]}
-        notes={[
-          {
-            id: 31,
-            title: '当前笔记',
-            icon: '📝',
-            summary: '',
-            content: '<p>[[测试]]</p>',
-            is_title_manually_edited: false,
-            tags: [],
-            properties: [],
-            links: [],
-            notebook_id: null,
-            parent_id: null,
-            position: 0,
-            sort_key: 'm',
-            is_folder: false,
-            created_at: '2026-04-18T00:00:00.000Z',
-          },
-        ]}
         selectedNodeId="31"
       />,
     )

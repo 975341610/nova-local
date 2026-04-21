@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, FileText, Folder, FolderOpen, MoreHorizontal } from 'lucide-react';
-import type { TreeNode } from '../../lib/novablock/treeUtils';
+import type { TreeNode, FlattenedNode } from '../../lib/novablock/treeUtils';
 
 interface TreeNodeItemProps {
-  node: TreeNode;
-  level: number;
+  node: FlattenedNode;
   onMove: (nodeId: string, targetId: string, position: 'before' | 'after' | 'into') => void;
   onSelect: (nodeId: string) => void;
+  onToggle: (nodeId: string) => void;
   selectedId?: string;
   onContextMenu?: (e: React.MouseEvent, node: TreeNode) => void;
   editingId?: string | null;
@@ -16,28 +16,22 @@ interface TreeNodeItemProps {
 
 export const TreeNodeItem = ({
   node,
-  level,
   onMove,
   onSelect,
+  onToggle,
   selectedId,
   onContextMenu,
   editingId,
   onRenameSubmit,
 }: TreeNodeItemProps) => {
-  const [isOpen, setIsOpen] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [dragOver, setDragOver] = useState<'before' | 'after' | 'into' | null>(null);
   const [editValue, setEditValue] = useState(node.title || '');
 
   const isEditing = editingId === node.id;
-
-  React.useEffect(() => {
-    if (isEditing) {
-      setEditValue(node.title || '');
-    }
-  }, [isEditing, node.title]);
-
-  const hasChildren = node.children && node.children.length > 0;
+  const isOpen = node.isExpanded;
+  const level = node.level;
+  const hasChildren = node.hasChildren;
   const isSelected = selectedId === node.id;
 
   const handleDragStart = (e: React.DragEvent | PointerEvent | TouchEvent | MouseEvent) => {
@@ -101,7 +95,7 @@ export const TreeNodeItem = ({
         onClick={() => {
           if (isEditing) return;
           if (node.isFolder) {
-            setIsOpen(!isOpen);
+            onToggle(node.id);
           } else {
             onSelect(node.id);
           }
@@ -116,7 +110,7 @@ export const TreeNodeItem = ({
         <div 
           onClick={(e) => {
             e.stopPropagation();
-            if (!isEditing) setIsOpen(!isOpen);
+            if (!isEditing) onToggle(node.id);
           }}
           className={`
             p-1 rounded-lg transition-colors
@@ -184,33 +178,6 @@ export const TreeNodeItem = ({
       {dragOver === 'after' && (
         <div className="absolute bottom-0 left-3 right-3 h-0.5 bg-primary rounded-full z-10 shadow-sm shadow-primary/50" />
       )}
-
-      {/* Children */}
-      <AnimatePresence initial={false}>
-        {isOpen && hasChildren && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeInOut' }}
-            className="overflow-hidden"
-          >
-            {node.children!.map((child) => (
-              <TreeNodeItem
-                key={child.id}
-                node={child}
-                level={level + 1}
-                onMove={onMove}
-                onSelect={onSelect}
-                selectedId={selectedId}
-                onContextMenu={onContextMenu}
-                editingId={editingId}
-                onRenameSubmit={onRenameSubmit}
-              />
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };
