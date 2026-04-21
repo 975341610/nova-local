@@ -37,7 +37,7 @@ function MusicGlobalUI() {
   )
 }
 
-function mergeNote(existing: Note | undefined, incoming: Note): Note {
+export function mergeNote(existing: Note | undefined, incoming: Note): Note {
   return {
     ...(existing ?? {}),
     ...incoming,
@@ -49,10 +49,11 @@ function mergeNote(existing: Note | undefined, incoming: Note): Note {
   }
 }
 
-function pickCurrentNoteId(notes: Note[], preferredId?: number | null) {
+export function pickCurrentNoteId(notes: Note[], preferredId?: number | null) {
   if (preferredId && notes.some(note => note.id === preferredId)) {
     return preferredId
   }
+  // 稳定性修复：只有在确实没选中任何笔记时才默认跳转到第一个
   return notes.find(note => !note.is_folder)?.id ?? notes[0]?.id ?? null
 }
 
@@ -202,7 +203,15 @@ function App() {
 
     const prevNotes = useNoteStore.getState().notes
     setNotes(loadedNotes.map(note => mergeNote(prevNotes.find(item => item.id === note.id), note)))
-    setCurrentNoteId((prev: number | null) => pickCurrentNoteId(loadedNotes, nextPreferredId ?? prev))
+    
+    // 稳定性核心修复：只有当 preferredId 存在且合法，或者当前 ID 确实失效时才更新
+    setCurrentNoteId((prev: number | null) => {
+      const targetId = nextPreferredId ?? prev;
+      if (targetId && loadedNotes.some(n => n.id === targetId)) {
+        return targetId;
+      }
+      return pickCurrentNoteId(loadedNotes, targetId);
+    })
 
     // 构建全文搜索索引
     searchIndex.buildIndex(

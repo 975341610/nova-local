@@ -47,13 +47,20 @@ function isRecentLocalVaultChange(filename) {
   }
 
   const now = Date.now();
-  for (const [key, expiresAt] of recentLocalVaultChanges.entries()) {
-    if (expiresAt <= now) {
-      recentLocalVaultChanges.delete(key);
-    }
+  
+  // 转换 incoming filename 为相对于 VAULT_ROOT 的路径，并进行归一化
+  let relativeFilename = filename;
+  if (path.isAbsolute(filename)) {
+    relativeFilename = path.relative(VAULT_ROOT, filename);
+  }
+  
+  // 如果路径在库外部，不属于库变更，直接忽略
+  if (relativeFilename.startsWith('..')) {
+    return false;
   }
 
-  const normalizedFilename = normalizeVaultRelativePath(filename);
+  const normalizedFilename = normalizeVaultRelativePath(relativeFilename);
+
   for (const [key, expiresAt] of recentLocalVaultChanges.entries()) {
     if (expiresAt <= now) {
       recentLocalVaultChanges.delete(key);

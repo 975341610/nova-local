@@ -1193,7 +1193,22 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
     });
   }, [setNodes]);
 
+  const lastLoadedNoteIdRef = useRef<number | null>(null);
+
   useEffect(() => {
+    if (!note) return;
+    
+    // 稳定性核心修复：只有当切换笔记（ID变化）或内容真正发生外部变更时才同步到 state
+    // 避免因自身保存触发的 store 更新导致 nodes/edges/viewport 被强行重置
+    const isNoteSwapped = lastLoadedNoteIdRef.current !== note.id;
+    const isContentExternallyChanged = !isNoteSwapped && note.content !== saveSnapshot;
+    
+    if (!isNoteSwapped && !isContentExternallyChanged) {
+      return;
+    }
+
+    lastLoadedNoteIdRef.current = note.id;
+
     idRef.current = Math.max(0, ...parsedContent.nodes.map((item) => Number(String(item.id).replace(/[^0-9]/g, '')) || 0));
     setNodes(
       parsedContent.nodes.map((item) => {
@@ -1263,7 +1278,11 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
     setEdges(parsedContent.edges);
     setViewport(parsedContent.viewport ?? { x: 0, y: 0, zoom: 1 });
     setBackgroundUrl(parsedContent.backgroundUrl);
-  }, [note?.id, notes, parsedContent, setEdges, setNodes, updateNodeData, handleUngroup, handleToggleCollapse]);
+    
+    if (isNoteSwapped) {
+      didInitViewportRef.current = false;
+    }
+  }, [note?.id, note?.content, notes, parsedContent, setEdges, setNodes, updateNodeData, handleUngroup, handleToggleCollapse]);
 
   const didInitViewportRef = useRef(false);
 
@@ -1516,7 +1535,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
         file_path: note.file_path,
         content: saveSnapshot,
       });
-    }, window.electron?.ipcInvoke ? 0 : 650);
+    }, 1000);
 
     return () => {
       if (saveTimerRef.current) {
