@@ -305,6 +305,23 @@ function App() {
     return notes.find(note => note.id === currentNoteId) || null
   }, [notes, currentNoteId])
 
+  const isCanvasNote = useMemo(() => {
+    if (!currentNote) return false
+    if (currentNote.type === 'canvas') return true
+    
+    // 兜底检测内容特征
+    const content = currentNote.content?.trim()
+    if (content?.startsWith('{') && content?.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(content)
+        return parsed && typeof parsed === 'object' && Array.isArray(parsed.nodes)
+      } catch {
+        return false
+      }
+    }
+    return false
+  }, [currentNote])
+
   const loadNoteContent = useCallback(async (noteId: number) => {
     const note = notes.find(item => item.id === noteId)
     if (!note || note.is_folder || note.content !== undefined) {
@@ -729,7 +746,7 @@ function App() {
                     className="flex-1 h-full"
                   >
                   {currentNote ? (
-                    currentNote.type === 'canvas' ? (
+                    isCanvasNote ? (
                       <CanvasEditor
                         note={currentNote}
                         onSave={handleSave}

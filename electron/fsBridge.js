@@ -57,13 +57,18 @@ function looksLikeCanvasContent(value) {
     return false;
   }
 
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+    return false;
+  }
+
   try {
-    const parsed = JSON.parse(value);
+    const parsed = JSON.parse(trimmed);
     return (
       parsed &&
       typeof parsed === 'object' &&
       Array.isArray(parsed.nodes) &&
-      Array.isArray(parsed.edges)
+      (Array.isArray(parsed.edges) || (parsed.version && parsed.viewport))
     );
   } catch {
     return false;
@@ -1149,12 +1154,15 @@ function createFsBridge(options) {
     const title = normalizeTitle(payload.title, 'Untitled');
     const createdAt = nowIso();
     const targetPath = await uniquePath(path.join(location.dir, `${sanitizeFilename(title)}.md`));
+    const noteContent = payload.content || '';
+    const noteType = looksLikeCanvasContent(noteContent) ? 'canvas' : (payload.type || 'note');
+
     const note = {
       id: await nextNoteId(),
       title,
-      icon: payload.icon || (payload.type === 'canvas' ? '🎨' : '📝'),
-      content: payload.content || '',
-      type: payload.type || 'note',
+      icon: payload.icon || (noteType === 'canvas' ? '🎨' : '📝'),
+      content: noteContent,
+      type: noteType,
       summary: '',
       is_title_manually_edited: Boolean(payload.is_title_manually_edited),
       tags: payload.tags || [],
@@ -1218,12 +1226,16 @@ function createFsBridge(options) {
       }
     }
 
+    const updatedContent = hasOwn(payload, 'content') ? payload.content : current.content;
+    const requestedType = hasOwn(payload, 'type') ? payload.type : current.type;
+    const inferredType = looksLikeCanvasContent(updatedContent) ? 'canvas' : requestedType;
+
     const updated = {
       ...current,
       title: requestedTitle,
       icon: hasOwn(payload, 'icon') ? payload.icon : current.icon,
-      content: hasOwn(payload, 'content') ? payload.content : current.content,
-      type: hasOwn(payload, 'type') ? payload.type : current.type,
+      content: updatedContent,
+      type: inferredType,
       tags: hasOwn(payload, 'tags') ? payload.tags : current.tags,
       properties: hasOwn(payload, 'properties') ? payload.properties : current.properties,
       sticky_notes: hasOwn(payload, 'sticky_notes') ? payload.sticky_notes : current.sticky_notes,

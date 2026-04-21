@@ -1,5 +1,21 @@
 # Development Log
 
+## [2026-04-21] - 画布 (Canvas) 类型降级问题修复 [已解决]
+
+### 1. 后端类型保护与修正 [x]
+- **识别算法优化**: 增强了 `electron/fsBridge.js` 中的 `looksLikeCanvasContent` 函数。除了基础的 JSON 结构校验，还增加了对 `viewport` 和 `version` 字段的辅助判定，使类型识别更加稳健。
+- **强制修正机制**: 在 `createNote` 和 `updateNote` 的写入环节，引入了基于内容的强制类型检查。即便前端在调用 API 时误传了 `type: 'note'`，只要内容符合 Canvas 特征，后端将强制纠正为 `type: 'canvas'` 进行持久化。
+- **防止状态污染**: 修复了 `updateNote` 在执行重命名或属性更新后返回的 `type` 可能不一致的问题，确保 API 返回值即反映了正确的类型。
+
+### 2. 前端 UI 渲染鲁棒性增强 [x]
+- **渲染器选择兜底**: 在 `App.tsx` 的编辑器选择逻辑中，增加了一个 `isCanvasNote` 判定。除了依据后端返回的 `note.type` 字段，还会对 `note.content` 进行实时的结构判定。
+- **双重校验策略**: 即使 `note.type` 尚未同步或因竞态条件被设为 `note`，只要内容是合法的 Canvas JSON，系统也会优先通过 `CanvasEditor` 打开。这有效防止了用户反馈中提到的“画布变成 JSON 文本”现象，并避免了普通编辑器误写破坏 Canvas 结构。
+
+### 3. 兼容性与验证
+- **旧文件兼容**: 确保了未手动指定 `type: canvas` 的旧 JSON 格式笔记在扫描时能被自动识别并升级。
+- **并发重命名稳定性**: 在 `updateNote` 逻辑重组中，确保了原有的 `safeRename` 冲突处理机制依然有效。
+- **回归测试**: 核心逻辑已通过模拟并发与类型降级的测试验证。
+
 ## [2026-04-15] - 编辑器核心 Bug 修复 (Spellcheck, NoteLink, Drag Handle & CodeBlock) [已解决]
 
 ### 1. 拼写检查 (Spellcheck) 稳定性增强 [x]
