@@ -22,6 +22,14 @@
   - 导入大型媒体文件（>10MB）过程中，画布 UI 响应平稳，无跳转现象。
 - **构建保证**: `npm run build` 成功，类型定义无冲突。
 
+## [2026-04-21] - Canvas 稳定性进阶修复：防断流与防回刷 [已解决]
+
+### 1. 原子化写入与隔离监听 [x]
+- **写入原子化 (Atomic Writes)**: 重构了 `electron/fsBridge.js` 中的 `writeNoteFile` 和 `writeYamlFile`，引入了临时文件 (`.tmp`) 与 `fs.rename` 原子替换机制。彻底解决了由于 Node.js `fs.writeFile` 非原子性写入导致的并发读取半截残缺 JSON 引发的白屏跳转 Bug。
+- **媒体资源静默监听**: 
+  - 在 `electron/main.js` 的 `isRecentLocalVaultChange` 中主动屏蔽了来自 `_assets\`、`_templates\` 以及 `data\media\` 的变动事件。
+  - 在 `electron/vaultWatcher.js` 中，将 `**/_assets/**` 与 `**/_templates/**` 加入至 `chokidar` 的物理忽略名单（`ignored`），彻底阻断了由于上传拖放媒体文件触发全局 Vault Reload 的回环。
+
 ## [2026-04-21] - 画布 (Canvas) 类型降级问题修复 [已解决]
 
 ### 1. 后端类型保护与修正 [x]

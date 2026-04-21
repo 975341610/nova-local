@@ -61,6 +61,11 @@ function isRecentLocalVaultChange(filename) {
 
   const normalizedFilename = normalizeVaultRelativePath(relativeFilename);
 
+  // Ignore changes in internal resource directories
+  if (normalizedFilename.startsWith('_assets\\') || normalizedFilename.startsWith('_templates\\') || normalizedFilename.startsWith('data\\media\\')) {
+    return true; // Pretend it was a recent local change to bypass watcher
+  }
+
   for (const [key, expiresAt] of recentLocalVaultChanges.entries()) {
     if (expiresAt <= now) {
       recentLocalVaultChanges.delete(key);

@@ -10,7 +10,7 @@ function createVaultWatcher(vaultRoot, onChange) {
 
     try {
       watcher = chokidar.watch(vaultRoot, {
-        ignored: [/(^|[\/\\])\../, '**/node_modules/**'],
+        ignored: [/(^|[\/\\])\../, '**/node_modules/**', '**/_assets/**', '**/_templates/**'],
         persistent: true,
         ignoreInitial: true,
         awaitWriteFinish: {

@@ -371,9 +371,11 @@ async function ensureDir(targetPath) {
   await fs.mkdir(targetPath, { recursive: true });
 }
 
-async function writeYamlFile(targetPath, data) {
-  await fs.writeFile(targetPath, `${stringifyYamlLike(data).trimEnd()}\n`, 'utf8');
-}
+  async function writeYamlFile(targetPath, data) {
+    const tmpPath = targetPath + `.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(tmpPath, `${stringifyYamlLike(data).trimEnd()}\n`, 'utf8');
+    await fs.rename(tmpPath, targetPath);
+  }
 
 async function readYamlFile(targetPath) {
   if (!(await pathExists(targetPath))) {
@@ -725,7 +727,9 @@ function createFsBridge(options) {
       }
 
       if (changed) {
-        await fs.writeFile(itemPath, serializeFrontmatter(nextMeta, body), 'utf8');
+        const tmpPath = itemPath + `.${crypto.randomUUID()}.tmp`;
+        await fs.writeFile(tmpPath, serializeFrontmatter(nextMeta, body), 'utf8');
+        await fs.rename(tmpPath, itemPath);
       }
     }
   }
@@ -1113,7 +1117,9 @@ function createFsBridge(options) {
       original_rel_path: note._meta?.original_rel_path || null,
     };
 
-    await fs.writeFile(notePath, serializeFrontmatter(meta, note.content || ''), 'utf8');
+    const tmpPath = notePath + `.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(tmpPath, serializeFrontmatter(meta, note.content || ''), 'utf8');
+    await fs.rename(tmpPath, notePath);
     return meta;
   }
 
