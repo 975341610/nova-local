@@ -188,6 +188,30 @@ function registerIpcHandlers() {
   ipcMain.handle('notes:delete', async (_event, payload) => fsBridge.deleteNote(payload.id));
 }
 
+let vaultChangeQueue = [];
+let vaultChangeTimer = null;
+
+function flushVaultChanges() {
+  if (vaultChangeQueue.length === 0) {
+    return;
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // 合并去重，以 filename 为键保留最后一次变更
+    const mergedChanges = Array.from(
+      vaultChangeQueue.reduce((acc, change) => {
+        acc.set(change.filename, change);
+        return acc;
+      }, new Map()).values()
+    );
+
+    mainWindow.webContents.send('vault:batch-update', mergedChanges);
+  }
+
+  vaultChangeQueue = [];
+  vaultChangeTimer = null;
+}
+
 app.whenReady().then(async () => {
   await fsBridge.ensureBaseDirs();
   await ensureBackend();
@@ -210,7 +234,12 @@ app.whenReady().then(async () => {
     if (isRecentLocalVaultChange(payload.filename)) {
       return;
     }
-    mainWindow.webContents.send('vault:changed', payload);
+    
+    // 批量防抖处理
+    vaultChangeQueue.push(payload);
+    if (!vaultChangeTimer) {
+      vaultChangeTimer = setTimeout(flushVaultChanges, 500);
+    }
   });
   watcher.start();
 });

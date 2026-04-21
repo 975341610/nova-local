@@ -5,7 +5,11 @@ contextBridge.exposeInMainWorld('electron', {
   onVaultChanged: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('vault:changed', handler);
-    return () => ipcRenderer.removeListener('vault:changed', handler);
+    ipcRenderer.on('vault:batch-update', handler);
+    return () => {
+      ipcRenderer.removeListener('vault:changed', handler);
+      ipcRenderer.removeListener('vault:batch-update', handler);
+    };
   },
   onBeforeAppClose: (callback) => {
     const handler = () => callback();

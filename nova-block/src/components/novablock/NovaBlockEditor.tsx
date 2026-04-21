@@ -1914,6 +1914,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     return () => {
       scrollContainer.removeEventListener('scroll', handleReposition);
       window.removeEventListener('resize', handleReposition);
+      if (dragHandleRepositionFrameRef.current !== null) {
+        cancelAnimationFrame(dragHandleRepositionFrameRef.current);
+      }
     };
   }, [scheduleDragHandleReposition]);
 

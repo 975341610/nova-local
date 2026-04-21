@@ -1298,5 +1298,11 @@ Fixed Flip Clock animation pure CSS
   - 引入 `zustand` 替代 `App.tsx` 中的全局 `notes` state 传递。通过将状态细粒度化（如 `useNoteTreeData` Selector），将笔记的“元数据”（结构/标题）和“正文内容”解耦，彻底消灭了“编辑器内每打一个字，侧边栏都会发生全量 React 重绘”的性能毒瘤。
   - 引入 `react-virtuoso` 对左侧边栏 `SidebarTree` 进行了虚拟列表重构。编写了树形结构展平算法 (`flattenTree`)，使 DOM 树中永远只渲染可视区域的几十个节点，即使加载 2000+ 笔记，滚动和渲染依然保持流畅度。
 
+- **[P2] 稳定性加固与底层监听优化 (fs.watch -> chokidar)**: 
+  - 引入 `chokidar` 替代存在跨平台缺陷的 Node 原生 `fs.watch`。
+  - 开启 `awaitWriteFinish`（1000ms 阈值），确保第三方外部程序写盘彻底结束后再触发更新，根除文件截断导致的读取为空问题。
+  - 主进程实现 IPC 批量更新 (`vault:batch-update`) 与 500ms 防抖队列。在面对同步盘（如 OneDrive）瞬间拉取 50 篇新笔记时，前端仅会收到 1 次合并后的状态更新，极大降低了由于 IPC 瞬间风暴导致的渲染进程假死风险。
+  - 修复并审查了前端 `useEffect` 中遗漏的全局事件清理（如未被 `cancel` 的 `requestAnimationFrame`）。
+
 ### 测试保证
 - 修复了相关文件的测试环境，保证原有测试用例（`npm test` 或 `vitest`）在引入新逻辑后依然全部通过，维护了良好的 TDD 规范。
