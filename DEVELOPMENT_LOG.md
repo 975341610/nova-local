@@ -1342,5 +1342,10 @@ Fixed Flip Clock animation pure CSS
   - 主进程实现 IPC 批量更新 (`vault:batch-update`) 与 500ms 防抖队列。在面对同步盘（如 OneDrive）瞬间拉取 50 篇新笔记时，前端仅会收到 1 次合并后的状态更新，极大降低了由于 IPC 瞬间风暴导致的渲染进程假死风险。
   - 修复并审查了前端 `useEffect` 中遗漏的全局事件清理（如未被 `cancel` 的 `requestAnimationFrame`）。
 
+- **[P0] 修复画布稳定性危机 (Canvas Editor Remounts & Navigation Bugs)**: 
+  - **白屏修复**：排除了 `App.tsx` 中包裹 `CanvasEditor` 的动态 `key`，防止因为 ID 波动或时间更新导致 React 物理卸载整个组件树（引发短暂白屏和重载）。
+  - **跳转修复**：锁死了前端 `pickCurrentNoteId` 状态同步抢占的路由跳转。当拉取全量笔记更新时，只要旧选中的 ID 依然存在于新列表中，严禁进行回退或强制选择第一个笔记。
+  - **刷新修复**：延长主进程 `isRecentLocalVaultChange` 的写入屏蔽期（自 1.5s 提升至 3s），适应带有媒体资源的大型画布文件 I/O 写入延迟，彻底解决大文件写盘跨越静音期而被底层监听器误判为“外部变动”的无限刷新回环。
+
 ### 测试保证
 - 修复了相关文件的测试环境，保证原有测试用例（`npm test` 或 `vitest`）在引入新逻辑后依然全部通过，维护了良好的 TDD 规范。

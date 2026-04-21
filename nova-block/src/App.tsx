@@ -204,8 +204,11 @@ function App() {
     const prevNotes = useNoteStore.getState().notes
     setNotes(loadedNotes.map(note => mergeNote(prevNotes.find(item => item.id === note.id), note)))
     
-    // 稳定性核心修复：只有当 preferredId 存在且合法，或者当前 ID 确实失效时才更新
+    // 稳定性核心修复：只要当前 ID 还在列表中，就绝对不改变它
     setCurrentNoteId((prev: number | null) => {
+      if (prev !== null && loadedNotes.some(n => n.id === prev)) {
+        return prev;
+      }
       const targetId = nextPreferredId ?? prev;
       if (targetId && loadedNotes.some(n => n.id === targetId)) {
         return targetId;
@@ -747,7 +750,7 @@ function App() {
 
                 <AnimatePresence mode="wait">
                   <motion.div
-                    key={`note-${currentNoteId ?? 'empty'}`}
+                    key={`editor-container`}
                     initial={{ opacity: 0, y: 10, filter: 'blur(10px)' }}
                     animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                     exit={{ opacity: 0, y: -10, filter: 'blur(10px)' }}

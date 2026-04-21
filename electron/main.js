@@ -33,7 +33,7 @@ function markLocalVaultChange(targetPath) {
   }
 
   const key = normalizeVaultRelativePath(relativePath);
-  recentLocalVaultChanges.set(key, Date.now() + 1500);
+  recentLocalVaultChanges.set(key, Date.now() + 3000); // 延长静音期到 3s
 
   const parentRelativePath = path.dirname(relativePath);
   if (parentRelativePath && parentRelativePath !== '.' && parentRelativePath !== relativePath) {
@@ -245,7 +245,7 @@ app.whenReady().then(async () => {
     // 批量防抖处理
     vaultChangeQueue.push(payload);
     if (!vaultChangeTimer) {
-      vaultChangeTimer = setTimeout(flushVaultChanges, 500);
+      vaultChangeTimer = setTimeout(flushVaultChanges, 1000); // 增加前端防抖时间到 1s
     }
   });
   watcher.start();
