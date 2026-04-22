@@ -186,6 +186,63 @@ test('fsBridge retries atomic note saves when Windows temporarily blocks the tar
   }
 });
 
+test('fsBridge falls back to direct write when atomic rename keeps failing', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Canvas Fallback',
+    content: '{"version":"v1","nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    type: 'canvas',
+  });
+
+  const originalRename = fs.rename;
+  const originalWriteFile = fs.writeFile;
+  let renameAttempts = 0;
+  let directWriteAttempts = 0;
+
+  fs.rename = async (sourcePath, targetPath) => {
+    if (targetPath === created.file_path && sourcePath.endsWith('.tmp')) {
+      renameAttempts += 1;
+      const error = new Error('target file is locked forever');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return originalRename(sourcePath, targetPath);
+  };
+
+  fs.writeFile = async (targetPath, content, encodingOrOptions) => {
+    if (targetPath === created.file_path) {
+      directWriteAttempts += 1;
+    }
+    return originalWriteFile(targetPath, content, encodingOrOptions);
+  };
+
+  try {
+    const updated = await bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      content: '{"version":"v1","nodes":[{"id":"media-fallback"}],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    });
+
+    assert.equal(updated.type, 'canvas');
+    assert.ok(renameAttempts >= 3);
+    assert.ok(directWriteAttempts >= 1);
+
+    const raw = await fs.readFile(created.file_path, 'utf8');
+    assert.match(raw, /media-fallback/);
+
+    const dirents = await fs.readdir(path.dirname(created.file_path));
+    for (const entry of dirents) {
+      assert.ok(!entry.endsWith('.tmp'));
+    }
+  } finally {
+    fs.rename = originalRename;
+    fs.writeFile = originalWriteFile;
+  }
+});
+
 test('fsBridge repairs duplicate note ids in an existing vault', async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
   const notesDir = path.join(tempRoot, 'Notes');

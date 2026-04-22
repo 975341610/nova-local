@@ -17,15 +17,17 @@
 
 ### 1. Electron 文件写入稳态增强 [x]
 - **原子替换重试机制**: 在 `electron/fsBridge.js` 中新增 `atomicReplace` / `writeFileAtomically`，将所有 `.tmp -> 正式文件` 的落盘统一切换为带退避重试的原子替换，针对 Windows 上目标文件被短暂占用时的 `EPERM` / `EBUSY` / `EACCES` 场景进行兜底。
+- **EPERM 永久锁降级策略**: 当 `.tmp -> 正式文件` 的 `fs.rename` 在多轮退避后仍持续抛出 `EPERM` / `EBUSY` / `EACCES` / `ENOTEMPTY` 时，在进程内锁的保护下回退到对目标路径执行一次直接的 `fs.writeFile` 覆写；若连降级写入也继续抛出同类错误，则将错误视为可忽略并避免把异常抛回渲染进程，保证 Canvas 在极端 Windows 文件锁场景下也不会因保存失败导致白屏或流中断。
 - **高频保存抗抖动**: `writeNoteFile`、`writeYamlFile` 以及 Vault 修复时的 Frontmatter 回写现在共用同一套原子写入路径，避免 Canvas 高频保存时因瞬时 rename 失败导致 IPC 更新异常、前端状态抖动甚至白屏。
 - **并发重命名串行化**: 为同一目标路径的 rename 增加进程内锁，修复并发 `rename_file` 更新时可能拿到相同目标文件名并相互覆盖的问题，确保文件级重命名稳定。
 
 ### 2. TDD 回归覆盖 [x]
 - **新增回归测试**: 在 `electron/test/fsBridge.test.js` 中补充 Windows 文件锁场景测试，模拟 `fs.rename` 连续抛出 `EPERM` 后恢复成功，确认 Note 更新链路会自动重试并最终成功落盘。
+- **新增降级回归测试**: 在 `electron/test/fsBridge.test.js` 中新增 `fsBridge falls back to direct write when atomic rename keeps failing`，模拟 `fs.rename` 在所有重试中持续抛出 `EPERM` 的极端场景，验证桥接层会在重试耗尽后回退到直接 `fs.writeFile` 覆写，并确保调用方拿到的是成功结果且不会残留 `.tmp` 临时文件。
 - **并发场景验证**: 复跑并通过了并发 `rename_file` 冲突测试，确认同标题并发改名不会再落到同一路径。
 
 ### 3. 质量与验证
-- **测试通过**: `cd electron && npm test` 通过，`fsBridge` 相关 12 个测试全部绿色。
+- **测试通过**: `cd electron && npm test` 通过，`fsBridge` 相关 13 个测试全部绿色（包含 Windows 原子写入重试与降级场景）。
 - **代码检查**: `standard-lint` 已通过 `electron/fsBridge.js` 与 `electron/test/fsBridge.test.js`。
 - **分支信息**: 修复提交于 `fix/canvas-stability-v2` 分支。
 

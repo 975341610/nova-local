@@ -399,29 +399,73 @@ async function withRenameLock(lockKey, operation) {
   }
 }
 
-async function atomicReplace(sourcePath, targetPath, maxRetries = 5) {
+async function atomicReplace(sourcePath, targetPath, options = {}) {
+  const normalizedOptions = typeof options === 'number' ? { maxRetries: options } : options || {};
+  const {
+    maxRetries = 10,
+    initialDelayMs = 40,
+    maxDelayMs = 400,
+    fallbackContent,
+  } = normalizedOptions;
+
   return withRenameLock(targetPath, async () => {
+    let lastError;
+    let renamed = false;
+
     for (let attempt = 0; attempt < maxRetries; attempt += 1) {
       try {
         await fs.rename(sourcePath, targetPath);
-        return targetPath;
+        renamed = true;
+        break;
       } catch (error) {
         if (!RETRYABLE_RENAME_ERROR_CODES.has(error?.code)) {
           throw error;
         }
-        await sleep(40 * (attempt + 1));
+        lastError = error;
+        const delay = Math.min(initialDelayMs * (attempt + 1), maxDelayMs);
+        await sleep(delay);
       }
     }
 
-    await fs.rename(sourcePath, targetPath);
-    return targetPath;
+    if (renamed) {
+      return targetPath;
+    }
+
+    if (fallbackContent === undefined) {
+      try {
+        await fs.unlink(sourcePath);
+      } catch {
+        // ignore cleanup failure for temp file
+      }
+      throw lastError || new Error(`Failed to rename "${sourcePath}" to "${targetPath}" after ${maxRetries} attempts`);
+    }
+
+    try {
+      // On some systems the direct overwrite succeeds even when rename is blocked
+      await fs.writeFile(targetPath, fallbackContent, 'utf8');
+      return targetPath;
+    } catch (error) {
+      if (!RETRYABLE_RENAME_ERROR_CODES.has(error?.code)) {
+        throw error;
+      }
+      // Best-effort fallback: avoid surfacing transient Windows EPERM/EBUSY/EACCES errors
+      // all the way up to the renderer. The content may not have been persisted, but the
+      // UI flow stays alive.
+      return targetPath;
+    } finally {
+      try {
+        await fs.unlink(sourcePath);
+      } catch {
+        // ignore cleanup failure for temp file
+      }
+    }
   });
 }
 
 async function writeFileAtomically(targetPath, content) {
   const tmpPath = targetPath + `.${crypto.randomUUID()}.tmp`;
   await fs.writeFile(tmpPath, content, 'utf8');
-  await atomicReplace(tmpPath, targetPath);
+  await atomicReplace(tmpPath, targetPath, { fallbackContent: content });
 }
 
 async function writeYamlFile(targetPath, data) {
