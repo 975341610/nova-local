@@ -145,6 +145,47 @@ title: 测试画布
   assert.doesNotMatch(raw, /title: 测试画布\nicon:/);
 });
 
+test('fsBridge retries atomic note saves when Windows temporarily blocks the target file', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Canvas Retry',
+    content: '{"version":"v1","nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    type: 'canvas',
+  });
+
+  const originalRename = fs.rename;
+  let blockedAttempts = 0;
+
+  fs.rename = async (sourcePath, targetPath) => {
+    if (targetPath === created.file_path && sourcePath.endsWith('.tmp') && blockedAttempts < 2) {
+      blockedAttempts += 1;
+      const error = new Error('target file is locked');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return originalRename(sourcePath, targetPath);
+  };
+
+  try {
+    const updated = await bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      content: '{"version":"v1","nodes":[{"id":"media-1"}],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    });
+
+    assert.equal(blockedAttempts, 2);
+    assert.equal(updated.type, 'canvas');
+
+    const raw = await fs.readFile(created.file_path, 'utf8');
+    assert.match(raw, /media-1/);
+  } finally {
+    fs.rename = originalRename;
+  }
+});
+
 test('fsBridge repairs duplicate note ids in an existing vault', async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
   const notesDir = path.join(tempRoot, 'Notes');

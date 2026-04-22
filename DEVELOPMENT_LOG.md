@@ -1,5 +1,21 @@
 # Development Log
 
+## [2026-04-22] - Canvas 拖拽媒体白屏抖动修复（Windows 原子写入冲突） [已解决]
+
+### 1. Electron 文件写入稳态增强 [x]
+- **原子替换重试机制**: 在 `electron/fsBridge.js` 中新增 `atomicReplace` / `writeFileAtomically`，将所有 `.tmp -> 正式文件` 的落盘统一切换为带退避重试的原子替换，针对 Windows 上目标文件被短暂占用时的 `EPERM` / `EBUSY` / `EACCES` 场景进行兜底。
+- **高频保存抗抖动**: `writeNoteFile`、`writeYamlFile` 以及 Vault 修复时的 Frontmatter 回写现在共用同一套原子写入路径，避免 Canvas 高频保存时因瞬时 rename 失败导致 IPC 更新异常、前端状态抖动甚至白屏。
+- **并发重命名串行化**: 为同一目标路径的 rename 增加进程内锁，修复并发 `rename_file` 更新时可能拿到相同目标文件名并相互覆盖的问题，确保文件级重命名稳定。
+
+### 2. TDD 回归覆盖 [x]
+- **新增回归测试**: 在 `electron/test/fsBridge.test.js` 中补充 Windows 文件锁场景测试，模拟 `fs.rename` 连续抛出 `EPERM` 后恢复成功，确认 Note 更新链路会自动重试并最终成功落盘。
+- **并发场景验证**: 复跑并通过了并发 `rename_file` 冲突测试，确认同标题并发改名不会再落到同一路径。
+
+### 3. 质量与验证
+- **测试通过**: `cd electron && npm test` 通过，`fsBridge` 相关 12 个测试全部绿色。
+- **代码检查**: `standard-lint` 已通过 `electron/fsBridge.js` 与 `electron/test/fsBridge.test.js`。
+- **分支信息**: 修复提交于 `fix/canvas-stability-v2` 分支。
+
 ## [2026-04-21] - 画布 (Canvas) P0 级稳定性深度修复 (白屏/刷新/跳笔记) [已解决]
 
 ### 1. 核心稳定性机制重构 [x]

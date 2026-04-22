@@ -371,11 +371,62 @@ async function ensureDir(targetPath) {
   await fs.mkdir(targetPath, { recursive: true });
 }
 
-  async function writeYamlFile(targetPath, data) {
-    const tmpPath = targetPath + `.${crypto.randomUUID()}.tmp`;
-    await fs.writeFile(tmpPath, `${stringifyYamlLike(data).trimEnd()}\n`, 'utf8');
-    await fs.rename(tmpPath, targetPath);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const renameLocks = new Map();
+const RETRYABLE_RENAME_ERROR_CODES = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY']);
+
+async function withRenameLock(lockKey, operation) {
+  const normalizedKey = path.resolve(lockKey);
+  const previous = renameLocks.get(normalizedKey) || Promise.resolve();
+  let releaseLock;
+  const current = new Promise((resolve) => {
+    releaseLock = resolve;
+  });
+
+  renameLocks.set(normalizedKey, current);
+  await previous.catch(() => {});
+
+  try {
+    return await operation();
+  } finally {
+    releaseLock();
+    if (renameLocks.get(normalizedKey) === current) {
+      renameLocks.delete(normalizedKey);
+    }
   }
+}
+
+async function atomicReplace(sourcePath, targetPath, maxRetries = 5) {
+  return withRenameLock(targetPath, async () => {
+    for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+      try {
+        await fs.rename(sourcePath, targetPath);
+        return targetPath;
+      } catch (error) {
+        if (!RETRYABLE_RENAME_ERROR_CODES.has(error?.code)) {
+          throw error;
+        }
+        await sleep(40 * (attempt + 1));
+      }
+    }
+
+    await fs.rename(sourcePath, targetPath);
+    return targetPath;
+  });
+}
+
+async function writeFileAtomically(targetPath, content) {
+  const tmpPath = targetPath + `.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(tmpPath, content, 'utf8');
+  await atomicReplace(tmpPath, targetPath);
+}
+
+async function writeYamlFile(targetPath, data) {
+  await writeFileAtomically(targetPath, `${stringifyYamlLike(data).trimEnd()}\n`);
+}
 
 async function readYamlFile(targetPath) {
   if (!(await pathExists(targetPath))) {
@@ -409,32 +460,34 @@ async function uniquePath(targetPath) {
 }
 
 async function safeRename(sourcePath, targetPath) {
-  let resolvedTarget = targetPath;
+  return withRenameLock(targetPath, async () => {
+    let resolvedTarget = targetPath;
 
-  if (path.resolve(sourcePath) === path.resolve(resolvedTarget)) {
-    return resolvedTarget;
-  }
-
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    if (path.resolve(sourcePath) !== path.resolve(resolvedTarget) && await pathExists(resolvedTarget)) {
-      resolvedTarget = await uniquePath(resolvedTarget);
+    if (path.resolve(sourcePath) === path.resolve(resolvedTarget)) {
+      return resolvedTarget;
     }
 
-    try {
-      await fs.rename(sourcePath, resolvedTarget);
-      return resolvedTarget;
-    } catch (error) {
-      if (!['EEXIST', 'EPERM', 'ENOTEMPTY'].includes(error?.code)) {
-        throw error;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      if (path.resolve(sourcePath) !== path.resolve(resolvedTarget) && await pathExists(resolvedTarget)) {
+        resolvedTarget = await uniquePath(resolvedTarget);
       }
 
-      resolvedTarget = await uniquePath(targetPath);
-      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-    }
-  }
+      try {
+        await fs.rename(sourcePath, resolvedTarget);
+        return resolvedTarget;
+      } catch (error) {
+        if (!['EEXIST', 'EPERM', 'ENOTEMPTY'].includes(error?.code)) {
+          throw error;
+        }
 
-  await fs.rename(sourcePath, resolvedTarget);
-  return resolvedTarget;
+        resolvedTarget = await uniquePath(targetPath);
+        await sleep(20 * (attempt + 1));
+      }
+    }
+
+    await fs.rename(sourcePath, resolvedTarget);
+    return resolvedTarget;
+  });
 }
 
 function sortDirents(a, b) {
@@ -727,9 +780,7 @@ function createFsBridge(options) {
       }
 
       if (changed) {
-        const tmpPath = itemPath + `.${crypto.randomUUID()}.tmp`;
-        await fs.writeFile(tmpPath, serializeFrontmatter(nextMeta, body), 'utf8');
-        await fs.rename(tmpPath, itemPath);
+        await writeFileAtomically(itemPath, serializeFrontmatter(nextMeta, body));
       }
     }
   }
@@ -1117,9 +1168,7 @@ function createFsBridge(options) {
       original_rel_path: note._meta?.original_rel_path || null,
     };
 
-    const tmpPath = notePath + `.${crypto.randomUUID()}.tmp`;
-    await fs.writeFile(tmpPath, serializeFrontmatter(meta, note.content || ''), 'utf8');
-    await fs.rename(tmpPath, notePath);
+    await writeFileAtomically(notePath, serializeFrontmatter(meta, note.content || ''));
     return meta;
   }
 
