@@ -10,6 +10,7 @@
 ### 2. 质量与验证 [x]
 - **自动化验证**: 已通过 `cd nova-local/nova-block && npm test -- src/test/canvas-runtime.test.ts src/test/canvas-stability.test.ts` 与 `cd nova-local/nova-block && npx tsc --noEmit`。
 - **TDD 覆盖**: 新增 `nova-block/src/test/canvas-runtime.test.ts`，覆盖 hydration 判定、runtime 注入、拖拽状态识别与 viewport 阈值判断。
+- **推送状态**: 已提交并推送到 `fix/canvas-stability-v2`，包含本次 Canvas 稳定性修复与日志更新。
 - **校验备注**: `standard-lint` 仍会命中 `CanvasEditor.tsx` 里已有的 `jsx-no-leaked-render` / `exhaustive-deps` 存量问题；本次未扩散新增同类报错。`@byted/tsc-files-mono` 与 `@byted/aime-d2c` 在当前环境的 npm registry 不可用，已改用可执行的本地 `tsc` 校验并保留失败信息。
 
 ## [2026-04-22] - Canvas 拖拽媒体白屏抖动修复（Windows 原子写入冲突） [已解决]
