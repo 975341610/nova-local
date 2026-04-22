@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addEdge,
   Background,
@@ -7,14 +7,15 @@ import {
   MarkerType,
   MiniMap,
   NodeResizeControl,
+  PanOnScrollMode,
   Panel,
   ReactFlow,
   ReactFlowProvider,
+  SelectionMode,
   useEdgesState,
   useNodesState,
   useReactFlow,
   type Connection,
-  type Edge,
   type EdgeChange,
   type Node,
   type NodeProps,
@@ -50,6 +51,20 @@ import { BaseNode } from './BaseNode';
 import { api, formatUrl } from '../../lib/api';
 import { promptCompat } from '../../lib/promptCompat';
 import { useNoteStore } from '../../store/useNoteStore';
+import {
+  GROUP_NODE_TYPE,
+  LINK_NODE_TYPE,
+  MEDIA_NODE_TYPE,
+  REFERENCE_NODE_TYPE,
+  TEXT_NODE_TYPE,
+  injectRuntimeIntoCanvasNode,
+  parseCanvasContent,
+  resolveCanvasDragActivity,
+  shouldHydrateCanvasFromIncomingNote,
+  shouldPersistViewport,
+  summarizeNote,
+  type RuntimeInjectionContext,
+} from './canvasState';
 
 type CanvasTextNodeData = {
   title: string;
@@ -108,25 +123,11 @@ type CanvasGroupNode = Node<CanvasGroupNodeData, 'groupNode'>;
 
 type CanvasNode = CanvasTextNode | CanvasReferenceNode | CanvasMediaNode | CanvasLinkNode | CanvasGroupNode;
 
-type CanvasSerialized = {
-  version: 'v1';
-  nodes: CanvasNode[];
-  edges: Edge[];
-  viewport?: Viewport;
-  backgroundUrl?: string;
-};
-
 type CanvasEditorProps = {
   note: Note | null;
   onSave: (payload: Partial<Note>) => Promise<Partial<Note> | void> | void;
   onNotify?: (text: string, tone: 'success' | 'error' | 'info') => void;
 };
-
-const TEXT_NODE_TYPE = 'canvas-text-card';
-const REFERENCE_NODE_TYPE = 'canvas-note-reference';
-const MEDIA_NODE_TYPE = 'canvas-media-node';
-const LINK_NODE_TYPE = 'canvas-link-node';
-const GROUP_NODE_TYPE = 'groupNode';
 
 const isLocalUploadedFile = (url: string | undefined | null, source?: 'local' | 'online') => {
   if (!url) return false;
@@ -201,43 +202,6 @@ const createLinkNode = (id: string, url: string, title: string, x: number, y: nu
   style: { width: 300, height: 80 },
 });
 
-function summarizeNote(note: Note) {
-  if (note.type === 'canvas') {
-    try {
-      const data = JSON.parse(note.content || '{}') as CanvasSerialized;
-      const nodeCount = data.nodes?.length || 0;
-      return `[无界画布] 包含 ${nodeCount} 个节点`;
-    } catch {
-      return '[无界画布]';
-    }
-  }
-
-  const plainText = (note.content || '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return plainText ? plainText.slice(0, 84) : '点击即可回到该笔记，继续完善你的灵感脉络。';
-}
-
-function parseCanvasContent(content?: string): CanvasSerialized {
-  if (!content) {
-    return { version: 'v1', nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 }, backgroundUrl: undefined };
-  }
-
-  try {
-    const parsed = JSON.parse(content) as Partial<CanvasSerialized>;
-    return {
-      version: 'v1',
-      nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
-      edges: Array.isArray(parsed.edges) ? parsed.edges : [],
-      viewport: parsed.viewport ?? { x: 0, y: 0, zoom: 1 },
-      backgroundUrl: typeof parsed.backgroundUrl === 'string' ? parsed.backgroundUrl : undefined,
-    };
-  } catch {
-    return { version: 'v1', nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 }, backgroundUrl: undefined };
-  }
-}
 
 function TextCardNode(props: NodeProps<CanvasTextNode>) {
   const { id, data, selected } = props;
@@ -823,8 +787,10 @@ function SelectionToolbar({ selectedNodes, onGroup, onRemove }: { selectedNodes:
 
 function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
   const notes = useNoteStore(state => state.notes);
+  const noteLookup = useMemo(() => new Map(notes.map((item) => [item.id, item] as const)), [notes]);
   const parsedContent = useMemo(() => parseCanvasContent(note?.content), [note?.content]);
-  const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(parsedContent.nodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(parsedContent.nodes as CanvasNode[]);
+  const [persistedNodes, setPersistedNodes] = useState<CanvasNode[]>(parsedContent.nodes as CanvasNode[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState(parsedContent.edges);
   const [viewport, setViewport] = useState<Viewport>(parsedContent.viewport ?? { x: 0, y: 0, zoom: 1 });
   const [backgroundUrl, setBackgroundUrl] = useState<string | undefined>(parsedContent.backgroundUrl);
@@ -847,6 +813,17 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
     },
     [setSelection],
   );
+
+  const handleNodesChange = useCallback(
+    (changes: any[]) => {
+      const dragActivity = resolveCanvasDragActivity(changes);
+      if (typeof dragActivity === 'boolean') {
+        isNodeDragActiveRef.current = dragActivity;
+      }
+      onNodesChange(changes);
+    },
+    [onNodesChange],
+  );
   const [isDraggingNoteFromSidebar, setIsDraggingNoteFromSidebar] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -857,6 +834,13 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
   const pendingDropPositionRef = useRef<{ x: number; y: number } | null>(null);
   const pendingDropGroupIdRef = useRef<string | null>(null);
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
+  const lastLoadedNoteIdRef = useRef<number | null>(null);
+  const lastLoadedNoteContentRef = useRef<string | null>(null);
+  const isNodeDragActiveRef = useRef(false);
+
+  const handleInfoClick = useCallback((id: string) => {
+    setMemoOpenId(id);
+  }, []);
 
   const updateNodeData = useCallback((id: string, patch: any) => {
     setNodes((prev) =>
@@ -970,6 +954,18 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
       });
     });
   }, [setNodes]);
+
+  const injectRuntimeNode = useCallback(
+    (node: CanvasNode) =>
+      injectRuntimeIntoCanvasNode(node as Node<Record<string, unknown>, string>, {
+        linkedNotesById: noteLookup,
+        onChange: updateNodeData as RuntimeInjectionContext['onChange'],
+        onInfoClick: handleInfoClick,
+        onUngroup: handleUngroup,
+        onToggleCollapse: handleToggleCollapse,
+      }) as CanvasNode,
+    [noteLookup, updateNodeData, handleInfoClick, handleUngroup, handleToggleCollapse],
+  );
 
   const handleRemoveFromGroup = useCallback((nodeId: string) => {
     setNodes((prev) => {
@@ -1085,6 +1081,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
   }, [setNodes, setContextMenu, onNotify]);
 
   const onNodeDragStop = useCallback((_: any, node: Node) => {
+    isNodeDragActiveRef.current = false;
     if (node.type === GROUP_NODE_TYPE) return;
 
     setNodes((nds) => {
@@ -1193,104 +1190,50 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
     });
   }, [setNodes]);
 
-  const lastLoadedNoteIdRef = useRef<number | null>(null);
-
   useEffect(() => {
     if (!note) return;
-    
-    // 稳定性核心修复：只有当切换笔记（ID变化）或内容真正发生外部变更时才同步到 state
-    // 避免因自身保存触发的 store 更新导致 nodes/edges/viewport 被强行重置
-    const isNoteSwapped = lastLoadedNoteIdRef.current !== note.id;
-    const isContentExternallyChanged = !isNoteSwapped && note.content !== saveSnapshot;
-    
-    if (!isNoteSwapped && !isContentExternallyChanged) {
+    if (!shouldHydrateCanvasFromIncomingNote({
+      lastLoadedNoteId: lastLoadedNoteIdRef.current,
+      lastLoadedNoteContent: lastLoadedNoteContentRef.current,
+      noteId: note.id,
+      noteContent: note.content,
+    })) {
       return;
     }
 
+    const incomingCanvas = parseCanvasContent(note.content);
+    const hydratedNodesFromNote = incomingCanvas.nodes.map((item) => injectRuntimeNode(item as CanvasNode));
+    const nextViewport = incomingCanvas.viewport ?? { x: 0, y: 0, zoom: 1 };
+
     lastLoadedNoteIdRef.current = note.id;
-
-    idRef.current = Math.max(0, ...parsedContent.nodes.map((item) => Number(String(item.id).replace(/[^0-9]/g, '')) || 0));
-    setNodes(
-      parsedContent.nodes.map((item) => {
-        const commonData = {
-          memo: (item.data as any)?.memo ?? '',
-          onChange: updateNodeData,
-          onInfoClick: (id: string) => setMemoOpenId(id),
-        };
-
-        if (item.type === TEXT_NODE_TYPE) {
-          return {
-            ...item,
-            dragHandle: '.canvas-card-drag-handle',
-            data: {
-              ...commonData,
-              title: (item.data as CanvasTextNodeData | undefined)?.title ?? '灵感便签',
-              body: (item.data as CanvasTextNodeData | undefined)?.body ?? '',
-            },
-          };
-        }
-
-        if (item.type === REFERENCE_NODE_TYPE) {
-          const noteId = Number((item.data as Partial<CanvasReferenceNodeData> | undefined)?.noteId);
-          const linked = notes.find((candidate) => candidate.id === noteId);
-          if (!linked) return { ...item, dragHandle: '.canvas-card-drag-handle', data: { ...item.data, ...commonData } } as CanvasReferenceNode;
-
-          return {
-            ...item,
-            dragHandle: '.canvas-card-drag-handle',
-            data: {
-              ...commonData,
-              noteId: linked.id,
-              title: linked.title || '无标题笔记',
-              icon: linked.icon || '📝',
-              summary: summarizeNote(linked),
-              tags: linked.tags || [],
-            },
-          };
-        }
-
-        if (item.type === MEDIA_NODE_TYPE || item.type === LINK_NODE_TYPE) {
-          return {
-            ...item,
-            data: {
-              ...item.data,
-              ...commonData,
-            },
-          } as CanvasMediaNode | CanvasLinkNode;
-        }
-
-        if (item.type === GROUP_NODE_TYPE) {
-          return {
-            ...item,
-            dragHandle: '.canvas-group-drag-handle',
-            data: {
-              ...item.data,
-              ...commonData,
-              onUngroup: handleUngroup,
-              onToggleCollapse: handleToggleCollapse,
-            },
-          };
-        }
-
-        return item;
-      }),
-    );
-    setEdges(parsedContent.edges);
-    setViewport(parsedContent.viewport ?? { x: 0, y: 0, zoom: 1 });
-    setBackgroundUrl(parsedContent.backgroundUrl);
-    
-    if (isNoteSwapped) {
-      didInitViewportRef.current = false;
-    }
-  }, [note?.id, note?.content, notes, parsedContent, setEdges, setNodes, updateNodeData, handleUngroup, handleToggleCollapse]);
-
-  const didInitViewportRef = useRef(false);
+    lastLoadedNoteContentRef.current = note.content ?? '';
+    idRef.current = Math.max(0, ...incomingCanvas.nodes.map((item) => Number(String(item.id).replace(/[^0-9]/g, '')) || 0));
+    setNodes(hydratedNodesFromNote);
+    setPersistedNodes(hydratedNodesFromNote);
+    setEdges(incomingCanvas.edges);
+    setViewport(nextViewport);
+    void reactFlow.setViewport(nextViewport, { duration: 0 });
+    setBackgroundUrl(incomingCanvas.backgroundUrl);
+  }, [note, reactFlow, injectRuntimeNode, setEdges, setNodes]);
 
   useEffect(() => {
-    if (didInitViewportRef.current) return;
-    didInitViewportRef.current = true;
-    reactFlow.setViewport(viewport, { duration: 0 });
-  }, [reactFlow]);
+    setNodes((prev) => {
+      let didChange = false;
+      const next = prev.map((item) => {
+        if (item.type !== REFERENCE_NODE_TYPE) {
+          return item;
+        }
+
+        const patched = injectRuntimeNode(item);
+        if (patched !== item) {
+          didChange = true;
+        }
+        return patched;
+      });
+
+      return didChange ? next : prev;
+    });
+  }, [injectRuntimeNode, setNodes]);
 
   const nextId = useCallback((prefix: string) => {
     idRef.current += 1;
@@ -1306,6 +1249,14 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
   }, [reactFlow]);
 
   const hydratedNodes = nodes;
+
+  useEffect(() => {
+    if (isNodeDragActiveRef.current) {
+      return;
+    }
+
+    setPersistedNodes(nodes);
+  }, [nodes]);
 
   const nodeTypes = useMemo(
     () => ({
@@ -1338,14 +1289,14 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
   );
 
   const edgesWithSelection = useMemo(() => {
-    const selectedNodes = new Set(hydratedNodes.filter((n) => n.selected).map((n) => n.id));
+    const selectedNodes = new Set(selection.nodes.map((n) => n.id));
     return edges.map((e) => {
       if (selectedNodes.has(e.source) && selectedNodes.has(e.target)) {
         return { ...e, selected: true };
       }
       return e;
     });
-  }, [edges, hydratedNodes]);
+  }, [edges, selection.nodes]);
 
   const handleConnect = useCallback(
     (connection: Connection) => {
@@ -1386,9 +1337,9 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
 
   const handleAddTextCard = useCallback(() => {
     const center = getCanvasCenter();
-    setNodes((prev) => [...prev, createTextNode(nextId('text'), center.x - 140, center.y - 90)]);
+    setNodes((prev) => [...prev, injectRuntimeNode(createTextNode(nextId('text'), center.x - 140, center.y - 90))]);
     onNotify?.('已添加文本卡片', 'success');
-  }, [getCanvasCenter, nextId, onNotify, setNodes]);
+  }, [getCanvasCenter, injectRuntimeNode, nextId, onNotify, setNodes]);
 
   const canvasBackgroundStyle = useMemo(() => {
     if (!backgroundUrl) return undefined;
@@ -1446,14 +1397,14 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
       setNodes((prev) => {
         const group = groupId ? prev.find((n) => n.id === groupId && n.type === GROUP_NODE_TYPE) : null;
         if (!group) {
-          return [...prev, createReferenceNode(nextId('ref'), sourceNote, targetPosition.x, targetPosition.y)];
+          return [...prev, injectRuntimeNode(createReferenceNode(nextId('ref'), sourceNote, targetPosition.x, targetPosition.y))];
         }
 
         const shouldHide = !!(group.data as any)?.collapsed;
         return [
           ...prev,
           {
-            ...createReferenceNode(nextId('ref'), sourceNote, targetPosition.x - group.position.x, targetPosition.y - group.position.y, group.id),
+            ...injectRuntimeNode(createReferenceNode(nextId('ref'), sourceNote, targetPosition.x - group.position.x, targetPosition.y - group.position.y, group.id)),
             hidden: shouldHide,
           },
         ];
@@ -1464,22 +1415,22 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
       pendingDropGroupIdRef.current = null;
       onNotify?.(`已将《${sourceNote.title || '无标题笔记'}》放入画布`, 'success');
     },
-    [getCanvasCenter, nextId, onNotify, setNodes],
+    [getCanvasCenter, injectRuntimeNode, nextId, onNotify, setNodes],
   );
 
   const removeSelection = useCallback(() => {
-    const selectedNodeIds = new Set(selection.nodes.map((item) => item.id));
-    const selectedEdgeIds = new Set(selection.edges.map((item) => item.id));
+    const selectedNodeIds = new Set(nodes.filter((item) => item.selected).map((item) => item.id));
+    const selectedEdgeIds = new Set(edges.filter((item) => item.selected).map((item) => item.id));
     if (!selectedNodeIds.size && !selectedEdgeIds.size) return;
 
     setNodes((prev) => prev.filter((item) => !selectedNodeIds.has(item.id)));
     setEdges((prev) => prev.filter((item) => !selectedEdgeIds.has(item.id) && !selectedNodeIds.has(item.source) && !selectedNodeIds.has(item.target)));
     onNotify?.('已移除选中元素', 'info');
-  }, [onNotify, selection.edges, selection.nodes, setEdges, setNodes]);
+  }, [edges, nodes, onNotify, setEdges, setNodes]);
 
   const serializeCanvasContent = useCallback(
     (nextBackgroundUrl: string | undefined) => {
-      const serializedNodes = hydratedNodes.map((item) => {
+      const serializedNodes = persistedNodes.map((item) => {
         // 核心性能优化：仅保留持久化所需的最小字段，剔除 selected, dragging, measured 等高频变动的运行时状态
         const { id, type, position, data, style, parentId, extent, width, height } = item;
         
@@ -1516,7 +1467,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
         backgroundUrl: nextBackgroundUrl,
       });
     },
-    [edges, hydratedNodes, viewport],
+    [edges, persistedNodes, viewport],
   );
 
   const saveSnapshot = useMemo(() => serializeCanvasContent(backgroundUrl), [backgroundUrl, serializeCanvasContent]);
@@ -1798,19 +1749,21 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
             else if (mime.startsWith('video/')) type = 'video';
             else if (mime.startsWith('audio/')) type = 'audio';
             
-            return createMediaNode(
-              nextId('media'),
-              res.url,
-              type,
-              file.name,
-              flowPosition.x + idx * 20,
-              flowPosition.y + idx * 20
+            return injectRuntimeNode(
+              createMediaNode(
+                nextId('media'),
+                res.url,
+                type,
+                file.name,
+                flowPosition.x + idx * 20,
+                flowPosition.y + idx * 20,
+              ),
             );
           });
           
           setNodes((prev) => [...prev, ...newNodes]);
           onNotify?.(`成功上传并插入 ${newNodes.length} 个媒体文件`, 'success');
-        } catch (err) {
+        } catch {
           onNotify?.('文件上传失败，请稍后重试', 'error');
         } finally {
           setIsUploading(false);
@@ -1823,14 +1776,14 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
       if (text) {
         try {
           const url = new URL(text);
-          setNodes((prev) => [...prev, createLinkNode(nextId('link'), url.href, url.hostname, flowPosition.x, flowPosition.y)]);
+          setNodes((prev) => [...prev, injectRuntimeNode(createLinkNode(nextId('link'), url.href, url.hostname, flowPosition.x, flowPosition.y))]);
           onNotify?.('已成功从链接创建节点', 'success');
         } catch {
           // Not a URL, maybe just text - could create a text card if wanted
         }
       }
     },
-    [insertReferenceNode, notes, reactFlow, nextId, setNodes, onNotify],
+    [insertReferenceNode, injectRuntimeNode, note?.id, notes, reactFlow, nextId, setNodes, onNotify],
   );
 
   const handleCanvasDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -1872,7 +1825,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
           const y = group ? contextMenu.flowY - group.position.y + idx * 20 : contextMenu.flowY + idx * 20;
 
           return {
-            ...createMediaNode(nextId('media'), res.url, type, file.name, x, y, 'local', group?.id),
+            ...injectRuntimeNode(createMediaNode(nextId('media'), res.url, type, file.name, x, y, 'local', group?.id)),
             hidden: group ? shouldHide : undefined,
           } as CanvasNode;
         });
@@ -1880,14 +1833,14 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
         return [...prev, ...newNodes];
       });
       onNotify?.(`成功上传并插入 ${uploadResults.length} 个媒体文件`, 'success');
-    } catch (err) {
+    } catch {
       onNotify?.('文件上传失败，请稍后重试', 'error');
     } finally {
       setIsUploading(false);
       setContextMenu(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [contextMenu, nextId, onNotify, setNodes]);
+  }, [contextMenu, injectRuntimeNode, nextId, onNotify, setNodes]);
 
   const handleInsertLink = useCallback(async () => {
     if (!contextMenu) return;
@@ -1956,7 +1909,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
           return [
             ...prev,
             {
-              ...createMediaNode(nextId('media'), mediaSrc, mediaType, url.hostname || 'link', x, y, 'online', group?.id),
+              ...injectRuntimeNode(createMediaNode(nextId('media'), mediaSrc, mediaType, url.hostname || 'link', x, y, 'online', group?.id)),
               hidden: group ? shouldHide : undefined,
             } as CanvasNode,
           ];
@@ -1972,7 +1925,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
           return [
             ...prev,
             {
-              ...createLinkNode(nextId('link'), url.href, url.hostname || 'link', x, y, 'online', group?.id),
+              ...injectRuntimeNode(createLinkNode(nextId('link'), url.href, url.hostname || 'link', x, y, 'online', group?.id)),
               hidden: group ? shouldHide : undefined,
             } as CanvasNode,
           ];
@@ -1983,7 +1936,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
       onNotify?.('无效的 URL 地址', 'error');
     }
     setContextMenu(null);
-  }, [contextMenu, nextId, onNotify, setNodes]);
+  }, [contextMenu, injectRuntimeNode, nextId, onNotify, setNodes]);
 
   useEffect(() => {
     const hideMenus = () => setContextMenu(null);
@@ -2026,11 +1979,17 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
           nodes={hydratedNodes}
           edges={edgesWithSelection}
           nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
+          onNodesChange={handleNodesChange}
           onNodeDragStop={onNodeDragStop}
           onEdgesChange={handleEdgesChange}
           onConnect={handleConnect}
-          onMoveEnd={(_, currentViewport) => setViewport(currentViewport)}
+          onMoveEnd={(_, currentViewport) => {
+            setViewport((previousViewport) => (
+              shouldPersistViewport(previousViewport, currentViewport)
+                ? currentViewport
+                : previousViewport
+            ));
+          }}
           onSelectionChange={handleSelectionChange}
           fitView={hydratedNodes.length === 0}
           minZoom={0.25}
@@ -2039,9 +1998,9 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
           panOnDrag={[1]} // 仅允许中键平移（禁用右键拖动，避免与右键菜单冲突）
           panActivationKeyCode="Space"
           panOnScroll
-          panOnScrollMode={'free' as any}
+          panOnScrollMode={PanOnScrollMode.Free}
           zoomOnScroll={false}
-          selectionMode={'partial' as any}
+          selectionMode={SelectionMode.Partial}
           elevateNodesOnSelect
           elementsSelectable={true}
           edgesFocusable={true}
@@ -2204,14 +2163,14 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
               setNodes((prev) => {
                 const group = contextMenu.groupId ? prev.find((n) => n.id === contextMenu.groupId && n.type === GROUP_NODE_TYPE) : null;
                 if (!group) {
-                  return [...prev, createTextNode(nextId('text'), contextMenu.flowX, contextMenu.flowY)];
+                  return [...prev, injectRuntimeNode(createTextNode(nextId('text'), contextMenu.flowX, contextMenu.flowY))];
                 }
 
                 const shouldHide = !!(group.data as any)?.collapsed;
                 return [
                   ...prev,
                   {
-                    ...createTextNode(nextId('text'), contextMenu.flowX - group.position.x, contextMenu.flowY - group.position.y, group.id),
+                    ...injectRuntimeNode(createTextNode(nextId('text'), contextMenu.flowX - group.position.x, contextMenu.flowY - group.position.y, group.id)),
                     hidden: shouldHide,
                   },
                 ];

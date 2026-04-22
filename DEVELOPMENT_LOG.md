@@ -1,5 +1,17 @@
 # Development Log
 
+## [2026-04-22] - Canvas 稳定性建议落地与拖拽异常修复 [进行中]
+
+### 1. 核心改进内容 [x]
+- **建议来源**: 已整理并吸收 `https://mira.byteintl.net/share/101071177235_1776853330629` 中关于 Canvas hydration、视口同步、运行时回调注入与拖拽性能的修复建议，并对齐 Nova 当前 Electron + nova-block 的持久化链路。
+- **前端修复**: 在 `nova-block/src/components/canvas/CanvasEditor.tsx` 中收紧 hydration 触发条件，只在当前 note 的 `id/content` 真正变化时重载画布；同时为新建文本、引用、媒体、链接节点即时注入 runtime 回调，避免新卡片创建后短暂不可编辑。
+- **稳定性增强**: 新增 `nova-block/src/components/canvas/canvasState.ts`，统一沉淀 hydration 判定、runtime 注入、拖拽状态识别与 viewport 写回阈值逻辑；并在 `nova-block/src/components/canvas/BaseNode.tsx` 中缩小 resize/handle 命中区域，减少误触发 resize/连线的问题。
+
+### 2. 质量与验证 [x]
+- **自动化验证**: 已通过 `cd nova-local/nova-block && npm test -- src/test/canvas-runtime.test.ts src/test/canvas-stability.test.ts` 与 `cd nova-local/nova-block && npx tsc --noEmit`。
+- **TDD 覆盖**: 新增 `nova-block/src/test/canvas-runtime.test.ts`，覆盖 hydration 判定、runtime 注入、拖拽状态识别与 viewport 阈值判断。
+- **校验备注**: `standard-lint` 仍会命中 `CanvasEditor.tsx` 里已有的 `jsx-no-leaked-render` / `exhaustive-deps` 存量问题；本次未扩散新增同类报错。`@byted/tsc-files-mono` 与 `@byted/aime-d2c` 在当前环境的 npm registry 不可用，已改用可执行的本地 `tsc` 校验并保留失败信息。
+
 ## [2026-04-22] - Canvas 拖拽媒体白屏抖动修复（Windows 原子写入冲突） [已解决]
 
 ### 1. Electron 文件写入稳态增强 [x]
