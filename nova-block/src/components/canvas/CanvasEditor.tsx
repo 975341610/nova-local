@@ -830,6 +830,8 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const reactFlow = useReactFlow();
   const saveTimerRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef(false);
+  const queuedSaveRef = useRef<{ noteId: number; filePath?: string | null; snapshot: string } | null>(null);
   const idRef = useRef(0);
   const pendingDropPositionRef = useRef<{ x: number; y: number } | null>(null);
   const pendingDropGroupIdRef = useRef<string | null>(null);
@@ -1472,6 +1474,28 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
 
   const saveSnapshot = useMemo(() => serializeCanvasContent(backgroundUrl), [backgroundUrl, serializeCanvasContent]);
 
+  const persistCanvasSnapshot = useCallback(async (payload: { noteId: number; filePath?: string | null; snapshot: string }) => {
+    queuedSaveRef.current = payload;
+    if (saveInFlightRef.current) {
+      return;
+    }
+
+    saveInFlightRef.current = true;
+    try {
+      while (queuedSaveRef.current) {
+        const nextPayload = queuedSaveRef.current;
+        queuedSaveRef.current = null;
+        await onSave({
+          id: nextPayload.noteId,
+          ...(nextPayload.filePath ? { file_path: nextPayload.filePath } : {}),
+          content: nextPayload.snapshot,
+        });
+      }
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  }, [onSave]);
+
   useEffect(() => {
     if (!note) return;
     if (saveSnapshot === (note.content || '')) return;
@@ -1481,19 +1505,19 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
     }
 
     saveTimerRef.current = window.setTimeout(() => {
-      onSave({
-        id: note.id,
-        file_path: note.file_path,
-        content: saveSnapshot,
+      void persistCanvasSnapshot({
+        noteId: note.id,
+        filePath: note.file_path,
+        snapshot: saveSnapshot,
       });
-    }, 1000);
+    }, window.electron?.ipcInvoke ? 0 : 650);
 
     return () => {
       if (saveTimerRef.current) {
         window.clearTimeout(saveTimerRef.current);
       }
     };
-  }, [note, onSave, saveSnapshot]);
+  }, [note, persistCanvasSnapshot, saveSnapshot]);
 
   useEffect(() => {
     const flushPendingSave = async () => {
@@ -1503,10 +1527,10 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
         saveTimerRef.current = null;
       }
       if (saveSnapshot !== (note.content || '')) {
-        await onSave({
-          id: note.id,
-          file_path: note.file_path,
-          content: saveSnapshot,
+        await persistCanvasSnapshot({
+          noteId: note.id,
+          filePath: note.file_path,
+          snapshot: saveSnapshot,
         });
       }
     };
@@ -1539,7 +1563,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       unsubscribeBeforeClose?.();
     };
-  }, [note, onSave, saveSnapshot]);
+  }, [note, persistCanvasSnapshot, saveSnapshot]);
 
   useEffect(() => {
     const handleDelete = (event: KeyboardEvent) => {

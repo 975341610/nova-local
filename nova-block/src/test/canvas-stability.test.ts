@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { mergeNote, pickCurrentNoteId } from '../App'
+import {
+  isLatestNoteSaveSequence,
+  mergeNote,
+  nextNoteSaveSequence,
+  pickCurrentNoteId,
+  updatePendingNoteSaveCount,
+} from '../App'
 import type { Note } from '../lib/types'
 
 const mockNote: Note = {
@@ -39,6 +45,29 @@ describe('Canvas Stability Helpers', () => {
         const incoming = { ...mockNote, stickers: [{ id: 's2' }] }
         const merged = mergeNote(existing, incoming as any)
         expect(merged.stickers).toEqual([{ id: 's2' }])
+    })
+  })
+
+  describe('save sequencing helpers', () => {
+    it('should keep only the latest save response as commit eligible', () => {
+      const sequenceMap = new Map<number, number>()
+      const first = nextNoteSaveSequence(sequenceMap, 1)
+      const second = nextNoteSaveSequence(sequenceMap, 1)
+
+      expect(first).toBe(1)
+      expect(second).toBe(2)
+      expect(isLatestNoteSaveSequence(sequenceMap, 1, first)).toBe(false)
+      expect(isLatestNoteSaveSequence(sequenceMap, 1, second)).toBe(true)
+    })
+
+    it('should clamp pending save counts at zero', () => {
+      const pendingMap = new Map<number, number>()
+
+      expect(updatePendingNoteSaveCount(pendingMap, 1, 1)).toBe(1)
+      expect(updatePendingNoteSaveCount(pendingMap, 1, 1)).toBe(2)
+      expect(updatePendingNoteSaveCount(pendingMap, 1, -1)).toBe(1)
+      expect(updatePendingNoteSaveCount(pendingMap, 1, -5)).toBe(0)
+      expect(pendingMap.has(1)).toBe(false)
     })
   })
 

@@ -1,5 +1,26 @@
 # Development Log
 
+## [2026-04-22] - Windows EPERM 彻底修复（Canvas 保存串行化 + rename 协同） [已解决]
+
+### 1. 根因对齐与修复决策 [x]
+- **Mira 结论吸收**: 已阅读 `https://mira.byteintl.net/share/101071177235_1776855777179`，确认新的异常仍然集中在 Windows 平台 `.tmp -> .md` 原子替换阶段的 `EPERM` 冲突；直接触发器是同一 note 的保存与 `rename_file` 请求重叠，放大器包括 Windows 文件锁时序。
+- **差异化落地**: Mira 提到的 watcher 干扰在当前仓库中已由 `chokidar` + `markLocalVaultChange` 静默窗口替代，当前主要补齐的是“同一 note 全链路串行化”“前端返回乱序保护”“Canvas 保存合并”三块缺口，而不是盲目暂停 watcher。
+
+### 2. Electron / 主进程稳态增强 [x]
+- **同一 note 更新串行化**: 在 `electron/fsBridge.js` 中新增 note 级锁，将 `updateNote` 的“重新定位当前文件 -> 可选 rename -> 最终写盘”放入同一串行临界区，避免旧路径请求在 rename 完成后又把旧文件重新写回来。
+- **原子替换失败强重试**: `atomicReplace` 的 fallback 直写改为 `writeFileWithRetry`，对 `EPERM` / `EBUSY` / `EACCES` / `ENOTEMPTY` 持续退避重试，不再把未真正写成功的场景伪装成成功。
+- **rename 降级兜底**: `safeRename` 在 Windows rename 持续失败时，会对 markdown 文件降级为“读内容 -> 重试写目标 -> 删除源文件”，补上 `rename_file` 分支最后一层保底。
+
+### 3. 前端保存协同治理 [x]
+- **保存结果乱序保护**: `nova-block/src/App.tsx` 中新增按 note 的保存序号与 pending 计数，旧请求即便晚返回，也不会再覆盖更新状态或触发额外 rename。
+- **rename 与保存解耦排队**: `scheduleFileRename` 现在会感知同 note 是否仍有写入进行中；若保存尚未完成，则短延迟重排队，而不是直接把第二个 IPC 打到主进程上撞写盘。
+- **Canvas 自动保存合并**: `nova-block/src/components/canvas/CanvasEditor.tsx` 新增前端保存合并队列。当一次保存尚未落盘时，后续快照只保留最新一份，避免拖拽/连续编辑期间积压多个并行 `onSave`。
+
+### 4. 回归验证 [x]
+- **Electron 回归**: `electron/test/fsBridge.test.js` 新增 rename copy-delete fallback 与“同一 note 并发保存 + rename”串行化测试，覆盖本次新增的两条关键兜底链路。
+- **前端回归**: `nova-block/src/test/canvas-stability.test.ts` 补充保存序号与 pending 计数测试，确保最新请求优先、计数不会出现负值。
+- **执行说明**: 本次会同时运行 `cd electron && npm test` 与 `cd nova-block && npm test`；若根目录直接执行 `npm test`，由于仓库顶层没有 `package.json`，需要分别进入子工程执行。
+
 ## [2026-04-22] - Canvas 稳定性建议落地与拖拽异常修复 [进行中]
 
 ### 1. 核心改进内容 [x]

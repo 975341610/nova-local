@@ -406,6 +406,85 @@ test('fsBridge falls back cleanly when payload file_path is already missing on d
   assert.match(raw, /Recovered/);
 });
 
+test('fsBridge falls back to copy-delete when note rename keeps hitting Windows EPERM', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Rename Fallback',
+    content: '<p>Before rename</p>',
+    type: 'note',
+  });
+
+  const expectedPath = path.join(tempRoot, 'Notes', 'Rename Fallback Final.md');
+  const originalRename = fs.rename;
+
+  fs.rename = async (sourcePath, targetPath) => {
+    if (sourcePath === created.file_path && targetPath === expectedPath) {
+      const error = new Error('rename target is locked');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return originalRename(sourcePath, targetPath);
+  };
+
+  try {
+    const updated = await bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      title: 'Rename Fallback Final',
+      rename_file: true,
+    });
+
+    assert.equal(updated.file_path, expectedPath);
+    await assert.doesNotReject(() => fs.access(expectedPath));
+    await assert.rejects(() => fs.access(created.file_path));
+
+    const raw = await fs.readFile(expectedPath, 'utf8');
+    assert.match(raw, /Before rename/);
+    assert.match(raw, /Rename Fallback Final/);
+  } finally {
+    fs.rename = originalRename;
+  }
+});
+
+test('fsBridge serializes concurrent save and rename updates for the same note', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Concurrent Draft',
+    content: '<p>Initial</p>',
+    type: 'note',
+  });
+
+  const [renamed] = await Promise.all([
+    bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      title: 'Concurrent Final',
+      rename_file: true,
+    }),
+    bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      content: '<p>After race</p>',
+    }),
+  ]);
+
+  const expectedPath = path.join(tempRoot, 'Notes', 'Concurrent Final.md');
+  assert.equal(renamed.file_path, expectedPath);
+  await assert.doesNotReject(() => fs.access(expectedPath));
+  await assert.rejects(() => fs.access(created.file_path));
+
+  const reloaded = await bridge.getNote(created.id);
+  assert.equal(reloaded.file_path, expectedPath);
+  assert.equal(reloaded.title, 'Concurrent Final');
+  assert.match(reloaded.content || '', /After race/);
+});
+
 test('fsBridge keeps concurrent rename_file updates from colliding on the same target title', async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
   const bridge = createFsBridge({ vaultRoot: tempRoot });

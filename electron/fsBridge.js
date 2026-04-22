@@ -376,27 +376,65 @@ function sleep(ms) {
 }
 
 const renameLocks = new Map();
+const noteMutationLocks = new Map();
 const RETRYABLE_RENAME_ERROR_CODES = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY']);
+const RETRYABLE_FILE_WRITE_ERROR_CODES = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY']);
 
-async function withRenameLock(lockKey, operation) {
-  const normalizedKey = path.resolve(lockKey);
-  const previous = renameLocks.get(normalizedKey) || Promise.resolve();
+async function withLock(lockMap, lockKey, operation) {
+  const normalizedKey = String(lockKey || 'unknown');
+  const previous = lockMap.get(normalizedKey) || Promise.resolve();
   let releaseLock;
   const current = new Promise((resolve) => {
     releaseLock = resolve;
   });
 
-  renameLocks.set(normalizedKey, current);
+  lockMap.set(normalizedKey, current);
   await previous.catch(() => {});
 
   try {
     return await operation();
   } finally {
     releaseLock();
-    if (renameLocks.get(normalizedKey) === current) {
-      renameLocks.delete(normalizedKey);
+    if (lockMap.get(normalizedKey) === current) {
+      lockMap.delete(normalizedKey);
     }
   }
+}
+
+async function withRenameLock(lockKey, operation) {
+  return withLock(renameLocks, path.resolve(lockKey), operation);
+}
+
+async function withNoteMutationLock(noteId, notePath, operation) {
+  const normalizedKey = Number.isFinite(noteId)
+    ? `note:${noteId}`
+    : `path:${path.resolve(String(notePath || 'unknown'))}`;
+  return withLock(noteMutationLocks, normalizedKey, operation);
+}
+
+async function writeFileWithRetry(targetPath, content, options = {}) {
+  const {
+    maxRetries = 8,
+    initialDelayMs = 40,
+    maxDelayMs = 400,
+  } = options;
+
+  let lastError;
+  for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+    try {
+      await fs.writeFile(targetPath, content, 'utf8');
+      return targetPath;
+    } catch (error) {
+      if (!RETRYABLE_FILE_WRITE_ERROR_CODES.has(error?.code)) {
+        throw error;
+      }
+      lastError = error;
+      const delay = Math.min(initialDelayMs * (attempt + 1), maxDelayMs);
+      await sleep(delay);
+    }
+  }
+
+  throw lastError || new Error(`Failed to write "${targetPath}" after ${maxRetries} attempts`);
 }
 
 async function atomicReplace(sourcePath, targetPath, options = {}) {
@@ -441,16 +479,11 @@ async function atomicReplace(sourcePath, targetPath, options = {}) {
     }
 
     try {
-      // On some systems the direct overwrite succeeds even when rename is blocked
-      await fs.writeFile(targetPath, fallbackContent, 'utf8');
-      return targetPath;
-    } catch (error) {
-      if (!RETRYABLE_RENAME_ERROR_CODES.has(error?.code)) {
-        throw error;
-      }
-      // Best-effort fallback: avoid surfacing transient Windows EPERM/EBUSY/EACCES errors
-      // all the way up to the renderer. The content may not have been persisted, but the
-      // UI flow stays alive.
+      await writeFileWithRetry(targetPath, fallbackContent, {
+        maxRetries,
+        initialDelayMs,
+        maxDelayMs,
+      });
       return targetPath;
     } finally {
       try {
@@ -520,7 +553,7 @@ async function safeRename(sourcePath, targetPath) {
         await fs.rename(sourcePath, resolvedTarget);
         return resolvedTarget;
       } catch (error) {
-        if (!['EEXIST', 'EPERM', 'ENOTEMPTY'].includes(error?.code)) {
+        if (!['EEXIST', 'EPERM', 'ENOTEMPTY', 'EBUSY', 'EACCES'].includes(error?.code)) {
           throw error;
         }
 
@@ -529,8 +562,24 @@ async function safeRename(sourcePath, targetPath) {
       }
     }
 
-    await fs.rename(sourcePath, resolvedTarget);
-    return resolvedTarget;
+    try {
+      await fs.rename(sourcePath, resolvedTarget);
+      return resolvedTarget;
+    } catch (error) {
+      if (!['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(error?.code)) {
+        throw error;
+      }
+
+      const sourceStat = await fs.stat(sourcePath);
+      if (!sourceStat.isFile()) {
+        throw error;
+      }
+
+      const fallbackContent = await fs.readFile(sourcePath, 'utf8');
+      await writeFileWithRetry(resolvedTarget, fallbackContent);
+      await fs.unlink(sourcePath);
+      return resolvedTarget;
+    }
   });
 }
 
@@ -1290,79 +1339,81 @@ function createFsBridge(options) {
   }
 
   async function updateNote(noteId, payload) {
-    const current = await findNoteInternalByPath(noteId, payload.file_path) || await findNoteInternal(noteId);
-    if (!current) {
-      throw new Error(`Note ${noteId} not found`);
-    }
-
-    const requestedTitle = hasOwn(payload, 'title')
-      ? normalizeTitle(payload.title, current.title)
-      : current.title;
-
-    let targetPath = current._path;
-    let notebookName = current._notebookName;
-    let notebookId = current.notebook_id;
-    let parentId = current.parent_id;
-
-    if (hasOwn(payload, 'parent_id') && payload.parent_id !== current.parent_id) {
-      const location = await resolveParentLocation(payload.parent_id);
-      targetPath = await uniquePath(path.join(location.dir, path.basename(targetPath)));
-      targetPath = await safeRename(current._path, targetPath);
-      notebookName = location.notebookName;
-      notebookId = location.notebookId;
-      parentId = location.parentId;
-    }
-
-    const shouldRenameFile = Boolean(payload.rename_file);
-    if (shouldRenameFile) {
-      const nextBaseName = sanitizeFilename(requestedTitle);
-      const currentBaseName = path.parse(targetPath).name;
-      if (nextBaseName !== currentBaseName) {
-        targetPath = await safeRename(
-          targetPath,
-          path.join(path.dirname(targetPath), current.is_folder ? nextBaseName : `${nextBaseName}.md`),
-        );
+    return withNoteMutationLock(noteId, payload.file_path, async () => {
+      const current = await findNoteInternalByPath(noteId, payload.file_path) || await findNoteInternal(noteId);
+      if (!current) {
+        throw new Error(`Note ${noteId} not found`);
       }
-    }
 
-    const updatedContent = hasOwn(payload, 'content') ? payload.content : current.content;
-    const requestedType = hasOwn(payload, 'type') ? payload.type : current.type;
-    const inferredType = looksLikeCanvasContent(updatedContent) ? 'canvas' : requestedType;
+      const requestedTitle = hasOwn(payload, 'title')
+        ? normalizeTitle(payload.title, current.title)
+        : current.title;
 
-    const updated = {
-      ...current,
-      title: requestedTitle,
-      icon: hasOwn(payload, 'icon') ? payload.icon : current.icon,
-      content: updatedContent,
-      type: inferredType,
-      tags: hasOwn(payload, 'tags') ? payload.tags : current.tags,
-      properties: hasOwn(payload, 'properties') ? payload.properties : current.properties,
-      sticky_notes: hasOwn(payload, 'sticky_notes') ? payload.sticky_notes : current.sticky_notes,
-      stickers: hasOwn(payload, 'stickers') ? payload.stickers : current.stickers,
-      links: hasOwn(payload, 'links')
-        ? payload.links
-        : extractLinkedNoteIds(hasOwn(payload, 'content') ? payload.content : current.content),
-      sort_key: hasOwn(payload, 'sort_key') ? payload.sort_key : current.sort_key,
-      background_paper: hasOwn(payload, 'background_paper') ? payload.background_paper : current.background_paper,
-      is_title_manually_edited: hasOwn(payload, 'is_title_manually_edited')
-        ? payload.is_title_manually_edited
-        : current.is_title_manually_edited,
-      notebook_id: notebookId,
-      parent_id: parentId,
-      updated_at: nowIso(),
-      _path: targetPath,
-      _notebookName: notebookName,
-    };
+      let targetPath = current._path;
+      let notebookName = current._notebookName;
+      let notebookId = current.notebook_id;
+      let parentId = current.parent_id;
 
-    if (current.is_folder) {
-      await writeFolderMeta(targetPath, updated);
-    } else {
-      updated._meta = await writeNoteFile(targetPath, updated);
-      updated.summary = summarizeContent(updated.content);
-    }
+      if (hasOwn(payload, 'parent_id') && payload.parent_id !== current.parent_id) {
+        const location = await resolveParentLocation(payload.parent_id);
+        targetPath = await uniquePath(path.join(location.dir, path.basename(targetPath)));
+        targetPath = await safeRename(current._path, targetPath);
+        notebookName = location.notebookName;
+        notebookId = location.notebookId;
+        parentId = location.parentId;
+      }
 
-    updated.file_path = targetPath;
-    return stripInternalFields(updated);
+      const shouldRenameFile = Boolean(payload.rename_file);
+      if (shouldRenameFile) {
+        const nextBaseName = sanitizeFilename(requestedTitle);
+        const currentBaseName = path.parse(targetPath).name;
+        if (nextBaseName !== currentBaseName) {
+          targetPath = await safeRename(
+            targetPath,
+            path.join(path.dirname(targetPath), current.is_folder ? nextBaseName : `${nextBaseName}.md`),
+          );
+        }
+      }
+
+      const updatedContent = hasOwn(payload, 'content') ? payload.content : current.content;
+      const requestedType = hasOwn(payload, 'type') ? payload.type : current.type;
+      const inferredType = looksLikeCanvasContent(updatedContent) ? 'canvas' : requestedType;
+
+      const updated = {
+        ...current,
+        title: requestedTitle,
+        icon: hasOwn(payload, 'icon') ? payload.icon : current.icon,
+        content: updatedContent,
+        type: inferredType,
+        tags: hasOwn(payload, 'tags') ? payload.tags : current.tags,
+        properties: hasOwn(payload, 'properties') ? payload.properties : current.properties,
+        sticky_notes: hasOwn(payload, 'sticky_notes') ? payload.sticky_notes : current.sticky_notes,
+        stickers: hasOwn(payload, 'stickers') ? payload.stickers : current.stickers,
+        links: hasOwn(payload, 'links')
+          ? payload.links
+          : extractLinkedNoteIds(hasOwn(payload, 'content') ? payload.content : current.content),
+        sort_key: hasOwn(payload, 'sort_key') ? payload.sort_key : current.sort_key,
+        background_paper: hasOwn(payload, 'background_paper') ? payload.background_paper : current.background_paper,
+        is_title_manually_edited: hasOwn(payload, 'is_title_manually_edited')
+          ? payload.is_title_manually_edited
+          : current.is_title_manually_edited,
+        notebook_id: notebookId,
+        parent_id: parentId,
+        updated_at: nowIso(),
+        _path: targetPath,
+        _notebookName: notebookName,
+      };
+
+      if (current.is_folder) {
+        await writeFolderMeta(targetPath, updated);
+      } else {
+        updated._meta = await writeNoteFile(targetPath, updated);
+        updated.summary = summarizeContent(updated.content);
+      }
+
+      updated.file_path = targetPath;
+      return stripInternalFields(updated);
+    });
   }
 
   async function deleteNote(noteId) {

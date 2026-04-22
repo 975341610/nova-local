@@ -49,6 +49,26 @@ export function mergeNote(existing: Note | undefined, incoming: Note): Note {
   }
 }
 
+export function nextNoteSaveSequence(sequenceMap: Map<number, number>, noteId: number) {
+  const nextSequence = (sequenceMap.get(noteId) ?? 0) + 1
+  sequenceMap.set(noteId, nextSequence)
+  return nextSequence
+}
+
+export function isLatestNoteSaveSequence(sequenceMap: Map<number, number>, noteId: number, sequence: number) {
+  return (sequenceMap.get(noteId) ?? 0) === sequence
+}
+
+export function updatePendingNoteSaveCount(pendingMap: Map<number, number>, noteId: number, delta: number) {
+  const nextCount = Math.max(0, (pendingMap.get(noteId) ?? 0) + delta)
+  if (nextCount === 0) {
+    pendingMap.delete(noteId)
+  } else {
+    pendingMap.set(noteId, nextCount)
+  }
+  return nextCount
+}
+
 export function pickCurrentNoteId(notes: Note[], preferredId?: number | null) {
   if (preferredId && notes.some(note => note.id === preferredId)) {
     return preferredId
@@ -79,6 +99,8 @@ function App() {
     parentId: string | null
   }>({ isOpen: false, mode: 'select', parentId: null })
   const renameTimersRef = useRef<Map<number, number>>(new Map())
+  const saveSequenceRef = useRef<Map<number, number>>(new Map())
+  const pendingSaveCountsRef = useRef<Map<number, number>>(new Map())
 
   const toggleSidebar = (collapsed: boolean) => {
     setIsSidebarCollapsed(collapsed)
@@ -108,7 +130,25 @@ function App() {
     }
   }, [updateNote, setCurrentNoteId])
 
-  const scheduleFileRename = useCallback((noteLike: Partial<Note>) => {
+  const hasPendingNoteSave = useCallback((noteId: number) => {
+    return (pendingSaveCountsRef.current.get(noteId) ?? 0) > 0
+  }, [])
+
+  const commitPersistedNote = useCallback((targetId: number, updated: Note) => {
+    applyNotePatch(targetId, updated)
+
+    if (!updated.is_folder) {
+      searchIndex.updateNote({
+        id: updated.id,
+        title: updated.title,
+        content: buildSearchableText(updated),
+        tags: updated.tags || [],
+        type: updated.type,
+      })
+    }
+  }, [applyNotePatch])
+
+  const scheduleFileRename = useCallback((noteLike: Partial<Note>, delayMs = 900) => {
     if (typeof noteLike.id !== 'number') {
       return
     }
@@ -139,6 +179,14 @@ function App() {
         return
       }
 
+      if (hasPendingNoteSave(latest.id)) {
+        scheduleFileRename(latest, 180)
+        return
+      }
+
+      const sequence = nextNoteSaveSequence(saveSequenceRef.current, latest.id)
+      updatePendingNoteSaveCount(pendingSaveCountsRef.current, latest.id, 1)
+
       try {
         const renamed = await api.updateNote(latest.id, {
           title: latest.title,
@@ -146,14 +194,18 @@ function App() {
           is_title_manually_edited: latest.is_title_manually_edited,
           rename_file: true,
         })
-        applyNotePatch(latest.id, renamed)
+        if (isLatestNoteSaveSequence(saveSequenceRef.current, latest.id, sequence)) {
+          commitPersistedNote(latest.id, renamed)
+        }
       } catch (err) {
         console.error('Failed to sync filename with note title:', err)
+      } finally {
+        updatePendingNoteSaveCount(pendingSaveCountsRef.current, latest.id, -1)
       }
-    }, 900)
+    }, delayMs)
 
     renameTimersRef.current.set(noteLike.id, timerId)
-  }, [applyNotePatch])
+  }, [commitPersistedNote, hasPendingNoteSave])
 
   const retrySaveByFilePath = useCallback(async (failedId: number, payload: Partial<Note>) => {
     if (!payload.file_path) {
@@ -446,6 +498,8 @@ function App() {
 
   const handleNodeRename = async (nodeId: string, newTitle: string) => {
     const noteId = parseInt(nodeId, 10)
+    const sequence = nextNoteSaveSequence(saveSequenceRef.current, noteId)
+    updatePendingNoteSaveCount(pendingSaveCountsRef.current, noteId, 1)
 
     try {
       const updated = await api.updateNote(noteId, {
@@ -453,9 +507,13 @@ function App() {
         is_title_manually_edited: true,
         rename_file: true,
       })
-      setNotes(prev => prev.map(note => note.id === noteId ? mergeNote(note, updated) : note))
+      if (isLatestNoteSaveSequence(saveSequenceRef.current, noteId, sequence)) {
+        commitPersistedNote(noteId, updated)
+      }
     } catch (err) {
       console.error('Failed to rename note:', err)
+    } finally {
+      updatePendingNoteSaveCount(pendingSaveCountsRef.current, noteId, -1)
     }
   }
 
@@ -636,6 +694,7 @@ function App() {
       payloadWithFilePath.content !== undefined ? extractLinkedNoteIds(payloadWithFilePath.content) : undefined
     )
     const shouldSkipRenameSync = Boolean((payloadWithFilePath as Partial<Note> & { rename_file?: boolean }).rename_file)
+    const saveSequence = nextNoteSaveSequence(saveSequenceRef.current, targetId)
 
     const optimisticPatch = {
       ...payloadWithFilePath,
@@ -644,25 +703,16 @@ function App() {
       updated_at: new Date().toISOString(),
     } as Note
 
+    updatePendingNoteSaveCount(pendingSaveCountsRef.current, targetId, 1)
     applyNotePatch(targetId, optimisticPatch)
 
     try {
       const updated = await api.updateNote(targetId, payloadWithFilePath)
-      applyNotePatch(targetId, updated)
-
-      // 增量更新全文搜索索引
-      if (!updated.is_folder) {
-        searchIndex.updateNote({
-          id: updated.id,
-          title: updated.title,
-          content: buildSearchableText(updated),
-          tags: updated.tags || [],
-          type: updated.type,
-        })
-      }
-
-      if (!shouldSkipRenameSync) {
-        scheduleFileRename(updated)
+      if (isLatestNoteSaveSequence(saveSequenceRef.current, targetId, saveSequence)) {
+        commitPersistedNote(targetId, updated)
+        if (!shouldSkipRenameSync) {
+          scheduleFileRename(updated)
+        }
       }
       return updated
     } catch (err) {
@@ -670,9 +720,11 @@ function App() {
         try {
           const recovered = await retrySaveByFilePath(targetId, payloadWithFilePath)
           if (recovered) {
-            applyNotePatch(targetId, recovered)
-            if (!shouldSkipRenameSync) {
-              scheduleFileRename(recovered)
+            if (isLatestNoteSaveSequence(saveSequenceRef.current, targetId, saveSequence)) {
+              commitPersistedNote(targetId, recovered)
+              if (!shouldSkipRenameSync) {
+                scheduleFileRename(recovered)
+              }
             }
             return recovered
           }
@@ -681,6 +733,8 @@ function App() {
         }
       }
       console.error('Failed to save note:', err)
+    } finally {
+      updatePendingNoteSaveCount(pendingSaveCountsRef.current, targetId, -1)
     }
   }
 
