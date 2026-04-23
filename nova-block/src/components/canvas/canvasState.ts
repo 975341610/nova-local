@@ -14,6 +14,7 @@ export type RuntimeInjectionContext = {
   linkedNotesById: Map<number, Note>
   onChange: (id: string, patch: Record<string, unknown>) => void
   onInfoClick: (id: string) => void
+  onOpenNote: (id: number) => void
   onUngroup: (id: string) => void
   onToggleCollapse: (id: string) => void
 }
@@ -23,7 +24,13 @@ export type CanvasHydrationInput = {
   lastLoadedNoteContent: string | null
   noteId: number
   noteContent: string | null | undefined
+  localSnapshot: string
+  queuedSnapshot: string | null
+  isSaveInFlight: boolean
+  isDragging: boolean
 }
+
+export type CanvasHydrationDecision = 'hydrate' | 'ack' | 'ignore'
 
 export type CanvasSerialized = {
   version: 'v1'
@@ -43,7 +50,23 @@ const shallowEqualObject = (left: Record<string, unknown>, right: Record<string,
     return false
   }
 
-  return leftKeys.every((key) => left[key] === right[key])
+  return leftKeys.every((key) => {
+    const leftValue = left[key]
+    const rightValue = right[key]
+
+    if (leftValue === rightValue) {
+      return true
+    }
+
+    if (Array.isArray(leftValue) && Array.isArray(rightValue)) {
+      if (leftValue.length !== rightValue.length) {
+        return false
+      }
+      return leftValue.every((item, index) => item === rightValue[index])
+    }
+
+    return false
+  })
 }
 
 export function parseCanvasContent(content?: string): CanvasSerialized {
@@ -89,8 +112,79 @@ export function shouldHydrateCanvasFromIncomingNote({
   lastLoadedNoteContent,
   noteId,
   noteContent,
+  localSnapshot,
+  queuedSnapshot,
+  isSaveInFlight,
+  isDragging,
 }: CanvasHydrationInput) {
-  return lastLoadedNoteId !== noteId || toContentSnapshot(lastLoadedNoteContent) !== toContentSnapshot(noteContent)
+  return getCanvasHydrationDecision({
+    lastLoadedNoteId,
+    lastLoadedNoteContent,
+    noteId,
+    noteContent,
+    localSnapshot,
+    queuedSnapshot,
+    isSaveInFlight,
+    isDragging,
+  }) === 'hydrate'
+}
+
+export function getCanvasHydrationDecision({
+  lastLoadedNoteId,
+  lastLoadedNoteContent,
+  noteId,
+  noteContent,
+  localSnapshot,
+  queuedSnapshot,
+  isSaveInFlight,
+  isDragging,
+}: CanvasHydrationInput): CanvasHydrationDecision {
+  const incomingSnapshot = toContentSnapshot(noteContent)
+  const previousSnapshot = toContentSnapshot(lastLoadedNoteContent)
+
+  if (lastLoadedNoteId !== noteId) {
+    return 'hydrate'
+  }
+
+  if (previousSnapshot === incomingSnapshot) {
+    return 'ignore'
+  }
+
+  if (incomingSnapshot === localSnapshot) {
+    return 'ack'
+  }
+
+  if (queuedSnapshot && incomingSnapshot === queuedSnapshot) {
+    return 'ack'
+  }
+
+  if (isDragging || isSaveInFlight || Boolean(queuedSnapshot)) {
+    return 'ack'
+  }
+
+  return 'hydrate'
+}
+
+export function shouldAllowCanvasReferenceOpen({
+  isDragging,
+  lastDragStopAt,
+  now,
+  cooldownMs = 220,
+}: {
+  isDragging: boolean
+  lastDragStopAt: number
+  now: number
+  cooldownMs?: number
+}) {
+  if (isDragging) {
+    return false
+  }
+
+  if (lastDragStopAt <= 0) {
+    return true
+  }
+
+  return now - lastDragStopAt >= cooldownMs
 }
 
 export function resolveCanvasDragActivity(changes: ReadonlyArray<{ type?: string; dragging?: boolean }>) {
@@ -160,11 +254,13 @@ export function injectRuntimeIntoCanvasNode<T extends Node<Record<string, unknow
           tags: linkedNote.tags || [],
           onChange: runtime.onChange,
           onInfoClick: runtime.onInfoClick,
+          onOpenNote: runtime.onOpenNote,
         }
       : {
           ...currentData,
           onChange: runtime.onChange,
           onInfoClick: runtime.onInfoClick,
+          onOpenNote: runtime.onOpenNote,
         }
 
     if (node.dragHandle === CARD_DRAG_HANDLE && shallowEqualObject(currentData, nextData)) {

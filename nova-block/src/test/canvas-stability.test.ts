@@ -6,6 +6,12 @@ import {
   pickCurrentNoteId,
   updatePendingNoteSaveCount,
 } from '../App'
+import {
+  REFERENCE_NODE_TYPE,
+  getCanvasHydrationDecision as getCanvasHydrationDecisionFromState,
+  injectRuntimeIntoCanvasNode,
+  shouldAllowCanvasReferenceOpen as shouldAllowCanvasReferenceOpenFromState,
+} from '../components/canvas/canvasState'
 import type { Note } from '../lib/types'
 
 const mockNote: Note = {
@@ -25,6 +31,143 @@ const mockNote: Note = {
 } as any
 
 describe('Canvas Stability Helpers', () => {
+  describe('canvas hydration decisions', () => {
+    it('hydrates when switching to another note', () => {
+      expect(getCanvasHydrationDecisionFromState({
+        lastLoadedNoteId: 1,
+        lastLoadedNoteContent: '{"nodes":[]}',
+        noteId: 2,
+        noteContent: '{"nodes":[{"id":"a"}]}',
+        localSnapshot: '{"nodes":[]}',
+        queuedSnapshot: null,
+        isSaveInFlight: false,
+        isDragging: false,
+      })).toBe('hydrate')
+    })
+
+    it('acknowledges same-note save echo without hydrating', () => {
+      expect(getCanvasHydrationDecisionFromState({
+        lastLoadedNoteId: 1,
+        lastLoadedNoteContent: '{"nodes":[]}',
+        noteId: 1,
+        noteContent: '{"nodes":[{"id":"a"}]}',
+        localSnapshot: '{"nodes":[{"id":"a"}]}',
+        queuedSnapshot: null,
+        isSaveInFlight: false,
+        isDragging: false,
+      })).toBe('ack')
+    })
+
+    it('keeps local state authoritative while save is queued', () => {
+      expect(getCanvasHydrationDecisionFromState({
+        lastLoadedNoteId: 1,
+        lastLoadedNoteContent: '{"nodes":[]}',
+        noteId: 1,
+        noteContent: '{"nodes":[{"id":"remote"}]}',
+        localSnapshot: '{"nodes":[{"id":"local"}]}',
+        queuedSnapshot: '{"nodes":[{"id":"local"}]}',
+        isSaveInFlight: false,
+        isDragging: false,
+      })).toBe('ack')
+    })
+
+    it('keeps local state authoritative while save is in flight', () => {
+      expect(getCanvasHydrationDecisionFromState({
+        lastLoadedNoteId: 1,
+        lastLoadedNoteContent: '{"nodes":[]}',
+        noteId: 1,
+        noteContent: '{"nodes":[{"id":"remote"}]}',
+        localSnapshot: '{"nodes":[{"id":"local"}]}',
+        queuedSnapshot: null,
+        isSaveInFlight: true,
+        isDragging: false,
+      })).toBe('ack')
+    })
+
+    it('hydrates same-note external content when no local pending work exists', () => {
+      expect(getCanvasHydrationDecisionFromState({
+        lastLoadedNoteId: 1,
+        lastLoadedNoteContent: '{"nodes":[]}',
+        noteId: 1,
+        noteContent: '{"nodes":[{"id":"remote"}]}',
+        localSnapshot: '{"nodes":[]}',
+        queuedSnapshot: null,
+        isSaveInFlight: false,
+        isDragging: false,
+      })).toBe('hydrate')
+    })
+  })
+
+  describe('reference open guard', () => {
+    it('blocks open while dragging', () => {
+      expect(shouldAllowCanvasReferenceOpenFromState({
+        isDragging: true,
+        lastDragStopAt: 0,
+        now: 1000,
+      })).toBe(false)
+    })
+
+    it('blocks open immediately after drag stop', () => {
+      expect(shouldAllowCanvasReferenceOpenFromState({
+        isDragging: false,
+        lastDragStopAt: 1000,
+        now: 1100,
+      })).toBe(false)
+    })
+
+    it('allows open after cooldown', () => {
+      expect(shouldAllowCanvasReferenceOpenFromState({
+        isDragging: false,
+        lastDragStopAt: 1000,
+        now: 1300,
+      })).toBe(true)
+    })
+  })
+
+  describe('runtime node injection stability', () => {
+    it('keeps reference node stable when tags only change array identity', () => {
+      const onChange = () => undefined
+      const onInfoClick = () => undefined
+      const onOpenNote = () => undefined
+      const node = {
+        id: 'ref-1',
+        type: REFERENCE_NODE_TYPE,
+        position: { x: 0, y: 0 },
+        dragHandle: '.canvas-card-drag-handle',
+        data: {
+          noteId: 7,
+          title: 'Linked',
+          icon: '📝',
+          summary: 'hello world',
+          tags: ['alpha'],
+          onChange,
+          onInfoClick,
+          onOpenNote,
+        },
+      } as any
+
+      const linkedNote = {
+        ...mockNote,
+        id: 7,
+        title: 'Linked',
+        icon: '📝',
+        content: 'hello world',
+        tags: ['alpha'],
+      } as Note
+
+      const injected = injectRuntimeIntoCanvasNode(node, {
+        linkedNotesById: new Map([[7, linkedNote]]),
+        onChange,
+        onInfoClick,
+        onOpenNote,
+        onUngroup: () => undefined,
+        onToggleCollapse: () => undefined,
+      })
+
+      expect(injected).toBe(node)
+    })
+  })
+
   describe('mergeNote', () => {
     it('should merge incoming content correctly', () => {
       const existing = { ...mockNote, content: 'old' }
@@ -41,10 +184,10 @@ describe('Canvas Stability Helpers', () => {
     })
     
     it('should merge stickers and sticky notes', () => {
-        const existing = { ...mockNote, stickers: [{ id: 's1' }] }
-        const incoming = { ...mockNote, stickers: [{ id: 's2' }] }
+        const existing = { ...mockNote, stickers: [{ id: 's1', type: 'image' as const, url: 'a.png', x: 0, y: 0, scale: 1, rotation: 0, opacity: 1 }] } as Note
+        const incoming = { ...mockNote, stickers: [{ id: 's2', type: 'image' as const, url: 'b.png', x: 8, y: 9, scale: 1, rotation: 0, opacity: 1 }] } as Note
         const merged = mergeNote(existing, incoming as any)
-        expect(merged.stickers).toEqual([{ id: 's2' }])
+        expect(merged.stickers).toEqual([{ id: 's2', type: 'image', url: 'b.png', x: 8, y: 9, scale: 1, rotation: 0, opacity: 1 }])
     })
   })
 

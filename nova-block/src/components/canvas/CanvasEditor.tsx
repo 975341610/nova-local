@@ -52,6 +52,7 @@ import { api, formatUrl } from '../../lib/api';
 import { promptCompat } from '../../lib/promptCompat';
 import { useNoteStore } from '../../store/useNoteStore';
 import {
+  getCanvasHydrationDecision,
   GROUP_NODE_TYPE,
   LINK_NODE_TYPE,
   MEDIA_NODE_TYPE,
@@ -60,7 +61,7 @@ import {
   injectRuntimeIntoCanvasNode,
   parseCanvasContent,
   resolveCanvasDragActivity,
-  shouldHydrateCanvasFromIncomingNote,
+  shouldAllowCanvasReferenceOpen,
   shouldPersistViewport,
   summarizeNote,
   type RuntimeInjectionContext,
@@ -84,6 +85,7 @@ type CanvasReferenceNodeData = {
   memo?: string;
   onChange?: (id: string, patch: { memo?: string }) => void;
   onInfoClick?: (id: string) => void;
+  onOpenNote?: (id: number) => void;
 };
 
 type CanvasMediaNodeData = {
@@ -263,6 +265,10 @@ function ReferenceCardNode(props: NodeProps<CanvasReferenceNode>) {
               <button
                 type="button"
                 onClick={() => {
+                  if (data.onOpenNote) {
+                    data.onOpenNote(data.noteId);
+                    return;
+                  }
                   window.dispatchEvent(new CustomEvent('nova-select-note', { detail: { noteId: data.noteId } }));
                 }}
                 title="点击打开笔记"
@@ -820,6 +826,13 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
       if (typeof dragActivity === 'boolean') {
         isNodeDragActiveRef.current = dragActivity;
       }
+      if (isNodeDragActiveRef.current) {
+        const filtered = changes.filter((change: any) => change.type !== 'dimensions' && change.type !== 'select');
+        if (filtered.length > 0) {
+          onNodesChange(filtered);
+        }
+        return;
+      }
       onNodesChange(changes);
     },
     [onNodesChange],
@@ -839,6 +852,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
   const lastLoadedNoteIdRef = useRef<number | null>(null);
   const lastLoadedNoteContentRef = useRef<string | null>(null);
   const isNodeDragActiveRef = useRef(false);
+  const lastNodeDragStopAtRef = useRef(0);
 
   const handleInfoClick = useCallback((id: string) => {
     setMemoOpenId(id);
@@ -957,16 +971,29 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
     });
   }, [setNodes]);
 
+  const handleOpenReferenceNote = useCallback((noteId: number) => {
+    if (!shouldAllowCanvasReferenceOpen({
+      isDragging: isNodeDragActiveRef.current,
+      lastDragStopAt: lastNodeDragStopAtRef.current,
+      now: Date.now(),
+    })) {
+      return;
+    }
+
+    window.dispatchEvent(new CustomEvent('nova-select-note', { detail: { noteId } }));
+  }, []);
+
   const injectRuntimeNode = useCallback(
     (node: CanvasNode) =>
       injectRuntimeIntoCanvasNode(node as Node<Record<string, unknown>, string>, {
         linkedNotesById: noteLookup,
         onChange: updateNodeData as RuntimeInjectionContext['onChange'],
         onInfoClick: handleInfoClick,
+        onOpenNote: handleOpenReferenceNote,
         onUngroup: handleUngroup,
         onToggleCollapse: handleToggleCollapse,
       }) as CanvasNode,
-    [noteLookup, updateNodeData, handleInfoClick, handleUngroup, handleToggleCollapse],
+    [noteLookup, updateNodeData, handleInfoClick, handleOpenReferenceNote, handleUngroup, handleToggleCollapse],
   );
 
   const handleRemoveFromGroup = useCallback((nodeId: string) => {
@@ -1084,6 +1111,22 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
 
   const onNodeDragStop = useCallback((_: any, node: Node) => {
     isNodeDragActiveRef.current = false;
+    lastNodeDragStopAtRef.current = Date.now();
+
+    if (deferredReferencePatchRef.current) {
+      deferredReferencePatchRef.current = false;
+      setNodes((prev) => {
+        let didChange = false;
+        const next = prev.map((item) => {
+          if (item.type !== REFERENCE_NODE_TYPE) return item;
+          const patched = injectRuntimeNodeRef.current(item);
+          if (patched !== item) didChange = true;
+          return patched;
+        });
+        return didChange ? next : prev;
+      });
+    }
+
     if (node.type === GROUP_NODE_TYPE) return;
 
     setNodes((nds) => {
@@ -1192,19 +1235,42 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
     });
   }, [setNodes]);
 
+  const injectRuntimeNodeRef = useRef(injectRuntimeNode);
+  useEffect(() => {
+    injectRuntimeNodeRef.current = injectRuntimeNode;
+  }, [injectRuntimeNode]);
+
+  const deferredReferencePatchRef = useRef(false);
+
   useEffect(() => {
     if (!note) return;
-    if (!shouldHydrateCanvasFromIncomingNote({
+    if (isNodeDragActiveRef.current) {
+      deferredReferencePatchRef.current = true;
+      return;
+    }
+    const hydrationDecision = getCanvasHydrationDecision({
       lastLoadedNoteId: lastLoadedNoteIdRef.current,
       lastLoadedNoteContent: lastLoadedNoteContentRef.current,
       noteId: note.id,
       noteContent: note.content,
-    })) {
+      localSnapshot: saveSnapshot,
+      queuedSnapshot: queuedSaveRef.current?.noteId === note.id ? queuedSaveRef.current.snapshot : null,
+      isSaveInFlight: saveInFlightRef.current,
+      isDragging: isNodeDragActiveRef.current,
+    });
+
+    if (hydrationDecision === 'ignore') {
+      return;
+    }
+
+    if (hydrationDecision === 'ack') {
+      lastLoadedNoteIdRef.current = note.id;
+      lastLoadedNoteContentRef.current = note.content ?? '';
       return;
     }
 
     const incomingCanvas = parseCanvasContent(note.content);
-    const hydratedNodesFromNote = incomingCanvas.nodes.map((item) => injectRuntimeNode(item as CanvasNode));
+    const hydratedNodesFromNote = incomingCanvas.nodes.map((item) => injectRuntimeNodeRef.current(item as CanvasNode));
     const nextViewport = incomingCanvas.viewport ?? { x: 0, y: 0, zoom: 1 };
 
     lastLoadedNoteIdRef.current = note.id;
@@ -1216,9 +1282,13 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
     setViewport(nextViewport);
     void reactFlow.setViewport(nextViewport, { duration: 0 });
     setBackgroundUrl(incomingCanvas.backgroundUrl);
-  }, [note, reactFlow, injectRuntimeNode, setEdges, setNodes]);
+  }, [note?.id, note?.content, reactFlow, setEdges, setNodes]);
 
   useEffect(() => {
+    if (isNodeDragActiveRef.current) {
+      deferredReferencePatchRef.current = true;
+      return;
+    }
     setNodes((prev) => {
       let didChange = false;
       const next = prev.map((item) => {
@@ -1226,7 +1296,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
           return item;
         }
 
-        const patched = injectRuntimeNode(item);
+        const patched = injectRuntimeNodeRef.current(item);
         if (patched !== item) {
           didChange = true;
         }
@@ -1235,7 +1305,7 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
 
       return didChange ? next : prev;
     });
-  }, [injectRuntimeNode, setNodes]);
+  }, [noteLookup, setNodes]);
 
   const nextId = useCallback((prefix: string) => {
     idRef.current += 1;
@@ -1292,12 +1362,23 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
 
   const edgesWithSelection = useMemo(() => {
     const selectedNodes = new Set(selection.nodes.map((n) => n.id));
-    return edges.map((e) => {
-      if (selectedNodes.has(e.source) && selectedNodes.has(e.target)) {
+    if (selectedNodes.size < 2) {
+      return edges;
+    }
+    let changed = false;
+    const next = edges.map((e) => {
+      const bothSelected = selectedNodes.has(e.source) && selectedNodes.has(e.target);
+      if (bothSelected && !e.selected) {
+        changed = true;
         return { ...e, selected: true };
+      }
+      if (!bothSelected && e.selected) {
+        changed = true;
+        return { ...e, selected: false };
       }
       return e;
     });
+    return changed ? next : edges;
   }, [edges, selection.nodes]);
 
   const handleConnect = useCallback(
@@ -2295,7 +2376,6 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
 
       <NotePickerModal
         isOpen={pickerMode !== null}
-        notes={notes}
         onClose={() => {
           setPickerMode(null);
           pendingDropPositionRef.current = null;

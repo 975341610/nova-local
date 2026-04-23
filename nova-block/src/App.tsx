@@ -9,7 +9,7 @@ import { applyThemeConfig, getThemeConfig } from './lib/themeUtils'
 import type { Note, NoteTemplate } from './lib/types'
 import { api } from './lib/api'
 import { extractLinkedNoteIds, getNotesNeedingFilenameSync, shouldRenameNoteFile } from './lib/noteSync'
-import { searchIndex, type SearchableNote } from './lib/searchIndex'
+import { searchIndex } from './lib/searchIndex'
 import { buildSearchableText } from './lib/searchUtils'
 import { migrateLegacyNotes, parseLegacyNotes, shouldRunLegacyMigration } from './lib/legacyLocalMigration'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -86,8 +86,6 @@ function App() {
   const currentNoteId = useNoteStore((state) => state.currentNoteId)
   const setCurrentNoteId = useNoteStore((state) => state.setCurrentNoteId)
   const updateNote = useNoteStore((state) => state.updateNote)
-  const deleteNote = useNoteStore((state) => state.deleteNote)
-  const addNote = useNoteStore((state) => state.addNote)
 
   const [activeView, setActiveView] = useState<'notes'>('notes')
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
@@ -143,7 +141,7 @@ function App() {
         title: updated.title,
         content: buildSearchableText(updated),
         tags: updated.tags || [],
-        type: updated.type,
+        type: updated.type ?? 'note',
       })
     }
   }, [applyNotePatch])
@@ -228,6 +226,7 @@ function App() {
 
   useEffect(() => {
     for (const note of getNotesNeedingFilenameSync(notes)) {
+      if ((pendingSaveCountsRef.current.get(note.id) ?? 0) > 0) continue
       scheduleFileRename(note)
     }
   }, [notes, scheduleFileRename])
@@ -277,7 +276,7 @@ function App() {
           title: n.title,
           content: buildSearchableText(n),
           tags: n.tags || [],
-          type: n.type,
+          type: n.type ?? 'note',
         }))
     )
 
@@ -406,16 +405,6 @@ function App() {
     }
   }, [activeView, currentNoteId, loadNoteContent])
 
-  const treeNodes = useMemo(() => {
-    return notes.map(note => ({
-      id: note.id.toString(),
-      parentId: note.parent_id ? note.parent_id.toString() : null,
-      sortKey: note.sort_key || 'm',
-      title: note.title,
-      isFolder: note.is_folder,
-    }))
-  }, [notes])
-
   const handleSelectNode = (id: string) => {
     const noteId = parseInt(id, 10)
     if (!Number.isNaN(noteId)) {
@@ -466,7 +455,7 @@ function App() {
           title: nextNote.title,
           content: buildSearchableText(nextNote),
           tags: nextNote.tags || [],
-          type: nextNote.type,
+          type: nextNote.type ?? 'note',
         })
       }
 
@@ -672,7 +661,7 @@ function App() {
     }
   }
 
-  const handleSave = async (payload: Partial<Note>) => {
+  const handleSave = useCallback(async (payload: Partial<Note>) => {
     const targetId = typeof payload.id === 'number' ? payload.id : currentNoteId
     if (targetId === null) {
       return
@@ -736,7 +725,13 @@ function App() {
     } finally {
       updatePendingNoteSaveCount(pendingSaveCountsRef.current, targetId, -1)
     }
-  }
+  }, [
+    currentNoteId,
+    applyNotePatch,
+    commitPersistedNote,
+    scheduleFileRename,
+    retrySaveByFilePath,
+  ])
 
   const handleLiveChange = useCallback((payload: Partial<Note>) => {
     const targetId = typeof payload.id === 'number' ? payload.id : currentNoteId

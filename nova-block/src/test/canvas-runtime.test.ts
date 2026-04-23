@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+
 import type { Note } from '../lib/types'
 import {
   REFERENCE_NODE_TYPE,
@@ -12,18 +13,24 @@ import {
 const linkedNote: Note = {
   id: 42,
   title: '已关联笔记',
-  icon: '📌',
+  icon: '📝',
   content: '这是一段最新摘要内容',
   file_path: 'linked.md',
   type: 'note',
+  summary: '',
+  is_title_manually_edited: false,
+  tags: ['alpha', 'beta'],
+  properties: [],
+  sticky_notes: [],
+  stickers: [],
+  links: [],
+  notebook_id: null,
+  parent_id: null,
+  position: 0,
   is_folder: false,
   created_at: '',
   updated_at: '',
-  tags: ['alpha', 'beta'],
-  links: [],
-  stickers: [],
-  sticky_notes: [],
-} as Note
+}
 
 describe('canvasState helpers', () => {
   it('only hydrates when the active note changes or external content actually changes', () => {
@@ -33,6 +40,10 @@ describe('canvasState helpers', () => {
         lastLoadedNoteContent: '{"nodes":[]}',
         noteId: 7,
         noteContent: '{"nodes":[]}',
+        localSnapshot: '{"nodes":[]}',
+        queuedSnapshot: null,
+        isSaveInFlight: false,
+        isDragging: false,
       }),
     ).toBe(false)
 
@@ -42,6 +53,10 @@ describe('canvasState helpers', () => {
         lastLoadedNoteContent: '{"nodes":[]}',
         noteId: 7,
         noteContent: '{"nodes":[{"id":"text-1"}]}',
+        localSnapshot: '{"nodes":[]}',
+        queuedSnapshot: null,
+        isSaveInFlight: false,
+        isDragging: false,
       }),
     ).toBe(true)
 
@@ -51,6 +66,10 @@ describe('canvasState helpers', () => {
         lastLoadedNoteContent: '{"nodes":[]}',
         noteId: 8,
         noteContent: '{"nodes":[]}',
+        localSnapshot: '{"nodes":[]}',
+        queuedSnapshot: null,
+        isSaveInFlight: false,
+        isDragging: false,
       }),
     ).toBe(true)
   })
@@ -73,6 +92,7 @@ describe('canvasState helpers', () => {
         linkedNotesById: new Map(),
         onChange,
         onInfoClick,
+        onOpenNote: vi.fn(),
         onUngroup: vi.fn(),
         onToggleCollapse: vi.fn(),
       },
@@ -101,6 +121,7 @@ describe('canvasState helpers', () => {
         linkedNotesById: new Map([[linkedNote.id, linkedNote]]),
         onChange: vi.fn(),
         onInfoClick: vi.fn(),
+        onOpenNote: vi.fn(),
         onUngroup: vi.fn(),
         onToggleCollapse: vi.fn(),
       },

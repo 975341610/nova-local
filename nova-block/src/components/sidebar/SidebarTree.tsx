@@ -3,13 +3,11 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Layers, Settings, ChevronLeft, ChevronRight, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout } from 'lucide-react';
 import { buildTree, moveNode, isDescendant, flattenTree } from '../../lib/novablock/treeUtils';
-import type { TreeNode, FlattenedNode } from '../../lib/novablock/treeUtils';
+import type { TreeNode } from '../../lib/novablock/treeUtils';
 import { TreeNodeItem } from './TreeNodeItem';
 import GlobalSearchPanel from './GlobalSearchPanel';
 import BacklinksPanel from './BacklinksPanel';
-import type { Note } from '../../lib/types';
-import { useNoteStore, useNoteTreeData } from '../../store/useNoteStore';
-import { Virtuoso } from 'react-virtuoso';
+import { useNoteStore } from '../../store/useNoteStore';
 
 interface SidebarTreeProps {
   selectedNodeId?: string | null;
@@ -59,18 +57,17 @@ export const SidebarTree = ({
   onToggleCollapse,
 }: SidebarTreeProps) => {
   const notes = useNoteStore((state) => state.notes);
-  const treeData = useNoteTreeData();
   const updateNote = useNoteStore((state) => state.updateNote);
 
   // 将 treeData 转换为 TreeNode 格式以供 treeUtils 使用
   const nodes = useMemo(() => {
-    return treeData.map(n => ({
+    return notes.map(n => ({
       ...n,
       parentId: n.parent_id,
       sortKey: n.position?.toString() || 'm',
       isFolder: n.is_folder
     })) as unknown as TreeNode[];
-  }, [treeData]);
+  }, [notes]);
 
   const [selectedId, setSelectedId] = useState<string | undefined>(selectedNodeId ?? undefined);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['root']));
@@ -401,11 +398,8 @@ export const SidebarTree = ({
             )}
             {!isCollapsed && (
               <div className="flex-1" style={{ height: '100%', minHeight: 400 }}>
-                <Virtuoso
-                  style={{ height: '100%' }}
-                  data={visibleNodes}
-                  totalCount={visibleNodes.length}
-                  itemContent={(index, node) => (
+                <div style={{ height: '100%' }}>
+                  {visibleNodes.map((node) => (
                     <TreeNodeItem
                       key={node.id}
                       node={node}
@@ -424,8 +418,8 @@ export const SidebarTree = ({
                         }
                       }}
                     />
-                  )}
-                />
+                  ))}
+                </div>
               </div>
             )}
             
@@ -627,7 +621,6 @@ export const SidebarTree = ({
                 <button
                   onClick={() => {
                     const sortKey = Date.now().toString();
-                    setNodes(prev => prev.map(n => n.id === moveToModal.node.id ? { ...n, parentId: null, sortKey } : n));
                     onNodeMove?.(moveToModal.node.id, null, sortKey);
                     setMoveToModal(null);
                   }}

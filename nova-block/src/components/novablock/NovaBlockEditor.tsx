@@ -521,6 +521,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [backgroundPaper, setBackgroundPaper] = useState<BackgroundPaperType>(note?.background_paper || 'none');
   const [spellcheckError, setSpellcheckError] = useState<{ error: any, rect: any } | null>(null);
   const [editorViewReadyToken, setEditorViewReadyToken] = useState(0);
+  const previousStickerModeRef = useRef(false);
   const blockMenuRef = useRef<HTMLDivElement>(null);
   const emoticonPanelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -822,6 +823,30 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       return null;
     }
   }, [editor]);
+
+  const restoreEditorFocusAfterStickerMode = useCallback(() => {
+    if (!editor || editor.isDestroyed) {
+      return;
+    }
+
+    const focusEditor = () => {
+      if (!editor || editor.isDestroyed) {
+        return;
+      }
+
+      const editorDom = getEditorViewDom();
+      if (editorDom instanceof HTMLElement) {
+        editorDom.focus({ preventScroll: true });
+      }
+      editor.chain().focus().run();
+    };
+
+    window.setTimeout(() => {
+      window.requestAnimationFrame(() => {
+        focusEditor();
+      });
+    }, 0);
+  }, [editor, getEditorViewDom]);
 
   const getSpellcheckPosFromCaretPoint = useCallback((point: { left: number; top: number }) => {
     if (!editor || editor.isDestroyed || !editor.isInitialized) {
@@ -1896,6 +1921,13 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       editor.setEditable(viewMode === 'edit');
     }
   }, [editor, viewMode]);
+
+  useEffect(() => {
+    if (previousStickerModeRef.current && !isStickerMode) {
+      restoreEditorFocusAfterStickerMode();
+    }
+    previousStickerModeRef.current = isStickerMode;
+  }, [isStickerMode, restoreEditorFocusAfterStickerMode]);
 
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;

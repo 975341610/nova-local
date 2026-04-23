@@ -86,4 +86,24 @@ describe('desktop runtime guards', () => {
     expect(editorSource).toContain("autocorrect: 'off'")
     expect(editorSource).toContain("autocapitalize: 'off'")
   })
+
+  it('uses the in-app confirm flow for clearing stickers instead of native window.confirm', () => {
+    const editorHeaderPath = path.resolve(__dirname, '../components/editor/EditorHeader.tsx')
+    const confirmCompatPath = path.resolve(__dirname, '../lib/confirmCompat.ts')
+    const editorHeaderSource = fs.readFileSync(editorHeaderPath, 'utf8')
+    const confirmCompatSource = fs.readFileSync(confirmCompatPath, 'utf8')
+
+    expect(editorHeaderSource).toContain('confirmCompat({')
+    expect(editorHeaderSource).not.toContain('window.confirm(')
+    expect(confirmCompatSource).toContain('export async function confirmCompat')
+  })
+
+  it('restores editor focus after sticker mode is turned off', () => {
+    const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
+    const editorSource = fs.readFileSync(editorPath, 'utf8')
+
+    expect(editorSource).toContain('const restoreEditorFocusAfterStickerMode = useCallback(() => {')
+    expect(editorSource).toContain('if (previousStickerModeRef.current && !isStickerMode) {')
+    expect(editorSource).toContain('editor.chain().focus().run();')
+  })
 })

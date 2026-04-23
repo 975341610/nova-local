@@ -8,7 +8,6 @@ interface BackgroundPaperProps {
 
 export const BackgroundPaper: React.FC<BackgroundPaperProps> = React.memo(({ type, opacity = 0.4 }) => {
   const isNone = !type || type === 'none';
-  if (isNone) return null;
 
   const getStyle = (): React.CSSProperties => {
     if (isNone) return {};

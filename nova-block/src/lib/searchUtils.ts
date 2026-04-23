@@ -48,7 +48,7 @@ export function searchNotes(notes: Note[], query: string, limit?: number) {
           title: n.title,
           content: buildSearchableText(n),
           tags: n.tags || [],
-          type: n.type,
+          type: n.type ?? 'note',
         }))
     )
   }

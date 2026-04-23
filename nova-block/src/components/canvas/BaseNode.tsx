@@ -18,7 +18,7 @@ export function BaseNode({ id, selected, children, onInfoClick }: BaseNodeProps)
         <NodeResizeControl
           minWidth={160}
           minHeight={100}
-          position={Position.BottomRight}
+          position={'bottom-right'}
           className="!border-none !bg-transparent !p-1.5 !w-5 !h-5 !flex !items-end !justify-end -bottom-1 -right-1 z-30 cursor-se-resize"
         >
           <div className="h-2.5 w-2.5 rounded-full border-2 border-[#d7a685] bg-white transition-opacity opacity-100" />
