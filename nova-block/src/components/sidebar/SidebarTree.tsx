@@ -231,7 +231,7 @@ export const SidebarTree = ({
                animate={{ opacity: 1, x: 0 }}
                exit={{ opacity: 0, x: 10 }}
                onClick={() => setIsCollapsed(false)}
-               className="absolute -right-3 top-7 w-6 h-6 rounded-full bg-background border border-border shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground hover:scale-110 transition-all z-30"
+               className="absolute right-2 top-7 w-6 h-6 rounded-full bg-background border border-border shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground hover:scale-110 transition-all z-30"
              >
                <ChevronRight size={14} />
              </motion.button>

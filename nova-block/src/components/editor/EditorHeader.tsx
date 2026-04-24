@@ -65,7 +65,6 @@ export function EditorHeader(props: EditorHeaderProps) {
     onSelectBreadcrumb,
     savePhase,
     isDirty,
-    lastSavedAt,
     showOutline,
     viewMode,
     isStickerMode,
@@ -104,10 +103,7 @@ export function EditorHeader(props: EditorHeaderProps) {
     <div className="flex flex-col bg-transparent px-0 pt-0 pb-0 antialiased">
       <div className="sticky top-0 z-50 mb-4 flex items-center justify-between border-b border-border/40 bg-background/80 pt-3 pb-3 backdrop-blur-xl transition-colors">
         <div className="flex items-center gap-4">
-          <div
-            className="flex cursor-default items-center gap-2 rounded-lg p-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground transition-all hover:bg-accent/50"
-            title={lastSavedAt ? `已同步于 ${lastSavedAt}` : undefined}
-          >
+          <div className="flex cursor-default items-center gap-2 rounded-lg p-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground transition-all hover:bg-accent/50">
             <div
               className={`h-2 w-2 rounded-full ${
                 savePhase === 'saving'

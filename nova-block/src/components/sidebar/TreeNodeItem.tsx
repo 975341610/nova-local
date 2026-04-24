@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
 import { ChevronRight, FileText, Folder, FolderOpen, MoreHorizontal } from 'lucide-react';
 import type { TreeNode, FlattenedNode } from '../../lib/novablock/treeUtils';
 
@@ -79,8 +78,7 @@ export const TreeNodeItem = ({
 
   return (
     <div className="relative select-none">
-      <motion.div
-        layout
+      <div
         draggable={!isEditing}
         onDragStart={handleDragStart as any}
         onDragOver={handleDragOver as any}
@@ -101,7 +99,7 @@ export const TreeNodeItem = ({
           }
         }}
         className={`
-          group flex items-center gap-2 py-2 px-3 rounded-xl cursor-pointer transition-all duration-300 ease-out
+          group flex items-center gap-2 py-2 px-3 rounded-xl cursor-pointer transition-colors duration-200
           ${isSelected && !node.isFolder ? 'bg-primary/15 text-primary shadow-sm shadow-primary/5' : 'hover:bg-accent/50 text-muted-foreground hover:text-foreground'}
           ${dragOver === 'into' ? 'bg-primary/20 ring-1 ring-primary/30' : ''}
         `}
@@ -169,7 +167,7 @@ export const TreeNodeItem = ({
             </button>
           </div>
         )}
-      </motion.div>
+      </div>
 
       {/* Drop Indicators */}
       {dragOver === 'before' && (

@@ -106,4 +106,25 @@ describe('desktop runtime guards', () => {
     expect(editorSource).toContain('if (previousStickerModeRef.current && !isStickerMode) {')
     expect(editorSource).toContain('editor.chain().focus().run();')
   })
+
+  it('does not attach a save-time tooltip popup to the editor status indicator', () => {
+    const editorHeaderPath = path.resolve(__dirname, '../components/editor/EditorHeader.tsx')
+    const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
+    const editorHeaderSource = fs.readFileSync(editorHeaderPath, 'utf8')
+    const editorSource = fs.readFileSync(editorPath, 'utf8')
+
+    expect(editorHeaderSource).not.toContain('title={lastSavedAt ?')
+    expect(editorSource).not.toContain('fixed bottom-12 left-1/2 -translate-x-1/2')
+  })
+
+  it('uses static tree rows and keeps the collapse button fully inside the viewport', () => {
+    const treeNodeItemPath = path.resolve(__dirname, '../components/sidebar/TreeNodeItem.tsx')
+    const sidebarTreePath = path.resolve(__dirname, '../components/sidebar/SidebarTree.tsx')
+    const treeNodeItemSource = fs.readFileSync(treeNodeItemPath, 'utf8')
+    const sidebarTreeSource = fs.readFileSync(sidebarTreePath, 'utf8')
+
+    expect(treeNodeItemSource).not.toContain('motion.div')
+    expect(treeNodeItemSource).not.toContain('transition-all duration-300')
+    expect(sidebarTreeSource).not.toContain('-right-3')
+  })
 })

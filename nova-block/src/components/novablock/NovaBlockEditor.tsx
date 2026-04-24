@@ -2692,21 +2692,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {isSaving && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-12 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 bg-primary text-primary-foreground px-6 py-3 rounded-2xl shadow-soft"
-          >
-            <div className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
-            <span className="text-xs font-bold tracking-widest uppercase">鎵嬪啓璁板繂鍚屾涓?..</span>
-          </motion.div>
-        )}
-
-        {/* AI Loading is now handled inline by pixel-maid.webp */}
-      </AnimatePresence>
+      {/* AI Loading is now handled inline by pixel-maid.webp */}
     </motion.div>
   );
 });
