@@ -1,5 +1,6 @@
 const path = require('node:path');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { createFsBridge } = require('./fsBridge');
@@ -9,11 +10,20 @@ const APP_ROOT = path.resolve(__dirname, '..');
 const FRONTEND_INDEX = path.join(APP_ROOT, 'frontend_dist', 'index.html');
 const VENV_PYTHON = path.join(APP_ROOT, '.venv', 'Scripts', 'python.exe');
 const VAULT_ROOT = path.join(APP_ROOT, 'data', 'vault');
+const DESKTOP_LOCAL_TOKEN = process.env.NOVA_DESKTOP_TOKEN || crypto.randomBytes(24).toString('hex');
+const BACKEND_HOST = process.env.NOVA_BACKEND_HOST || '127.0.0.1';
+const parsedBackendPort = Number.parseInt(process.env.NOVA_BACKEND_PORT || process.env.PORT || '8765', 10);
+const BACKEND_PORT = Number.isFinite(parsedBackendPort) ? parsedBackendPort : 8765;
+const BACKEND_ORIGIN = (process.env.NOVA_BACKEND_ORIGIN || `http://${BACKEND_HOST}:${BACKEND_PORT}`).replace(/\/+$/, '');
+const BACKEND_API_BASE = (process.env.NOVA_BACKEND_API_BASE || `${BACKEND_ORIGIN}/api`).replace(/\/+$/, '');
 
 let mainWindow = null;
 let backendProcess = null;
 let watcher = null;
 let allowWindowClose = false;
+let isAppQuitting = false;
+let backendRestartTimer = null;
+let backendRestartAttempts = 0;
 const recentLocalVaultChanges = new Map();
 
 const fsBridge = createFsBridge({ vaultRoot: VAULT_ROOT });
@@ -80,7 +90,7 @@ function isRecentLocalVaultChange(filename) {
 
 function checkBackend(timeoutMs = 800) {
   return new Promise((resolve) => {
-    const req = http.get('http://127.0.0.1:8765/health', (res) => {
+    const req = http.get(`${BACKEND_ORIGIN}/health`, (res) => {
       res.resume();
       resolve(res.statusCode === 200);
     });
@@ -93,8 +103,30 @@ function checkBackend(timeoutMs = 800) {
   });
 }
 
-async function ensureBackend() {
-  if (await checkBackend()) {
+function scheduleBackendRestart(reason = 'exit') {
+  if (isAppQuitting || backendRestartTimer) {
+    return;
+  }
+
+  backendRestartAttempts += 1;
+  const delayMs = Math.min(5000, 500 * (2 ** (backendRestartAttempts - 1)));
+  console.warn(`[backend] process ${reason}, scheduling restart in ${delayMs}ms`);
+
+  backendRestartTimer = setTimeout(async () => {
+    backendRestartTimer = null;
+    try {
+      await ensureBackend();
+      backendRestartAttempts = 0;
+      console.info('[backend] restart successful');
+    } catch (error) {
+      console.error('[backend] restart failed', error);
+      scheduleBackendRestart('restart-failed');
+    }
+  }, delayMs);
+}
+
+function startBackendProcess() {
+  if (backendProcess) {
     return;
   }
 
@@ -102,11 +134,28 @@ async function ensureBackend() {
     cwd: APP_ROOT,
     windowsHide: true,
     stdio: 'ignore',
+    env: {
+      ...process.env,
+      NOVA_DESKTOP_TOKEN: DESKTOP_LOCAL_TOKEN,
+      HOST: BACKEND_HOST,
+      PORT: String(BACKEND_PORT),
+    },
   });
 
-  backendProcess.on('exit', () => {
+  backendProcess.on('exit', (code, signal) => {
     backendProcess = null;
+    if (!isAppQuitting) {
+      scheduleBackendRestart(`exit(code=${code ?? 'null'}, signal=${signal ?? 'null'})`);
+    }
   });
+}
+
+async function ensureBackend() {
+  if (await checkBackend()) {
+    return;
+  }
+
+  startBackendProcess();
 
   const maxAttempts = 40;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -115,6 +164,8 @@ async function ensureBackend() {
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+
+  throw new Error(`Backend unavailable at ${BACKEND_ORIGIN}`);
 }
 
 function createMainWindow() {
@@ -176,28 +227,93 @@ function createMainWindow() {
   });
 }
 
+function ensurePlainObject(payload, label = 'payload') {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return payload;
+}
+
+function ensureInteger(value, label) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function pickNoteWritePayload(payload) {
+  const source = ensurePlainObject(payload);
+  const allowedKeys = [
+    'id',
+    'title',
+    'content',
+    'notebook_id',
+    'icon',
+    'parent_id',
+    'is_title_manually_edited',
+    'tags',
+    'type',
+    'file_path',
+    'background_paper',
+    'sort_key',
+    'stickers',
+    'sticky_notes',
+    'properties',
+    'rename_file',
+  ];
+
+  const sanitized = {};
+  for (const key of allowedKeys) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      sanitized[key] = source[key];
+    }
+  }
+  return sanitized;
+}
+
 function registerIpcHandlers() {
-  ipcMain.handle('notes:list', async (_event, payload = {}) => (
-    fsBridge.listNotes({ includeContent: Boolean(payload.includeContent) })
-  ));
-  ipcMain.handle('notes:get', async (_event, payload) => fsBridge.getNote(payload.id));
+  ipcMain.handle('desktop:get-auth-token', async () => DESKTOP_LOCAL_TOKEN);
+  ipcMain.handle('desktop:get-backend-base-url', async () => BACKEND_API_BASE);
+  ipcMain.handle('notes:list', async (_event, payload = {}) => {
+    const input = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+    return fsBridge.listNotes({ includeContent: input.includeContent === true });
+  });
+  ipcMain.handle('notes:get', async (_event, payload) => {
+    const input = ensurePlainObject(payload);
+    return fsBridge.getNote(ensureInteger(input.id, 'id'));
+  });
   ipcMain.handle('notes:create', async (_event, payload) => {
-    const created = await fsBridge.createNote(payload);
+    const input = pickNoteWritePayload(payload);
+    if (typeof input.title !== 'string' || input.title.trim().length === 0) {
+      throw new Error('title is required');
+    }
+    const created = await fsBridge.createNote(input);
     markLocalVaultChange(created.file_path);
     return created;
   });
   ipcMain.handle('folders:create', async (_event, payload) => {
-    const created = await fsBridge.createFolder(payload);
+    const input = ensurePlainObject(payload);
+    if (typeof input.title !== 'string' || input.title.trim().length === 0) {
+      throw new Error('title is required');
+    }
+    const created = await fsBridge.createFolder(input);
     markLocalVaultChange(created.file_path);
     return created;
   });
   ipcMain.handle('notes:update', async (_event, payload) => {
-    markLocalVaultChange(payload.file_path);
-    const updated = await fsBridge.updateNote(payload.id, payload);
+    const input = pickNoteWritePayload(payload);
+    const noteId = ensureInteger(input.id, 'id');
+    if (typeof input.file_path === 'string') {
+      markLocalVaultChange(input.file_path);
+    }
+    const updated = await fsBridge.updateNote(noteId, input);
     markLocalVaultChange(updated.file_path);
     return updated;
   });
-  ipcMain.handle('notes:delete', async (_event, payload) => fsBridge.deleteNote(payload.id));
+  ipcMain.handle('notes:delete', async (_event, payload) => {
+    const input = ensurePlainObject(payload);
+    return fsBridge.deleteNote(ensureInteger(input.id, 'id'));
+  });
 }
 
 let vaultChangeQueue = [];
@@ -263,6 +379,11 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  isAppQuitting = true;
+  if (backendRestartTimer) {
+    clearTimeout(backendRestartTimer);
+    backendRestartTimer = null;
+  }
   watcher?.stop();
   if (backendProcess) {
     backendProcess.kill();

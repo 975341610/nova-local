@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { GripVertical, Trash2, Maximize2, RotateCcw, Layers } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { StickerData } from '../../lib/types';
-import { getApiBase } from '../../lib/api';
+import { formatUrl } from '../../lib/api';
 
 interface StickerItemProps {
   sticker: StickerData;
@@ -163,11 +163,7 @@ export const StickerItem: React.FC<StickerItemProps> = ({
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  const imageUrl = sticker.url.startsWith('http') || sticker.url.startsWith('data:') 
-    ? sticker.url 
-    : sticker.url.startsWith('/') 
-      ? `${getApiBase()}${sticker.url.replace('/api', '')}`
-      : `${getApiBase()}/${sticker.url}`;
+  const imageUrl = formatUrl(sticker.url);
 
   return (
     <motion.div

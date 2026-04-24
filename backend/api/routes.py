@@ -11,6 +11,8 @@ import uuid
 import shutil
 import asyncio
 import threading
+import hashlib
+import re
 from PIL import Image
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form, BackgroundTasks
@@ -121,7 +123,6 @@ router = APIRouter()
 settings = get_settings()
 ai_client = AIClient()
 
-import re
 import platform
 import psutil
 
@@ -179,12 +180,23 @@ def spawn_note_indexing(*args, **kwargs) -> None:
         daemon=True,
     ).start()
 
-async def background_index_note_async(note_id: int, title: str, content: str, tags: list[str] | None = None, icon: str = "\U0001f4dd", type: str = "note", parent_id: int | None = None, is_title_manually_edited: bool = False):
+async def background_index_note_async(
+    note_id: int,
+    title: str,
+    content: str,
+    tags: list[str] | None = None,
+    icon: str = "\U0001f4dd",
+    type: str = "note",
+    parent_id: int | None = None,
+    is_title_manually_edited: bool = False,
+    ai_client_instance: AIClient | None = None,
+):
     """异步执行 AI 处理：摘要、向量化、自动链接"""
     if not ai_enabled:
         return
         
     db = SessionLocal()
+    client = ai_client_instance or ai_client
     try:
         # 获取最新的 AI 配置
         model_config = get_or_create_model_config(db)
@@ -198,7 +210,7 @@ async def background_index_note_async(note_id: int, title: str, content: str, ta
             return
         
         # 1. 摘要处理
-        summary = await ai_client.summarize(content, llm_config)
+        summary = await client.summarize(content, llm_config)
         if not summary or summary.startswith("Error:"):
             return
         
@@ -217,10 +229,10 @@ async def background_index_note_async(note_id: int, title: str, content: str, ta
         vector_store.delete_note_chunks(note_id)
         
         # 笔记级向量（基于摘要和前 3000 字）
-        note_embedding = await ai_client.embed(f"{title}\n{summary}\n{content[:3000]}", llm_config)
+        note_embedding = await client.embed(f"{title}\n{summary}\n{content[:3000]}", llm_config)
         
         for index, chunk in enumerate(chunks):
-            embedding = await ai_client.embed(chunk, llm_config)
+            embedding = await client.embed(chunk, llm_config)
             records.append({
                 "id": f"note-{note_id}-chunk-{index}",
                 "document": chunk,
@@ -264,13 +276,7 @@ def background_index_note_task(*args, **kwargs):
         local_ai_client = AIClient()
         try:
             # 临时替换全局引用：复用 background_index_note_async 的逻辑
-            global ai_client
-            old = ai_client
-            ai_client = local_ai_client
-            try:
-                await background_index_note_async(*args, **kwargs)
-            finally:
-                ai_client = old
+            await background_index_note_async(*args, ai_client_instance=local_ai_client, **kwargs)
         finally:
             try:
                 await local_ai_client.client.aclose()
@@ -557,25 +563,61 @@ def upload_media_api(file: UploadFile = File(...), note_id: str = Form(None)):
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.post("/media/upload/init")
-def upload_media_init(filename: str = Form(...), size: int = Form(...), note_id: str = Form(None)):
+def upload_media_init(
+    filename: str = Form(...),
+    size: int = Form(...),
+    note_id: str = Form(None),
+    total_chunks: int | None = Form(None),
+    file_sha256: str | None = Form(None),
+):
     upload_id = str(uuid.uuid4())
     temp_dir = Path(settings.uploads_path) / "temp" / upload_id
     temp_dir.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "filename": filename,
+        "size": size,
+        "note_id": note_id,
+        "total_chunks": total_chunks,
+        "file_sha256": file_sha256,
+    }
+    (temp_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     return {"upload_id": upload_id}
+
+@router.get("/media/upload/status/{upload_id}")
+def upload_media_status(upload_id: str):
+    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    if not temp_dir.exists():
+        raise HTTPException(status_code=404, detail="Invalid upload_id")
+
+    chunk_pattern = re.compile(r"^chunk_(\d+)$")
+    uploaded_chunks: list[int] = []
+    for chunk_path in temp_dir.iterdir():
+        match = chunk_pattern.match(chunk_path.name)
+        if match:
+            uploaded_chunks.append(int(match.group(1)))
+
+    uploaded_chunks.sort()
+    return {"upload_id": upload_id, "uploaded_chunks": uploaded_chunks}
 
 @router.post("/media/upload/chunk")
 def upload_media_chunk(
     upload_id: str = Form(...),
     chunk_index: int = Form(...),
     file: UploadFile = File(...),
-    note_id: str = Form(None)
+    note_id: str = Form(None),
+    chunk_sha256: str | None = Form(None),
 ):
     temp_dir = Path(settings.uploads_path) / "temp" / upload_id
     if not temp_dir.exists():
         raise HTTPException(status_code=400, detail="Invalid upload_id")
+    content = file.file.read()
+    if chunk_sha256:
+        actual_sha = hashlib.sha256(content).hexdigest()
+        if actual_sha.lower() != chunk_sha256.lower():
+            raise HTTPException(status_code=400, detail=f"Chunk checksum mismatch: {chunk_index}")
     chunk_path = temp_dir / f"chunk_{chunk_index}"
     with open(chunk_path, "wb") as f:
-        f.write(file.file.read())
+        f.write(content)
     return {"status": "ok"}
 
 @router.post("/media/upload/complete")
@@ -583,7 +625,9 @@ def upload_media_complete(
     upload_id: str = Form(...),
     filename: str = Form(...),
     content_type: str = Form(...),
-    note_id: str = Form(None)
+    note_id: str = Form(None),
+    total_chunks: int | None = Form(None),
+    file_sha256: str | None = Form(None),
 ):
     temp_dir = Path(settings.uploads_path) / "temp" / upload_id
     if not temp_dir.exists():
@@ -601,10 +645,20 @@ def upload_media_complete(
     final_path = upload_base / unique_name
     
     chunks = sorted(temp_dir.glob("chunk_*"), key=lambda p: int(p.name.split("_")[1]))
+    if total_chunks is not None and len(chunks) != total_chunks:
+        raise HTTPException(status_code=400, detail="Chunk count mismatch")
+
     with open(final_path, "wb") as outfile:
         for chunk_path in chunks:
             with open(chunk_path, "rb") as infile:
                 shutil.copyfileobj(infile, outfile)
+
+    if file_sha256:
+        with open(final_path, "rb") as infile:
+            actual_sha = hashlib.sha256(infile.read()).hexdigest()
+        if actual_sha.lower() != file_sha256.lower():
+            final_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail="File checksum mismatch")
     
     shutil.rmtree(temp_dir)
     url_path = f"{note_id}/{unique_name}" if note_id else unique_name

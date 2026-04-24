@@ -11,6 +11,7 @@ import sys
 import json
 import uuid
 import shutil
+import secrets
 
 # 🚀 模块导入路径修复：确保项目根目录在 sys.path 中，防止 ModuleNotFoundError
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -75,9 +76,12 @@ async def auth_middleware(request: Request, call_next):
 
     # 如果是本地桌面端发起的请求 (127.0.0.1)，且没有设置环境变量强制开启鉴权，则自动豁免
     # 这确保了打包版在没有配置 token 时也能正常初始化
-    is_local = request.client and request.client.host == "127.0.0.1"
-    
-    if is_exempt or is_local:
+    client_host = request.client.host if request.client else ""
+    is_loopback = client_host in {"127.0.0.1", "::1", "localhost"}
+    desktop_token = request.headers.get("x-nova-desktop-token", "")
+    is_local_desktop = bool(settings.desktop_local_token) and is_loopback and secrets.compare_digest(desktop_token, settings.desktop_local_token)
+
+    if is_exempt or is_local_desktop:
         return await call_next(request)
 
     # 从 Header 或 Cookie 中获取 Token
@@ -108,6 +112,7 @@ app.include_router(router, prefix=settings.api_prefix)
 
 frontend_dist = resource_root() / "frontend_dist"
 assets_dir = frontend_dist / "assets"
+frontend_dist_resolved = frontend_dist.resolve()
 
 # 调试信息
 print(f"[*] Frontend dist directory: {frontend_dist}")
@@ -226,7 +231,11 @@ async def spa(request: Request, full_path: str):
          )
 
     # 1. Check if it's a direct file in frontend_dist (like favicon.svg, robots.txt)
-    target_file = frontend_dist / full_path
+    target_file = (frontend_dist / full_path).resolve()
+    try:
+        target_file.relative_to(frontend_dist_resolved)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Resource not found: {full_path}")
     
     if not full_path:
         pass

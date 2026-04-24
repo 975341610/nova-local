@@ -127,4 +127,24 @@ describe('desktop runtime guards', () => {
     expect(treeNodeItemSource).not.toContain('transition-all duration-300')
     expect(sidebarTreeSource).not.toContain('-right-3')
   })
+
+  it('exposes a channel allowlist in preload and registers desktop auth token IPC in main process', () => {
+    const preloadPath = path.resolve(__dirname, '../../../electron/preload.js')
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const preloadSource = fs.readFileSync(preloadPath, 'utf8')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+
+    expect(preloadSource).toContain('const ALLOWED_IPC_CHANNELS = new Set([')
+    expect(preloadSource).toContain('if (!ALLOWED_IPC_CHANNELS.has(channel))')
+    expect(mainSource).toContain("ipcMain.handle('desktop:get-auth-token'")
+    expect(mainSource).toContain("ipcMain.handle('desktop:get-backend-base-url'")
+  })
+
+  it('does not keep dummy note property API implementations in the frontend client', () => {
+    const apiPath = path.resolve(__dirname, '../lib/api.ts')
+    const apiSource = fs.readFileSync(apiPath, 'utf8')
+
+    expect(apiSource).not.toContain('Dummy updateNoteProperty')
+    expect(apiSource).toContain("`/notes/${noteId}/properties/${propertyId}`")
+  })
 })

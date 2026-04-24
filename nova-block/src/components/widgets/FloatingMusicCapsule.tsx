@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Play, Pause, SkipBack, SkipForward, X, ListMusic } from 'lucide-react';
 import { useMusicControls } from '../../contexts/MusicContext';
+import { formatUrl } from '../../lib/api';
 
 const EDGE_PEEK_PX = 20;
 const DEFAULT_MARGIN_PX = 40;
@@ -149,6 +150,7 @@ export const FloatingMusicCapsule: React.FC = () => {
   };
 
   const macaronGradient = 'linear-gradient(45deg, #FF9A9E 0%, #FAD0C4 99%, #FAD0C4 100%)';
+  const coverUrl = currentTrack.cover ? formatUrl(currentTrack.cover) : '';
 
   return (
     <AnimatePresence>
@@ -175,8 +177,8 @@ export const FloatingMusicCapsule: React.FC = () => {
             transition={{ duration: 4, ease: 'linear', repeat: isPlaying ? Infinity : 0 }}
             className="absolute inset-1 rounded-full overflow-hidden"
             style={{
-              backgroundImage: currentTrack.cover
-                ? `url("${currentTrack.cover}")`
+              backgroundImage: coverUrl
+                ? `url("${coverUrl}")`
                 : macaronGradient,
               backgroundSize: 'cover',
               backgroundPosition: 'center',

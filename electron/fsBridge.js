@@ -23,6 +23,111 @@ function summarizeContent(value) {
   return stripHtml(value).slice(0, 140);
 }
 
+function normalizeLegacyApiPath(rawValue) {
+  if (typeof rawValue !== 'string') {
+    return rawValue;
+  }
+
+  let value = rawValue.trim();
+  if (!value) {
+    return value;
+  }
+
+  if (
+    (value.startsWith('"') && value.endsWith('"'))
+    || (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+
+  value = value.replace(/\\/g, '/');
+
+  if (/^file:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      const pathname = decodeURIComponent(parsed.pathname || '');
+      const fileApiMatch = pathname.match(/^\/?[A-Za-z]:\/api(\/.*)?$/i);
+      if (fileApiMatch) {
+        return `/api${fileApiMatch[1] || ''}`;
+      }
+      return value;
+    } catch {
+      value = value.replace(/^file:\/\/\/?/i, '/');
+    }
+  }
+
+  const driveApiMatch = value.match(/^\/?[A-Za-z]:\/api(\/.*)?$/i);
+  if (driveApiMatch) {
+    return `/api${driveApiMatch[1] || ''}`;
+  }
+
+  const relativeApiMatch = value.match(/^\/?api(\/.*)?$/i);
+  if (relativeApiMatch) {
+    return `/api${relativeApiMatch[1] || ''}`;
+  }
+
+  return value;
+}
+
+const HTML_URL_ATTR_PATTERN = /(\b(?:src|href)\s*=\s*)(["'])([^"']+)\2/gi;
+const CSS_URL_PATTERN = /url\(\s*(["']?)([^"')]+)\1\s*\)/gi;
+
+function sanitizeLegacyApiUrlsInHtml(value) {
+  if (typeof value !== 'string' || !value) {
+    return value || '';
+  }
+
+  const normalizedHtml = value.replace(HTML_URL_ATTR_PATTERN, (full, prefix, quote, rawUrl) => {
+    const normalized = normalizeLegacyApiPath(rawUrl);
+    if (!normalized || normalized === rawUrl) {
+      return full;
+    }
+    return `${prefix}${quote}${normalized}${quote}`;
+  });
+
+  return normalizedHtml.replace(CSS_URL_PATTERN, (full, quote, rawUrl) => {
+    const normalized = normalizeLegacyApiPath(rawUrl);
+    if (!normalized || normalized === rawUrl) {
+      return full;
+    }
+    return `url(${quote}${normalized}${quote})`;
+  });
+}
+
+function sanitizeStickers(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) => {
+    if (!item || typeof item !== 'object') {
+      return item;
+    }
+    const next = { ...item };
+    if (typeof next.url === 'string') {
+      next.url = normalizeLegacyApiPath(next.url);
+    }
+    return next;
+  });
+}
+
+function sanitizeStickyNotes(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) => {
+    if (!item || typeof item !== 'object') {
+      return item;
+    }
+    const next = { ...item };
+    if (typeof next.content === 'string') {
+      next.content = sanitizeLegacyApiUrlsInHtml(next.content);
+    }
+    return next;
+  });
+}
+
 const NOTE_LINK_PATTERNS = [
   /data-id="(\d+)"/g,
   /data-wiki-id="(\d+)"/g,
@@ -990,9 +1095,10 @@ function createFsBridge(options) {
   async function parseNoteFile(notePath, notebook, parentId, includeContent) {
     const raw = await fs.readFile(notePath, 'utf8');
     const { meta, body } = splitFrontmatter(raw);
+    const sanitizedBody = sanitizeLegacyApiUrlsInHtml(body);
     const noteId = Number(meta.id || (await nextNoteId()));
-    const content = includeContent ? body : undefined;
-    const noteType = looksLikeCanvasContent(body) ? 'canvas' : String(meta.type || 'note');
+    const content = includeContent ? sanitizedBody : undefined;
+    const noteType = looksLikeCanvasContent(sanitizedBody) ? 'canvas' : String(meta.type || 'note');
     const title = normalizeTitle(meta.title, path.parse(notePath).name);
 
     return {
@@ -1002,15 +1108,15 @@ function createFsBridge(options) {
       content,
       file_path: notePath,
       type: noteType,
-      summary: String(meta.summary || summarizeContent(body)),
+      summary: String(meta.summary || summarizeContent(sanitizedBody)),
       is_title_manually_edited: Boolean(meta.is_title_manually_edited),
       tags: Array.isArray(meta.tags) ? meta.tags.map(String) : [],
       properties: Array.isArray(meta.properties) ? meta.properties : [],
-      sticky_notes: Array.isArray(meta.sticky_notes) ? meta.sticky_notes : [],
-      stickers: Array.isArray(meta.stickers) ? meta.stickers : [],
+      sticky_notes: sanitizeStickyNotes(meta.sticky_notes),
+      stickers: sanitizeStickers(meta.stickers),
       links: Array.isArray(meta.links) && meta.links.length > 0
         ? meta.links.map(Number).filter(Number.isFinite)
-        : extractLinkedNoteIds(body),
+        : extractLinkedNoteIds(sanitizedBody),
       notebook_id: notebook.id,
       parent_id: parentId,
       position: 0,
@@ -1238,7 +1344,10 @@ function createFsBridge(options) {
   }
 
   async function writeNoteFile(notePath, note) {
-    const derivedLinks = extractLinkedNoteIds(note.content || '');
+    const sanitizedContent = sanitizeLegacyApiUrlsInHtml(note.content || '');
+    const sanitizedStickers = sanitizeStickers(note.stickers || []);
+    const sanitizedStickyNotes = sanitizeStickyNotes(note.sticky_notes || []);
+    const derivedLinks = extractLinkedNoteIds(sanitizedContent);
     const meta = {
       ...(note._meta || {}),
       id: note.id,
@@ -1250,18 +1359,18 @@ function createFsBridge(options) {
       created_at: note.created_at || nowIso(),
       updated_at: note.updated_at || nowIso(),
       deleted_at: note.deleted_at || null,
-      summary: summarizeContent(note.content || ''),
+      summary: summarizeContent(sanitizedContent),
       sort_key: note.sort_key || 'm',
       is_title_manually_edited: Boolean(note.is_title_manually_edited),
       background_paper: note.background_paper || 'none',
-      stickers: note.stickers || [],
-      sticky_notes: note.sticky_notes || [],
+      stickers: sanitizedStickers,
+      sticky_notes: sanitizedStickyNotes,
       properties: note.properties || [],
       links: derivedLinks,
       original_rel_path: note._meta?.original_rel_path || null,
     };
 
-    await writeFileAtomically(notePath, serializeFrontmatter(meta, note.content || ''));
+    await writeFileAtomically(notePath, serializeFrontmatter(meta, sanitizedContent));
     return meta;
   }
 
@@ -1302,7 +1411,7 @@ function createFsBridge(options) {
     const title = normalizeTitle(payload.title, 'Untitled');
     const createdAt = nowIso();
     const targetPath = await uniquePath(path.join(location.dir, `${sanitizeFilename(title)}.md`));
-    const noteContent = payload.content || '';
+    const noteContent = sanitizeLegacyApiUrlsInHtml(payload.content || '');
     const noteType = looksLikeCanvasContent(noteContent) ? 'canvas' : (payload.type || 'note');
 
     const note = {
@@ -1315,9 +1424,9 @@ function createFsBridge(options) {
       is_title_manually_edited: Boolean(payload.is_title_manually_edited),
       tags: payload.tags || [],
       properties: payload.properties || [],
-      sticky_notes: payload.sticky_notes || [],
-      stickers: payload.stickers || [],
-      links: extractLinkedNoteIds(payload.content || ''),
+      sticky_notes: sanitizeStickyNotes(payload.sticky_notes || []),
+      stickers: sanitizeStickers(payload.stickers || []),
+      links: extractLinkedNoteIds(noteContent),
       notebook_id: location.notebookId,
       parent_id: location.parentId,
       position: 0,
@@ -1375,7 +1484,9 @@ function createFsBridge(options) {
         }
       }
 
-      const updatedContent = hasOwn(payload, 'content') ? payload.content : current.content;
+      const updatedContent = hasOwn(payload, 'content')
+        ? sanitizeLegacyApiUrlsInHtml(payload.content || '')
+        : current.content;
       const requestedType = hasOwn(payload, 'type') ? payload.type : current.type;
       const inferredType = looksLikeCanvasContent(updatedContent) ? 'canvas' : requestedType;
 
@@ -1387,11 +1498,15 @@ function createFsBridge(options) {
         type: inferredType,
         tags: hasOwn(payload, 'tags') ? payload.tags : current.tags,
         properties: hasOwn(payload, 'properties') ? payload.properties : current.properties,
-        sticky_notes: hasOwn(payload, 'sticky_notes') ? payload.sticky_notes : current.sticky_notes,
-        stickers: hasOwn(payload, 'stickers') ? payload.stickers : current.stickers,
+        sticky_notes: hasOwn(payload, 'sticky_notes')
+          ? sanitizeStickyNotes(payload.sticky_notes)
+          : current.sticky_notes,
+        stickers: hasOwn(payload, 'stickers')
+          ? sanitizeStickers(payload.stickers)
+          : current.stickers,
         links: hasOwn(payload, 'links')
           ? payload.links
-          : extractLinkedNoteIds(hasOwn(payload, 'content') ? payload.content : current.content),
+          : extractLinkedNoteIds(updatedContent),
         sort_key: hasOwn(payload, 'sort_key') ? payload.sort_key : current.sort_key,
         background_paper: hasOwn(payload, 'background_paper') ? payload.background_paper : current.background_paper,
         is_title_manually_edited: hasOwn(payload, 'is_title_manually_edited')

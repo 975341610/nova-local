@@ -337,7 +337,7 @@ function MediaNode(props: NodeProps<CanvasMediaNode>) {
               </div>
             )}
             <iframe 
-              src={data.url} 
+              src={formatUrl(data.url)} 
               className="absolute inset-0 w-full h-full" 
               allowFullScreen
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"

@@ -65,8 +65,117 @@ const pickNoteWritePayload = (payload: Record<string, unknown> = {}): NoteWriteP
   }
   return next
 }
+
+const DESKTOP_API_BASE_STORAGE_KEY = 'nova.api.base_url'
+let desktopBackendApiBase: string | null = null
+let desktopBackendApiBaseResolved = false
+
+const normalizeApiBase = (raw: string | null | undefined) => {
+  if (!raw) {
+    return null
+  }
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return null
+  }
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return null
+  }
+
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null
+    }
+    parsed.hash = ''
+    parsed.search = ''
+    const normalized = parsed.toString().replace(/\/+$/, '')
+    if (normalized.endsWith('/api')) {
+      return normalized
+    }
+    return `${normalized}/api`
+  } catch {
+    return null
+  }
+}
+
+const getStoredApiBase = () => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  try {
+    return normalizeApiBase(window.localStorage.getItem(DESKTOP_API_BASE_STORAGE_KEY))
+  } catch {
+    return null
+  }
+}
+
+const clearStoredApiBase = () => {
+  if (typeof window === 'undefined') {
+    return
+  }
+  try {
+    window.localStorage.removeItem(DESKTOP_API_BASE_STORAGE_KEY)
+  } catch {
+    // ignore storage failures
+  }
+}
+
+const resolveDesktopBackendApiBase = () => {
+  if (desktopBackendApiBaseResolved || typeof window === 'undefined') {
+    return
+  }
+  desktopBackendApiBaseResolved = true
+
+  const stored = getStoredApiBase()
+  if (stored) {
+    desktopBackendApiBase = stored
+  } else {
+    clearStoredApiBase()
+  }
+
+  if (!window.electron?.ipcInvoke) {
+    return
+  }
+
+  const fetchBase = window.electron.getBackendBaseUrl
+    ? window.electron.getBackendBaseUrl()
+    : window.electron.ipcInvoke('desktop:get-backend-base-url')
+
+  void fetchBase
+    .then((base) => {
+      if (typeof base !== 'string') {
+        return
+      }
+      const normalized = normalizeApiBase(base)
+      if (!normalized) {
+        return
+      }
+      desktopBackendApiBase = normalized
+      try {
+        window.localStorage.setItem(DESKTOP_API_BASE_STORAGE_KEY, normalized)
+      } catch {
+        // ignore storage failures
+      }
+    })
+    .catch(() => {
+      // ignore desktop runtime discovery failure and fall back to defaults
+    })
+}
+
 export const getApiBase = () => {
   if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
+  resolveDesktopBackendApiBase();
+
+  if (desktopBackendApiBase) {
+    return desktopBackendApiBase;
+  }
+
+  const storedApiBase = getStoredApiBase();
+  if (storedApiBase) {
+    return storedApiBase;
+  }
+
   if (typeof window !== 'undefined') {
     if (window.location.hostname.includes('strato-https-proxy')) {
       return `https://${window.location.hostname.replace(/^[0-9]+-/, '8765-')}/api`;
@@ -86,23 +195,113 @@ export const getApiBase = () => {
   return 'http://127.0.0.1:8765/api';
 };
 
+const normalizeLegacyApiPath = (rawUrl: string) => {
+  let value = rawUrl.trim();
+  if (!value) {
+    return '';
+  }
+
+  if (
+    (value.startsWith('"') && value.endsWith('"'))
+    || (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+
+  value = value.replace(/\\/g, '/');
+
+  if (/^file:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      const pathname = decodeURIComponent(parsed.pathname || '');
+      const fileApiMatch = pathname.match(/^\/?[A-Za-z]:\/api(\/.*)?$/i);
+      if (fileApiMatch) {
+        return `/api${fileApiMatch[1] || ''}`;
+      }
+      return value;
+    } catch {
+      value = value.replace(/^file:\/\/\/?/i, '/');
+    }
+  }
+
+  const driveApiMatch = value.match(/^\/?[A-Za-z]:\/api(\/.*)?$/i);
+  if (driveApiMatch) {
+    return `/api${driveApiMatch[1] || ''}`;
+  }
+
+  const relativeApiMatch = value.match(/^\/?api(\/.*)?$/i);
+  if (relativeApiMatch) {
+    return `/api${relativeApiMatch[1] || ''}`;
+  }
+
+  return value;
+};
+
+const HTML_URL_ATTR_PATTERN = /(\b(?:src|href)\s*=\s*)(["'])([^"']+)\2/gi;
+const CSS_URL_PATTERN = /url\(\s*(["']?)([^"')]+)\1\s*\)/gi;
+
+export const sanitizeLegacyApiUrlsInHtml = (html: string | null | undefined) => {
+  if (!html) {
+    return html ?? '';
+  }
+
+  const shouldRebaseThroughApi = (rawValue: string, normalized: string) => {
+    if (!rawValue || !normalized) {
+      return false;
+    }
+    if (normalized !== rawValue) {
+      return true;
+    }
+    return normalized === '/api' || normalized.startsWith('/api/');
+  };
+
+  const normalizedHtml = html.replace(HTML_URL_ATTR_PATTERN, (full, prefix, quote, rawValue) => {
+    const normalized = normalizeLegacyApiPath(rawValue);
+    if (!normalized) {
+      return full;
+    }
+    if (!shouldRebaseThroughApi(rawValue, normalized)) {
+      return full;
+    }
+    return `${prefix}${quote}${formatUrl(normalized)}${quote}`;
+  });
+
+  return normalizedHtml.replace(CSS_URL_PATTERN, (full, quote, rawValue) => {
+    const normalized = normalizeLegacyApiPath(rawValue);
+    if (!normalized) {
+      return full;
+    }
+    if (!shouldRebaseThroughApi(rawValue, normalized)) {
+      return full;
+    }
+    return `url(${quote}${formatUrl(normalized)}${quote})`;
+  });
+};
+
 /**
  * 格式化 API 返回的相对路径为绝对 URL
  */
 export const formatUrl = (url: string | undefined | null) => {
   if (!url) return '';
-  if (url.startsWith('http') || url.startsWith('data:')) return url;
+  const normalized = normalizeLegacyApiPath(url);
+  if (!normalized) return '';
+  if (/^https?:\/\//i.test(normalized) || normalized.startsWith('data:') || normalized.startsWith('blob:')) {
+    return normalized;
+  }
+  if (/^file:\/\//i.test(normalized)) {
+    return normalized;
+  }
   
   const base = getApiBase(); // e.g. http://127.0.0.1:8765/api
   
   // 如果路径以 /api 开头，我们需要处理掉重复的 /api
-  if (url.startsWith('/api/')) {
+  if (normalized === '/api' || normalized.startsWith('/api/')) {
     const apiBaseWithoutTrailingSlash = base.endsWith('/api') ? base.slice(0, -4) : base;
-    return `${apiBaseWithoutTrailingSlash}${url}`;
+    return `${apiBaseWithoutTrailingSlash}${normalized}`;
   }
   
   // 否则直接拼接
-  return `${base}${url.startsWith('/') ? '' : '/'}${url}`;
+  return `${base}${normalized.startsWith('/') ? '' : '/'}${normalized}`;
 };
 
 
@@ -111,6 +310,8 @@ declare global {
   interface Window {
     electron?: {
       ipcInvoke: (channel: string, ...args: any[]) => Promise<any>;
+      getDesktopAuthToken?: () => Promise<string>;
+      getBackendBaseUrl?: () => Promise<string>;
       onVaultChanged?: (callback: (payload: any) => void) => (() => void);
       onBeforeAppClose?: (callback: () => void | Promise<void>) => (() => void);
       finishBeforeAppClose?: () => void;
@@ -130,6 +331,49 @@ const LOCAL_FIRST_CHANNELS = new Set([
 const extractEntityId = (path: string) => {
   const match = path.match(/\/(\d+)(?:\/|$)/)
   return match ? parseInt(match[1], 10) : undefined
+}
+
+let desktopAuthTokenPromise: Promise<string | null> | null = null
+
+const getDesktopAuthToken = async () => {
+  if (!window.electron?.ipcInvoke) {
+    return null
+  }
+
+  if (!desktopAuthTokenPromise) {
+    desktopAuthTokenPromise = (window.electron.getDesktopAuthToken
+      ? window.electron.getDesktopAuthToken()
+      : window.electron.ipcInvoke('desktop:get-auth-token'))
+      .then((token) => (typeof token === 'string' && token.length > 0 ? token : null))
+      .catch(() => null)
+  }
+
+  return desktopAuthTokenPromise
+}
+
+const getDesktopAuthHeaders = async (): Promise<Record<string, string>> => {
+  const token = await getDesktopAuthToken()
+  if (!token) {
+    return {}
+  }
+  return { 'x-nova-desktop-token': token }
+}
+
+const supportsWebCrypto = () => typeof crypto !== 'undefined' && !!crypto.subtle
+
+const toHex = (buffer: ArrayBuffer) => (
+  Array.from(new Uint8Array(buffer))
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('')
+)
+
+const digestSha256 = async (blob: Blob) => {
+  if (!supportsWebCrypto()) {
+    return null
+  }
+  const bytes = await blob.arrayBuffer()
+  const hash = await crypto.subtle.digest('SHA-256', bytes)
+  return toHex(hash)
 }
 
 // Helper to call IPC or fallback to fetch
@@ -152,8 +396,10 @@ async function invoke<T>(channel: string, path: string, options?: any): Promise<
   
   // Fallback to FastAPI REST API (only if electron is not available, e.g. web preview)
   const API_BASE = getApiBase();
+  const desktopHeaders = await getDesktopAuthHeaders();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...desktopHeaders,
     ...(options?.headers as Record<string, string> || {}),
   };
   const response = await fetch(`${API_BASE}${path}`, {
@@ -215,12 +461,18 @@ export const api = {
     invoke<AskResponse>('ai:ask', '/ask', { method: 'POST', body: JSON.stringify(payload) }),
   streamInlineAI: async (payload: { prompt: string; context: string; action: string }, onChunk: (chunk: string) => void) => {
     if (window.electron?.ipcInvoke) {
-      return window.electron.ipcInvoke('ai:stream-inline', payload, (chunk: string) => onChunk(chunk));
+      try {
+        await window.electron.ipcInvoke('ai:stream-inline', payload, (chunk: string) => onChunk(chunk));
+        return;
+      } catch (e) {
+        console.warn('IPC inline streaming failed, falling back to fetch', e);
+      }
     }
     const API_BASE = getApiBase();
+    const desktopHeaders = await getDesktopAuthHeaders();
     const response = await fetch(`${API_BASE}/ai/inline`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...desktopHeaders },
       body: JSON.stringify(payload),
     });
     if (!response.ok) throw new Error(await response.text());
@@ -267,9 +519,10 @@ export const api = {
       }
     }
     const API_BASE = getApiBase();
+    const desktopHeaders = await getDesktopAuthHeaders();
     const response = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...desktopHeaders },
       body: JSON.stringify(payload),
     });
     if (!response.ok) throw new Error(await response.text());
@@ -284,6 +537,7 @@ export const api = {
   },
   upload: async (files: File[], noteId?: number | string) => {
     const API_BASE = getApiBase();
+    const desktopHeaders = await getDesktopAuthHeaders();
     const CHUNK_SIZE = 1024 * 256; // 256KB chunks (Strato proxy is extremely strict)
 
     const results = await Promise.all(files.map(async (file) => {
@@ -292,30 +546,50 @@ export const api = {
         const formData = new FormData();
         formData.append('file', file);
         if (noteId) formData.append('note_id', noteId.toString());
-        const response = await fetch(`${API_BASE}/media/upload`, { method: 'POST', body: formData });
+        const response = await fetch(`${API_BASE}/media/upload`, { method: 'POST', headers: desktopHeaders, body: formData });
         if (!response.ok) throw new Error(await response.text());
         return response.json();
       } else {
         // Large files, use chunked upload
+        const fileSha256 = await digestSha256(file);
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
         const initForm = new FormData();
         initForm.append('filename', file.name);
         initForm.append('size', file.size.toString());
+        initForm.append('total_chunks', totalChunks.toString());
+        if (fileSha256) initForm.append('file_sha256', fileSha256);
         if (noteId) initForm.append('note_id', noteId.toString());
         
-        const initRes = await fetch(`${API_BASE}/media/upload/init`, { method: 'POST', body: initForm });
+        const initRes = await fetch(`${API_BASE}/media/upload/init`, { method: 'POST', headers: desktopHeaders, body: initForm });
         if (!initRes.ok) throw new Error('Failed to init upload');
         const { upload_id } = await initRes.json();
 
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        let uploadedChunks = new Set<number>();
+        try {
+          const statusRes = await fetch(`${API_BASE}/media/upload/status/${encodeURIComponent(upload_id)}`, { headers: desktopHeaders });
+          if (statusRes.ok) {
+            const status = await statusRes.json();
+            uploadedChunks = new Set(Array.isArray(status.uploaded_chunks) ? status.uploaded_chunks : []);
+          }
+        } catch {
+          // ignore status errors and continue uploading all chunks
+        }
+
         for (let i = 0; i < totalChunks; i++) {
+          if (uploadedChunks.has(i)) {
+            continue;
+          }
           const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+          const chunkSha256 = await digestSha256(chunk);
           const chunkForm = new FormData();
           chunkForm.append('upload_id', upload_id);
           chunkForm.append('chunk_index', i.toString());
           chunkForm.append('file', chunk);
+          if (chunkSha256) chunkForm.append('chunk_sha256', chunkSha256);
           if (noteId) chunkForm.append('note_id', noteId.toString());
           
-          const chunkRes = await fetch(`${API_BASE}/media/upload/chunk`, { method: 'POST', body: chunkForm });
+          const chunkRes = await fetch(`${API_BASE}/media/upload/chunk`, { method: 'POST', headers: desktopHeaders, body: chunkForm });
           if (!chunkRes.ok) throw new Error(`Failed to upload chunk ${i}`);
         }
 
@@ -323,9 +597,11 @@ export const api = {
         compForm.append('upload_id', upload_id);
         compForm.append('filename', file.name);
         compForm.append('content_type', file.type);
+        compForm.append('total_chunks', totalChunks.toString());
+        if (fileSha256) compForm.append('file_sha256', fileSha256);
         if (noteId) compForm.append('note_id', noteId.toString());
         
-        const compRes = await fetch(`${API_BASE}/media/upload/complete`, { method: 'POST', body: compForm });
+        const compRes = await fetch(`${API_BASE}/media/upload/complete`, { method: 'POST', headers: desktopHeaders, body: compForm });
         if (!compRes.ok) throw new Error('Failed to complete upload');
         return compRes.json();
       }
@@ -350,7 +626,8 @@ export const api = {
   // 音乐库列表必须走后端扫描（HTTP），避免 Electron IPC 缺失导致库永远为空
   listMusicLibrary: async () => {
     const API_BASE = getApiBase();
-    const response = await fetch(`${API_BASE}/media/music-library`);
+    const desktopHeaders = await getDesktopAuthHeaders();
+    const response = await fetch(`${API_BASE}/media/music-library`, { headers: desktopHeaders });
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   },
@@ -358,10 +635,11 @@ export const api = {
     invoke<any>('media:music-link', '/media/music-link', { method: 'POST', body: JSON.stringify(payload) }),
   uploadMusic: async (file: File, cover?: File) => {
     const API_BASE = getApiBase();
+    const desktopHeaders = await getDesktopAuthHeaders();
     const formData = new FormData();
     formData.append('file', file);
     if (cover) formData.append('cover', cover);
-    const response = await fetch(`${API_BASE}/media/music-upload`, { method: 'POST', body: formData });
+    const response = await fetch(`${API_BASE}/media/music-upload`, { method: 'POST', headers: desktopHeaders, body: formData });
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   },
@@ -377,17 +655,13 @@ export const api = {
   importDictionary: (text: string) =>
     invoke<{ status: string; count: number; message: string }>('text:dictionary:import', '/text/dictionary/import', { method: 'POST', body: JSON.stringify({ text }) }),
   
-  // Dummy implementations for PropertyPanel
+  // Property APIs
   suggestTags: (content: string) => 
     invoke<{ tags: string[] }>('ai:suggest-tags', '/ai/suggest-tags', { method: 'POST', body: JSON.stringify({ content }) }),
-  updateNoteProperty: async (noteId: number, propertyId: number, payload: any) => {
-    console.log('Dummy updateNoteProperty called for note:', noteId, 'propertyId:', propertyId, 'payload:', payload);
-    return { id: propertyId, ...payload } as NoteProperty;
-  },
-  createNoteProperty: async (noteId: number, property: { name: string; type: string; value: any }) => {
-    console.log('Dummy createNoteProperty called for note:', noteId, 'property:', property);
-    return { ...property, id: Math.random() } as NoteProperty;
-  },
+  updateNoteProperty: (noteId: number, propertyId: number, payload: { name?: string; type?: string; value?: any }) =>
+    invoke<NoteProperty>('notes:properties:update', `/notes/${noteId}/properties/${propertyId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  createNoteProperty: (noteId: number, property: { name: string; type: string; value: any }) =>
+    invoke<NoteProperty>('notes:properties:create', `/notes/${noteId}/properties`, { method: 'POST', body: JSON.stringify(property) }),
 
   // Template APIs
   listTemplates: () => invoke<NoteTemplate[]>('templates:list', '/templates'),

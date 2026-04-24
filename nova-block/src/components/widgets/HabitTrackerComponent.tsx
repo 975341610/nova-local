@@ -26,6 +26,7 @@ import {
 import { AnimatePresence, motion } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { useHabit } from '../../contexts/HabitContext';
+import { formatUrl } from '../../lib/api';
 
 const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -39,7 +40,14 @@ const MinimalIllustration = () => (
 
 const isImageIcon = (icon?: string) => {
   if (!icon) return false;
-  return icon.startsWith('data:image/') || icon.startsWith('http');
+  return (
+    icon.startsWith('data:image/')
+    || icon.startsWith('http')
+    || icon.startsWith('blob:')
+    || icon.startsWith('file:')
+    || icon.startsWith('/')
+    || /^[A-Za-z]:[\\/]/.test(icon)
+  );
 };
 
 const HabitIcon: React.FC<{ icon?: string; className?: string }> = ({ icon, className }) => {
@@ -47,7 +55,7 @@ const HabitIcon: React.FC<{ icon?: string; className?: string }> = ({ icon, clas
   if (isImageIcon(value)) {
     return (
       <img
-        src={value}
+        src={formatUrl(value)}
         className={className || 'object-contain w-full h-full'}
         draggable={false}
         alt="habit icon"
@@ -227,7 +235,7 @@ export const HabitTrackerComponent: React.FC<any> = (props) => {
               <div className="relative group/frame aspect-[4/3] bg-white border border-stone-100 shadow-sm mb-4 overflow-hidden rounded-sm flex items-center justify-center">
                 {(activeHabit as any)?.bgImage ? (
                   <img 
-                    src={(activeHabit as any).bgImage} 
+                    src={formatUrl((activeHabit as any).bgImage)} 
                     className="w-full h-full object-cover grayscale-[0.2] opacity-80" 
                     alt="background"
                   />

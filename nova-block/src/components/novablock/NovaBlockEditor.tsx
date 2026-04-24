@@ -1,5 +1,6 @@
 ﻿import { formatUrl } from "../../lib/api";
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
+import { sanitizeLegacyApiUrlsInHtml } from "../../lib/api";
 import { EditorContent, useEditor, Editor } from '@tiptap/react';
 import { NodeSelection } from '@tiptap/pm/state';
 import type { ChainedCommands } from '@tiptap/core';
@@ -537,6 +538,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const latestNoteRef = useRef(note);
   const isSavingRef = useRef(false);
   const queuedPayloadRef = useRef<any | null>(null);
+  const handleSaveRef = useRef<(content?: string, updates?: Partial<Note>) => Promise<void> | void>(() => undefined);
+  const stickersRef = useRef<StickerData[]>([]);
+  const stickyNotesRef = useRef<StickyNoteData[]>([]);
 
   // Global drop cursor ghost cleanup (running during drag)
   useEffect(() => {
@@ -590,21 +594,31 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     latestNoteRef.current = syncLatestDraftWithIncomingNote(latestNoteRef.current, note, prevNoteId);
   }, [note, prevNoteId]);
 
+  useEffect(() => {
+    stickersRef.current = stickers;
+  }, [stickers]);
+
+  useEffect(() => {
+    stickyNotesRef.current = stickyNotes;
+  }, [stickyNotes]);
+
   const handleStickersChange = useCallback((newStickers: StickerData[]) => {
+    stickersRef.current = newStickers;
     setStickers(newStickers);
     if (latestNoteRef.current) {
       latestNoteRef.current = { ...latestNoteRef.current, stickers: newStickers };
     }
-    if (!isDirty) setIsDirty(true);
-  }, [isDirty]);
+    setIsDirty((prev) => prev || true);
+  }, []);
 
   const handleStickyNotesChange = useCallback((newNotes: StickyNoteData[]) => {
+    stickyNotesRef.current = newNotes;
     setStickyNotes(newNotes);
     if (latestNoteRef.current) {
       latestNoteRef.current = { ...latestNoteRef.current, sticky_notes: newNotes };
     }
-    if (!isDirty) setIsDirty(true);
-  }, [isDirty]);
+    setIsDirty((prev) => prev || true);
+  }, []);
 
   // 鏍稿績 Tiptap 鎵╁睍閰嶇疆 (楂樻€ц兘 memo 妯″紡)
   const extensions = useMemo(() => [
@@ -727,9 +741,14 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }, 500); // 500ms 闃叉姈锛屽ぇ骞呮彁鍗囪緭鍏ユ€ц兘锛屾潨缁?React 娓叉煋姝婚攣
   }, []);
 
+  const normalizedNoteContent = useMemo(
+    () => sanitizeLegacyApiUrlsInHtml(note?.content) || '<p></p>',
+    [note?.content],
+  );
+
   const editor = useEditor({
     extensions,
-    content: note?.content || '<p></p>',
+    content: normalizedNoteContent,
     immediatelyRender: false,
     onUpdate: ({ editor }) => {
       // 閬垮厤閲嶅璁剧疆鐘舵€佸鑷?React React 姝诲惊鐜?
@@ -979,7 +998,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
           rotation: (Math.random() - 0.5) * 10,
           opacity: 1,
         };
-        handleStickersChange([...stickers, newSticker]);
+        const nextStickers = [...stickersRef.current, newSticker];
+        handleStickersChange(nextStickers);
+        void handleSaveRef.current(undefined, {
+          stickers: nextStickers,
+          sticky_notes: stickyNotesRef.current,
+        });
       } else {
         const newSticky: StickyNoteData = {
           id: Math.random().toString(36).substring(7),
@@ -989,7 +1013,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
           rotation: (Math.random() - 0.5) * 10,
           content: detail?.content || '<p></p>',
         };
-        handleStickyNotesChange([...stickyNotes, newSticky]);
+        const nextStickyNotes = [...stickyNotesRef.current, newSticky];
+        handleStickyNotesChange(nextStickyNotes);
+        void handleSaveRef.current(undefined, {
+          stickers: stickersRef.current,
+          sticky_notes: nextStickyNotes,
+        });
       }
     };
     window.addEventListener('add-sticky-note', handleAddSticker as EventListener);
@@ -1309,11 +1338,15 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       window.removeEventListener('ai-write', handleAIWrite as EventListener);
       window.removeEventListener('ai-action', handleAIAction);
     };
-  }, [editor, stickers, stickyNotes, handleStickersChange, handleStickyNotesChange, note?.id, onSave]);
+  }, [editor, handleStickersChange, handleStickyNotesChange, isAiEnabled, onNotify, onSave]);
 
   useEffect(() => {
-    setStickers(note?.stickers || []);
-    setStickyNotes(note?.sticky_notes || []);
+    const nextStickers = note?.stickers || [];
+    const nextStickyNotes = note?.sticky_notes || [];
+    stickersRef.current = nextStickers;
+    stickyNotesRef.current = nextStickyNotes;
+    setStickers(nextStickers);
+    setStickyNotes(nextStickyNotes);
     setBackgroundPaper(note?.background_paper || 'none');
     setSpellcheckError(null);
   }, [note?.id, note?.stickers, note?.sticky_notes, note?.background_paper]);
@@ -1637,6 +1670,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     await runSave(payloadToSave);
   }, [editor, onNotify, onSave]);
 
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  }, [handleSave]);
+
   // 鑷姩淇濆瓨 (debounce)
   const timerRef = useRef<any>(null);
   const autosaveDelayMs = window.electron?.ipcInvoke ? 0 : 3000;
@@ -1903,7 +1940,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         });
       }
 
-      editor.commands.setContent(note.content || '<p></p>', { emitUpdate: false });
+      editor.commands.setContent(sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>', { emitUpdate: false });
       // 鍒囨崲鍐呭鍚庯紝寮哄埗琛ラ綈 ID 骞舵洿鏂板ぇ绾?
       // @ts-ignore
       editor.commands.ensureHeadingIds();

@@ -1,7 +1,25 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+const ALLOWED_IPC_CHANNELS = new Set([
+  'notes:list',
+  'notes:get',
+  'notes:create',
+  'folders:create',
+  'notes:update',
+  'notes:delete',
+  'desktop:get-auth-token',
+  'desktop:get-backend-base-url',
+]);
+
 contextBridge.exposeInMainWorld('electron', {
-  ipcInvoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
+  ipcInvoke: (channel, payload) => {
+    if (!ALLOWED_IPC_CHANNELS.has(channel)) {
+      return Promise.reject(new Error(`IPC channel not allowed: ${channel}`));
+    }
+    return ipcRenderer.invoke(channel, payload);
+  },
+  getDesktopAuthToken: () => ipcRenderer.invoke('desktop:get-auth-token'),
+  getBackendBaseUrl: () => ipcRenderer.invoke('desktop:get-backend-base-url'),
   onVaultChanged: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('vault:changed', handler);

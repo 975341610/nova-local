@@ -5,6 +5,7 @@ import { Music, Play, ExternalLink } from 'lucide-react'
 
 import { useMusicControls } from '../../contexts/MusicContext'
 import { computePlaylistPopoverPosition } from '../../lib/playlistPopoverPosition'
+import { formatUrl } from '../../lib/api'
 
 interface PlaylistPopoverProps {
   onClose: () => void
@@ -88,7 +89,7 @@ export const PlaylistPopover: React.FC<PlaylistPopoverProps> = ({ onClose, ancho
               >
                 <div className="relative w-10 h-10 shrink-0 rounded-xl overflow-hidden shadow-sm">
                   {track.cover ? (
-                    <img src={track.cover} alt="" className="w-full h-full object-cover" />
+                    <img src={formatUrl(track.cover)} alt="" className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full bg-gradient-to-br from-gray-200 to-gray-300 flex items-center justify-center text-gray-400">
                       <Music size={16} />

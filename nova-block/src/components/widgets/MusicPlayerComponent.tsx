@@ -3,7 +3,7 @@ import { NodeViewWrapper } from '@tiptap/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, Link2, Play, Pause, ChevronDown, ChevronUp, Music, SkipBack, SkipForward, ListMusic } from 'lucide-react';
 import { useMusicControls, useMusicProgress } from '../../contexts/MusicContext';
-import { api } from '../../lib/api';
+import { api, formatUrl } from '../../lib/api';
 import { promptCompat } from '../../lib/promptCompat';
 
 const palette = {
@@ -35,7 +35,7 @@ export const MusicPlayerComponent: React.FC<any> = (props) => {
 
   const displayTitle = currentTrack?.title || '未播放音乐';
   const displayArtist = currentTrack?.artist || '请从右侧列表选择或上传';
-  const displayCover = currentTrack?.cover || '';
+  const displayCover = currentTrack?.cover ? formatUrl(currentTrack.cover) : '';
 
   const isCurrent = !!currentTrack; 
   const isActive = isCurrent && isPlaying;
