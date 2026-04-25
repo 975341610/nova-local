@@ -12,6 +12,7 @@ const { apiMock } = vi.hoisted(() => ({
     importDictionary: vi.fn(),
     getModelConfig: vi.fn(),
     updateModelConfig: vi.fn(),
+    getVaultHealth: vi.fn(),
   },
 }))
 
@@ -39,6 +40,8 @@ describe('SettingsDialog AI config', () => {
     apiMock.checkAIHardware.mockReset()
     apiMock.updateOllama.mockReset()
     apiMock.importDictionary.mockReset()
+    apiMock.getVaultHealth.mockReset()
+    apiMock.getVaultHealth.mockResolvedValue({ summary: { total_issues: 0 }, issues: [] })
   })
 
   it('loads and saves remote AI model config from settings', async () => {

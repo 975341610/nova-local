@@ -4,7 +4,7 @@ import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Se
 import { api } from '../lib/api';
 import { useAI } from '../contexts/AIContext';
 import { getThemeConfig, saveThemeConfig, exportThemeConfig, validateThemeConfig, applyThemeConfig } from '../lib/themeUtils';
-import type { ThemeConfig } from '../lib/types';
+import type { ThemeConfig, VaultHealthReport } from '../lib/types';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -26,7 +26,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     base_url: '',
     model_name: '',
   });
-  const [activeTab, setActiveTab] = useState<'ai' | 'dictionary' | 'theme'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'dictionary' | 'theme' | 'vault'>('ai');
   
   // Dictionary Import State
   const [dictText, setDictText] = useState('');
@@ -37,6 +37,9 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
   const [themeConfig, setThemeConfigState] = useState<ThemeConfig>(getThemeConfig());
   const [themeImportError, setThemeImportError] = useState<string | null>(null);
   const [themeImportSuccess, setThemeImportSuccess] = useState(false);
+  const [vaultHealth, setVaultHealth] = useState<VaultHealthReport | null>(null);
+  const [vaultHealthLoading, setVaultHealthLoading] = useState(false);
+  const [vaultHealthError, setVaultHealthError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -47,8 +50,22 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       setThemeImportError(null);
       setThemeImportSuccess(false);
       setModelConfigNotice(null);
+      void loadVaultHealth();
     }
   }, [isOpen, refreshAiStatus]);
+
+  const loadVaultHealth = async () => {
+    setVaultHealthLoading(true);
+    setVaultHealthError(null);
+    try {
+      setVaultHealth(await api.getVaultHealth());
+    } catch (err: any) {
+      console.error('Failed to load vault health:', err);
+      setVaultHealthError(err?.message || 'Vault 体检失败');
+    } finally {
+      setVaultHealthLoading(false);
+    }
+  };
 
   const loadModelConfig = async () => {
     setLoadingModelConfig(true);
@@ -341,6 +358,15 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
               >
                 <Palette size={14} />
                 主题管理
+              </button>
+              <button
+                onClick={() => setActiveTab('vault')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-lg transition-all ${
+                  activeTab === 'vault' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Database size={14} />
+                Vault 体检
               </button>
             </div>
 
@@ -680,6 +706,76 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                     {renderThemeControl('Slash 菜单 (Slash Menu)', 'slashMenu')}
                     {renderThemeControl('文字菜单 (Text Menu)', 'textMenu')}
                     {renderThemeControl('块级菜单 (Block Menu)', 'blockMenu')}
+                  </div>
+                </div>
+              ) : activeTab === 'vault' ? (
+                <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <Database className="w-4 h-4 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold">Vault 本地仓库体检</h3>
+                        <p className="text-[10px] text-muted-foreground">扫描缺失附件、孤儿附件、乱码风险和不安全引用</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={loadVaultHealth}
+                      disabled={vaultHealthLoading}
+                      className="px-3 py-2 rounded-xl bg-accent/20 hover:bg-accent/40 text-xs font-bold flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${vaultHealthLoading ? 'animate-spin' : ''}`} />
+                      刷新体检
+                    </button>
+                  </div>
+
+                  {vaultHealthError && (
+                    <div className="p-3 rounded-xl border border-rose-500/20 bg-rose-500/10 text-rose-600 text-xs">
+                      {vaultHealthError}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="p-4 rounded-2xl bg-accent/10 border border-border/20">
+                      <div className="text-2xl font-black">{vaultHealth?.summary.total_issues ?? 0}</div>
+                      <div className="text-[10px] text-muted-foreground mt-1">总问题</div>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-accent/10 border border-border/20">
+                      <div className="text-2xl font-black">{vaultHealth?.summary.missing_attachments ?? 0}</div>
+                      <div className="text-[10px] text-muted-foreground mt-1">缺失附件</div>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-accent/10 border border-border/20">
+                      <div className="text-2xl font-black">{vaultHealth?.summary.orphan_attachments ?? 0}</div>
+                      <div className="text-[10px] text-muted-foreground mt-1">孤儿附件</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {(vaultHealth?.issues ?? []).slice(0, 30).map((issue, index) => (
+                      <div
+                        key={`${issue.type}-${index}`}
+                        className="p-3 rounded-xl bg-background/50 border border-border/20 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-bold">{issue.type}</span>
+                          <span className={`text-[10px] uppercase ${
+                            issue.severity === 'error' ? 'text-rose-500' : issue.severity === 'warning' ? 'text-amber-500' : 'text-muted-foreground'
+                          }`}>
+                            {issue.severity}
+                          </span>
+                        </div>
+                        <p className="text-muted-foreground mt-1">{issue.message}</p>
+                        <p className="text-[10px] text-muted-foreground/70 mt-1 break-all">
+                          {issue.note_path || issue.asset_path || issue.target}
+                        </p>
+                      </div>
+                    ))}
+                    {!vaultHealthLoading && vaultHealth && vaultHealth.issues.length === 0 && (
+                      <div className="p-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 text-sm font-bold text-center">
+                        Vault 体检未发现问题
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : null}

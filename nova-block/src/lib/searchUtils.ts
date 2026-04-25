@@ -13,8 +13,9 @@ export function stripHtmlToText(html: string) {
   return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim()
 }
 
-export function getNotesMissingContent(notes: Note[]) {
-  return notes.filter((note) => !note.is_folder && note.content === undefined)
+export function getNotesMissingContent(notes: Note[], limit?: number) {
+  const missing = notes.filter((note) => !note.is_folder && note.content === undefined)
+  return typeof limit === 'number' ? missing.slice(0, Math.max(0, limit)) : missing
 }
 
 export function buildSearchableText(note: Note) {

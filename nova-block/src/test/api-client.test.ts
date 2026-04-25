@@ -186,4 +186,20 @@ describe('api browser fallback', () => {
     const content = '<p><img src="/api/media/static/files/example.png" /></p>'
     expect(sanitizeLegacyApiUrlsInHtml(content)).toContain('src="http://127.0.0.1:8765/api/media/static/files/example.png"')
   })
+
+  it('requests vault health reports from the backend system endpoint', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ summary: { total_issues: 0 }, issues: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    await api.getVaultHealth()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8765/api/system/vault-health',
+      expect.objectContaining({ headers: expect.any(Object) }),
+    )
+  })
 })

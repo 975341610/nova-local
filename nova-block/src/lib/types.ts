@@ -73,6 +73,27 @@ export type TrashState = {
   notebooks: Notebook[];
 };
 
+export type VaultHealthIssue = {
+  type: string;
+  severity: 'info' | 'warning' | 'error';
+  message: string;
+  note_path?: string;
+  asset_path?: string;
+  target?: string;
+};
+
+export type VaultHealthReport = {
+  summary: {
+    total_issues: number;
+    missing_attachments?: number;
+    orphan_attachments?: number;
+    mojibake_notes?: number;
+    encoding_errors?: number;
+    unsafe_references?: number;
+  };
+  issues: VaultHealthIssue[];
+};
+
 export type Task = {
   id: number;
   title: string;

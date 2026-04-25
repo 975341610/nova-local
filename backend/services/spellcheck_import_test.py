@@ -1,5 +1,5 @@
 import pytest
-from nova_repo.backend.services.spellcheck_engine import SpellcheckEngine
+from backend.services.spellcheck_engine import SpellcheckEngine
 import os
 import json
 

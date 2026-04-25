@@ -69,6 +69,8 @@ from backend.config import get_settings, get_custom_config_path, PROJECT_DIR
 from backend.rag.pipeline import citations_from_results, cosine_similarity, search_knowledge
 from backend.services.ai_client import AIClient
 from backend.services.document_service import chunk_text, parse_document
+from backend.services.template_files import delete_template_file, mirror_template_to_vault
+from backend.services.vault_health import scan_vault_health
 from backend.services.repositories import (
     add_exp,
     create_note,
@@ -115,6 +117,7 @@ from backend.services.repositories import (
     update_user_theme,
     update_user_wallpaper,
 )
+from backend.api.path_security import safe_media_subdir, safe_named_file, validate_uuid
 from backend.services.vector_store import vector_store
 
 from backend.services.local_ai import local_ai_manager
@@ -541,11 +544,8 @@ def upload_media_api(file: UploadFile = File(...), note_id: str = Form(None)):
         ext = os.path.splitext(file.filename)[1]
         unique_name = f"{uuid.uuid4()}{ext}"
         
-        # Isolate by note_id if provided
-        upload_base = Path(settings.uploads_path)
-        if note_id:
-            upload_base = upload_base / note_id
-            upload_base.mkdir(parents=True, exist_ok=True)
+        upload_base = safe_media_subdir(settings.uploads_path, note_id)
+        upload_base.mkdir(parents=True, exist_ok=True)
             
         save_path = upload_base / unique_name
         with open(save_path, "wb") as f:
@@ -560,6 +560,8 @@ def upload_media_api(file: UploadFile = File(...), note_id: str = Form(None)):
             "type": file.content_type
         }
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.post("/media/upload/init")
@@ -571,7 +573,8 @@ def upload_media_init(
     file_sha256: str | None = Form(None),
 ):
     upload_id = str(uuid.uuid4())
-    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    safe_media_subdir(settings.uploads_path, note_id)
+    temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
     temp_dir.mkdir(parents=True, exist_ok=True)
     meta = {
         "filename": filename,
@@ -585,7 +588,8 @@ def upload_media_init(
 
 @router.get("/media/upload/status/{upload_id}")
 def upload_media_status(upload_id: str):
-    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    upload_id = validate_uuid(upload_id, "upload_id")
+    temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
     if not temp_dir.exists():
         raise HTTPException(status_code=404, detail="Invalid upload_id")
 
@@ -607,7 +611,8 @@ def upload_media_chunk(
     note_id: str = Form(None),
     chunk_sha256: str | None = Form(None),
 ):
-    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    upload_id = validate_uuid(upload_id, "upload_id")
+    temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
     if not temp_dir.exists():
         raise HTTPException(status_code=400, detail="Invalid upload_id")
     content = file.file.read()
@@ -629,18 +634,16 @@ def upload_media_complete(
     total_chunks: int | None = Form(None),
     file_sha256: str | None = Form(None),
 ):
-    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    upload_id = validate_uuid(upload_id, "upload_id")
+    temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
     if not temp_dir.exists():
         raise HTTPException(status_code=400, detail="Invalid upload_id")
     
     ext = os.path.splitext(filename)[1]
     unique_name = f"{uuid.uuid4()}{ext}"
     
-    # Isolate by note_id if provided
-    upload_base = Path(settings.uploads_path)
-    if note_id:
-        upload_base = upload_base / note_id
-        upload_base.mkdir(parents=True, exist_ok=True)
+    upload_base = safe_media_subdir(settings.uploads_path, note_id)
+    upload_base.mkdir(parents=True, exist_ok=True)
         
     final_path = upload_base / unique_name
     
@@ -1284,7 +1287,7 @@ def upload_music(file: UploadFile = File(...), cover: UploadFile = File(None)):
     
     # 📝 修复：安全处理文件名，防止目录遍历，并确保文件写入
     safe_filename = Path(file.filename).name if file.filename else f"upload_{uuid.uuid4().hex}"
-    audio_path = music_dir / safe_filename
+    audio_path = safe_named_file(music_dir, safe_filename)
     
     try:
         with open(audio_path, "wb") as f:
@@ -1296,7 +1299,7 @@ def upload_music(file: UploadFile = File(...), cover: UploadFile = File(None)):
     cover_url = None
     if cover and cover.filename:
         safe_cover_name = Path(cover.filename).name
-        cover_path = music_dir / safe_cover_name
+        cover_path = safe_named_file(music_dir, safe_cover_name)
         try:
             with open(cover_path, "wb") as f:
                 f.write(cover.file.read())
@@ -1329,7 +1332,7 @@ def list_bgm():
 @router.get("/bgm/stream/{filename}")
 def stream_bgm(filename: str):
     """流式返回 BGM 文件"""
-    bgm_path = Path(settings.data_root) / "bgm" / filename
+    bgm_path = safe_named_file(Path(settings.data_root) / "bgm", filename)
     if not bgm_path.exists():
         raise HTTPException(status_code=404, detail="BGM file not found")
 
@@ -1387,7 +1390,7 @@ def upload_sticker(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Unsupported file type")
             
         unique_name = f"{uuid.uuid4()}{ext}"
-        save_path = Path(settings.stickers_path) / unique_name
+        save_path = safe_named_file(settings.stickers_path, unique_name)
         
         with open(save_path, "wb") as f:
             f.write(file.file.read())
@@ -1405,7 +1408,7 @@ def upload_sticker(file: UploadFile = File(...)):
 @router.get("/stickers/files/{filename}")
 def get_sticker_file(filename: str):
     """获取贴纸文件内容"""
-    file_path = Path(settings.stickers_path) / filename
+    file_path = safe_named_file(settings.stickers_path, filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Sticker not found")
 
@@ -1418,7 +1421,7 @@ def get_sticker_file(filename: str):
 @router.delete("/stickers/files/{filename}")
 def delete_sticker_file(filename: str):
     """物理删除贴纸文件"""
-    file_path = Path(settings.stickers_path) / filename
+    file_path = safe_named_file(settings.stickers_path, filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Sticker not found")
     
@@ -1458,7 +1461,7 @@ def upload_emoticon(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Unsupported file type")
             
         unique_name = f"{uuid.uuid4()}{ext}"
-        save_path = emoticons_path / unique_name
+        save_path = safe_named_file(emoticons_path, unique_name)
         
         with open(save_path, "wb") as f:
             f.write(file.file.read())
@@ -1477,7 +1480,7 @@ def upload_emoticon(file: UploadFile = File(...)):
 def get_emoticon_file(filename: str):
     """获取表情文件内容"""
     emoticons_path = Path(settings.data_root) / "emoticons"
-    file_path = emoticons_path / filename
+    file_path = safe_named_file(emoticons_path, filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Emoticon not found")
 
@@ -1491,7 +1494,7 @@ def get_emoticon_file(filename: str):
 def delete_emoticon_file(filename: str):
     """物理删除表情文件"""
     emoticons_path = Path(settings.data_root) / "emoticons"
-    file_path = emoticons_path / filename
+    file_path = safe_named_file(emoticons_path, filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Emoticon not found")
     
@@ -1547,6 +1550,11 @@ def update_model_config_api(payload: ModelConfigPayload, db: Session = Depends(g
 async def get_system_logs():
     """获取实时日志 Buffer"""
     return {"logs": log_buffer.get_logs()}
+
+
+@router.get("/system/vault-health")
+async def get_vault_health():
+    return scan_vault_health(settings.vault_path)
 
 @router.post("/system/switch-data-path")
 async def switch_data_path(payload: dict):
@@ -1980,13 +1988,15 @@ def list_templates_api(db: Session = Depends(get_db)):
 @router.post("/templates", response_model=NoteTemplateResponse)
 def create_template_api(payload: NoteTemplateCreate, db: Session = Depends(get_db)):
     """Create a new note template."""
-    return create_template(
+    template = create_template(
         db,
         name=payload.name,
         content=payload.content,
         icon=payload.icon,
         category=payload.category
     )
+    mirror_template_to_vault(settings.vault_path, template)
+    return template
 
 
 @router.patch("/templates/{template_id}", response_model=NoteTemplateResponse)
@@ -2002,6 +2012,7 @@ def update_template_api(template_id: int, payload: NoteTemplateUpdate, db: Sessi
     )
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
+    mirror_template_to_vault(settings.vault_path, template)
     return template
 
 
@@ -2011,4 +2022,5 @@ def delete_template_api(template_id: int, db: Session = Depends(get_db)):
     success = delete_template(db, template_id)
     if not success:
         raise HTTPException(status_code=404, detail="Template not found")
+    delete_template_file(settings.vault_path, template_id)
     return {"status": "success"}

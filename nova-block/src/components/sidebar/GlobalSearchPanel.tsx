@@ -11,6 +11,8 @@ interface GlobalSearchPanelProps {
   onClose: () => void
 }
 
+const HYDRATION_BATCH_SIZE = 8
+
 const GlobalSearchPanel: React.FC<GlobalSearchPanelProps> = ({
   notes,
   onSelectNote,
@@ -32,7 +34,7 @@ const GlobalSearchPanel: React.FC<GlobalSearchPanelProps> = ({
       }
     }
 
-    const missingNotes = getNotesMissingContent(searchableNotes)
+    const missingNotes = getNotesMissingContent(searchableNotes, HYDRATION_BATCH_SIZE)
       .filter((note) => !requestedIdsRef.current.has(note.id))
 
     if (missingNotes.length === 0) {

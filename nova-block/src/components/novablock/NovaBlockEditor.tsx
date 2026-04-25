@@ -1242,8 +1242,6 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
     const handleAIAction = (e: any) => {
       const { type, value, attrs } = e.detail;
-      console.log(`[NovaBlock] Handling AI Action: ${type}`, { value, attrs });
-      
       if (!isAiEnabled) {
         onNotify?.('璇峰厛鍦ㄨ缃腑寮€鍚?AI 鎻掍欢', 'info');
         return;
@@ -1368,20 +1366,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   useEffect(() => {
     const editorDom = getEditorViewDom();
     if (!editorDom || !editor || editor.isDestroyed || !editor.isInitialized) {
-      console.info('[spellcheck-debug] listener-skip', {
-        noteId: note?.id ?? null,
-        hasEditor: Boolean(editor),
-        hasEditorDom: Boolean(editorDom),
-        isDestroyed: Boolean(editor?.isDestroyed),
-        isInitialized: Boolean(editor?.isInitialized),
-      });
       return;
     }
-
-    console.info('[spellcheck-debug] listener-bound', {
-      noteId: note?.id ?? null,
-      aiErrors: ((editor.storage as any)?.aiSpellcheck?.errors ?? []).length,
-    });
 
     const handleSpellcheckMarkerMouseDown = async (event: MouseEvent) => {
       if (event.button !== 0) {
@@ -1490,48 +1476,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       }
 
       if (!marker && !parsedError) {
-        let blockErrorsCount = 0;
-        if (clickedBlockFromTarget) {
-          blockErrorsCount = findSpellcheckErrorsInRange(
-            cachedErrors,
-            clickedBlockFromTarget.rangeFrom,
-            clickedBlockFromTarget.rangeFrom + clickedBlockFromTarget.text.length,
-          ).length;
-        } else if (typeof clickedPos === 'number') {
-          const clickedBlock = getSpellcheckTextblockAtPos(editor.state.doc, clickedPos) as { text: string; rangeFrom: number } | null;
-          if (clickedBlock) {
-            blockErrorsCount = findSpellcheckErrorsInRange(
-              cachedErrors,
-              clickedBlock.rangeFrom,
-              clickedBlock.rangeFrom + clickedBlock.text.length,
-            ).length;
-          }
-        }
-        console.info('[spellcheck-debug] non-ai-click', {
-          noteId: note?.id ?? null,
-          targetNode: (event.target as any)?.nodeName ?? null,
-          targetClass: (event.target as any)?.className ?? null,
-          aiErrors: cachedErrors.length,
-          blockErrors: blockErrorsCount,
-        });
         return;
       }
 
       if (!parsedError) {
-        console.info('[spellcheck-debug] marker-hit-without-error', {
-          noteId: note?.id ?? null,
-          targetClass: (event.target as any)?.className ?? null,
-        });
         return;
       }
-
-      console.info('[spellcheck-debug] marker-hit', {
-        noteId: note?.id ?? null,
-        word: parsedError.word,
-        suggestion: parsedError.suggestion,
-        from: parsedError.from,
-        to: parsedError.to,
-      });
 
       event.preventDefault();
       event.stopPropagation();
@@ -1574,19 +1524,6 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       editorDom.removeEventListener('mousedown', handleSpellcheckMarkerMouseDown, true);
     };
   }, [getEditorViewDom, getSpellcheckBlockTextFromTarget, getSpellcheckPosFromCaretPoint, getSpellcheckTextblockFromTarget, note?.id, editor, editorViewReadyToken]);
-
-  useEffect(() => {
-    if (!spellcheckError) {
-      return;
-    }
-
-    console.info('[spellcheck-debug] popup-state-set', {
-      noteId: note?.id ?? null,
-      word: spellcheckError.error?.word ?? null,
-      suggestion: spellcheckError.error?.suggestion ?? null,
-      rect: spellcheckError.rect ?? null,
-    });
-  }, [note?.id, spellcheckError]);
 
   useEffect(() => {
     if (!editor || editor.isDestroyed || !editor.isInitialized || !note?.id) {

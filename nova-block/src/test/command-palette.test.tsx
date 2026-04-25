@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Note } from '../lib/types'
 
@@ -36,6 +36,10 @@ const baseNote: Note = {
 }
 
 describe('CommandPalette', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
   beforeEach(() => {
     apiMock.getNote.mockReset()
     useNoteStore.getState().setNotes([])
@@ -67,5 +71,37 @@ describe('CommandPalette', () => {
     })
 
     expect(await screen.findByText('未打开笔记')).toBeTruthy()
+  })
+
+  it('hydrates unopened notes in small batches instead of reading the whole vault at once', async () => {
+    const notes = Array.from({ length: 20 }, (_, index) => ({
+      ...baseNote,
+      id: index + 100,
+      title: `Batch ${index}`,
+      content: undefined,
+    }))
+    useNoteStore.getState().setNotes(notes as any)
+    apiMock.getNote.mockImplementation(async (id: number) => ({
+      ...baseNote,
+      id,
+      title: `Batch ${id}`,
+      content: '<p>batch content</p>',
+    }))
+
+    render(
+      <CommandPalette
+        isOpen
+        onClose={() => {}}
+        onSelectNote={() => {}}
+      />,
+    )
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'batch query' } })
+
+    await waitFor(() => {
+      expect(apiMock.getNote).toHaveBeenCalled()
+    })
+
+    expect(apiMock.getNote).toHaveBeenCalledTimes(8)
   })
 })

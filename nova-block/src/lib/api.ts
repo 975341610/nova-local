@@ -9,6 +9,7 @@ import type {
   TrashState, 
   UserStats,
   UserAchievement,
+  VaultHealthReport,
 } from './types';
 
 type NoteWritePayload = {
@@ -622,6 +623,7 @@ export const api = {
     return `${API_BASE}/bgm/stream/${encodeURIComponent(filename)}`;
   },
   getSystemVersion: () => invoke<{ version: string; git_commit?: string; build_time?: string; executable?: string }>('system:version', '/system/version'),
+  getVaultHealth: () => invoke<VaultHealthReport>('system:vault-health', '/system/vault-health'),
   openFile: (path: string) => invoke('system:open-file', '/system/open-file', { method: 'POST', body: JSON.stringify({ path }) }),
   // 音乐库列表必须走后端扫描（HTTP），避免 Electron IPC 缺失导致库永远为空
   listMusicLibrary: async () => {

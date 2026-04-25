@@ -12,6 +12,8 @@ interface CommandPaletteProps {
   onSelectNote: (note: Note) => void;
 }
 
+const HYDRATION_BATCH_SIZE = 8;
+
 const CommandPalette: React.FC<CommandPaletteProps> = ({
   isOpen,
   onClose,
@@ -51,7 +53,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       };
     }
 
-    const missingNotes = getNotesMissingContent(searchableNotes)
+    const missingNotes = getNotesMissingContent(searchableNotes, HYDRATION_BATCH_SIZE)
       .filter((note) => !requestedIdsRef.current.has(note.id));
 
     if (missingNotes.length === 0) {
