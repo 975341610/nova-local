@@ -29,7 +29,7 @@ from sqlalchemy import inspect, text
 from backend.api.routes import router
 from backend.services.local_ai import local_ai_manager
 from backend.config import get_settings, resource_root, runtime_root
-from backend.database import Base, SessionLocal, engine
+from backend.database import Base, SessionLocal, engine, ensure_sqlite_database_file
 from backend.sample_data import seed_database, seed_files
 
 
@@ -194,6 +194,7 @@ async def startup_event() -> None:
         print(f"    - {getattr(route, 'path', 'N/A')} ({getattr(route, 'name', 'N/A')})")
 
     Path(settings.chroma_path).mkdir(parents=True, exist_ok=True)
+    ensure_sqlite_database_file(Path(settings.sqlite_url.replace("sqlite:///", "")))
     Base.metadata.create_all(bind=engine)
     run_migrations()
     seed_files()

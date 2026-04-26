@@ -1,6 +1,7 @@
 import os
 import shutil
 import pytest
+import sqlite3
 from pathlib import Path
 from fastapi.testclient import TestClient
 from backend.main import app
@@ -9,14 +10,28 @@ from backend.config import get_settings
 client = TestClient(app)
 settings = get_settings()
 
+
+@pytest.fixture(autouse=True)
+def isolate_data_root(tmp_path):
+    original_data_root = settings.data_root
+    settings.data_root = tmp_path / "active_data"
+    settings.data_root.mkdir(parents=True, exist_ok=True)
+    yield
+    settings.data_root = original_data_root
+
+
+def create_sqlite_database(path: Path):
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)")
+        conn.commit()
+
 @pytest.fixture
 def mock_source_data(tmp_path):
     # Setup source data directory
     source_dir = tmp_path / "source_data"
     source_dir.mkdir()
     
-    # Create mock second_brain.db
-    (source_dir / "second_brain.db").write_text("dummy database content content content content content")
+    create_sqlite_database(source_dir / "second_brain.db")
     
     # Create mock chroma_store
     (source_dir / "chroma_store").mkdir()
@@ -65,7 +80,7 @@ def test_import_data_same_path():
     data_root = settings.data_root.resolve()
     # Ensure data_root exists and contains second_brain.db for validation to pass
     data_root.mkdir(parents=True, exist_ok=True)
-    (data_root / "second_brain.db").write_text("mock database")
+    create_sqlite_database(data_root / "second_brain.db")
     
     response = client.post("/api/system/import-data", json={"source_path": str(data_root)})
     
