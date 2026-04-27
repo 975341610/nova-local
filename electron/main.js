@@ -185,6 +185,28 @@ function createMainWindow() {
     },
   });
 
+  mainWindow.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+    try {
+      const rawUrl = details.url || '';
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'file:') {
+        callback({});
+        return;
+      }
+
+      const pathname = decodeURIComponent(parsed.pathname || '').replace(/\\/g, '/');
+      const legacyApiMatch = pathname.match(/^\/?[A-Za-z]:\/api(\/.*)?$/i);
+      if (!legacyApiMatch) {
+        callback({});
+        return;
+      }
+
+      callback({ redirectURL: `${BACKEND_ORIGIN}/api${legacyApiMatch[1] || ''}` });
+    } catch {
+      callback({});
+    }
+  });
+
   mainWindow.loadFile(FRONTEND_INDEX);
   mainWindow.on('close', (event) => {
     if (allowWindowClose || !mainWindow) {

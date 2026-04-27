@@ -253,7 +253,21 @@ function App() {
     }
 
     const prevNotes = useNoteStore.getState().notes
-    setNotes(loadedNotes.map(note => mergeNote(prevNotes.find(item => item.id === note.id), note)))
+    setNotes(loadedNotes.map(note => {
+      const previous = prevNotes.find(item => item.id === note.id)
+      const merged = mergeNote(previous, note)
+
+      if (previous && hasPendingNoteSave(note.id)) {
+        return {
+          ...merged,
+          title: previous.title,
+          content: previous.content ?? merged.content,
+          is_title_manually_edited: previous.is_title_manually_edited,
+        }
+      }
+
+      return merged
+    }))
     
     // 稳定性核心修复：只要当前 ID 还在列表中，就绝对不改变它
     setCurrentNoteId((prev: number | null) => {
@@ -281,7 +295,7 @@ function App() {
     )
 
     return loadedNotes
-  }, [])
+  }, [hasPendingNoteSave])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -487,12 +501,23 @@ function App() {
 
   const handleNodeRename = async (nodeId: string, newTitle: string) => {
     const noteId = parseInt(nodeId, 10)
+    const existing = useNoteStore.getState().notes.find(note => note.id === noteId)
     const sequence = nextNoteSaveSequence(saveSequenceRef.current, noteId)
     updatePendingNoteSaveCount(pendingSaveCountsRef.current, noteId, 1)
+
+    if (existing) {
+      applyNotePatch(noteId, {
+        id: noteId,
+        title: newTitle,
+        is_title_manually_edited: true,
+        updated_at: new Date().toISOString(),
+      })
+    }
 
     try {
       const updated = await api.updateNote(noteId, {
         title: newTitle,
+        file_path: existing?.file_path,
         is_title_manually_edited: true,
         rename_file: true,
       })
@@ -739,9 +764,20 @@ function App() {
       return
     }
 
+    const existing = useNoteStore.getState().notes.find(note => note.id === targetId)
     const computedLinks = payload.links ?? (
       payload.content !== undefined ? extractLinkedNoteIds(payload.content) : undefined
     )
+
+    if (
+      existing &&
+      payload.content === undefined &&
+      computedLinks === undefined &&
+      (payload.title === undefined || payload.title === existing.title) &&
+      (payload.is_title_manually_edited === undefined || payload.is_title_manually_edited === existing.is_title_manually_edited)
+    ) {
+      return
+    }
 
     applyNotePatch(targetId, {
       ...payload,

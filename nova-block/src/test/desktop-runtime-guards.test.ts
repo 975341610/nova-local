@@ -38,8 +38,43 @@ describe('desktop runtime guards', () => {
     const editorSource = fs.readFileSync(editorPath, 'utf8')
     const canvasSource = fs.readFileSync(canvasPath, 'utf8')
 
-    expect(editorSource).toContain("const autosaveDelayMs = window.electron?.ipcInvoke ? 0 : 3000;")
+    expect(editorSource).toContain("const autosaveDelayMs = window.electron?.ipcInvoke ? 250 : 3000;")
     expect(canvasSource).toContain("}, window.electron?.ipcInvoke ? 0 : 650);")
+  })
+
+  it('keeps heavy editor HTML serialization out of the synchronous onUpdate typing path', () => {
+    const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
+    const editorSource = fs.readFileSync(editorPath, 'utf8')
+    const onUpdateStart = editorSource.indexOf('onUpdate: ({ editor }) => {')
+    const onCreateStart = editorSource.indexOf('onCreate: ({ editor }) => {')
+    const onUpdateBody = editorSource.slice(onUpdateStart, onCreateStart)
+
+    expect(onUpdateBody).not.toContain('const html = editor.getHTML();')
+    expect(onUpdateBody).toContain('liveContentTimerRef.current = window.setTimeout')
+  })
+
+  it('keeps sidebar titles in sync with the first text block during live content updates', () => {
+    const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
+    const editorSource = fs.readFileSync(editorPath, 'utf8')
+    const onUpdateStart = editorSource.indexOf('onUpdate: ({ editor }) => {')
+    const onCreateStart = editorSource.indexOf('onCreate: ({ editor }) => {')
+    const onUpdateBody = editorSource.slice(onUpdateStart, onCreateStart)
+
+    expect(onUpdateBody).toContain('const nextAutoTitle = extractLeadingNoteTitle(editor.state.doc);')
+    expect(onUpdateBody).toContain('nextAutoTitle &&')
+    expect(onUpdateBody).toContain('!currentLatestNote?.is_title_manually_edited &&')
+    expect(onUpdateBody).toContain('nextAutoTitle !== currentLatestNote?.title')
+    expect(onUpdateBody).toContain('payload.is_title_manually_edited = false;')
+    expect(onUpdateBody).toContain('title: latestNoteRef.current?.title,')
+  })
+
+  it('protects optimistic sidebar titles from stale vault refreshes while a save is pending', () => {
+    const appPath = path.resolve(__dirname, '../App.tsx')
+    const appSource = fs.readFileSync(appPath, 'utf8')
+
+    expect(appSource).toContain('if (previous && hasPendingNoteSave(note.id))')
+    expect(appSource).toContain('title: previous.title,')
+    expect(appSource).toContain('is_title_manually_edited: previous.is_title_manually_edited,')
   })
 
   it('guards editor view access behind a safe helper so startup does not white-screen before mount', () => {
@@ -57,7 +92,7 @@ describe('desktop runtime guards', () => {
     expect(spellcheckSource).not.toContain('void api.spellcheck(paragraphText)')
   })
 
-  it('routes spellcheck popup opening through a capture-phase editor mousedown listener that rebinds when the editor instance changes', () => {
+  it('routes spellcheck popup opening through ProseMirror document positions instead of capture-phase DOM listeners', () => {
     const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
     const spellcheckPath = path.resolve(__dirname, '../components/novablock/extensions/AISpellcheck.ts')
     const editorSource = fs.readFileSync(editorPath, 'utf8')
@@ -65,13 +100,12 @@ describe('desktop runtime guards', () => {
 
     expect(editorSource).toContain('const [editorViewReadyToken, setEditorViewReadyToken] = useState(0);')
     expect(editorSource).toContain('setEditorViewReadyToken((value) => value + 1);')
-    expect(editorSource).toContain("editorDom.addEventListener('mousedown', handleSpellcheckMarkerMouseDown, true)")
-    expect(editorSource).toContain("editorDom.removeEventListener('mousedown', handleSpellcheckMarkerMouseDown, true)")
-    expect(editorSource).toContain('}, [getEditorViewDom, note?.id, editor, editorViewReadyToken]);')
-    expect(editorSource).toContain('parseSpellcheckErrorFromTarget')
-    expect(editorSource).toContain('findSpellcheckMarkerFromTarget')
+    expect(editorSource).toContain('SPELLCHECK_SUGGESTION_REQUEST_EVENT')
+    expect(editorSource).not.toContain('handleSpellcheckMarkerMouseDown')
+    expect(editorSource).not.toContain("editorDom.addEventListener('mousedown'")
+    expect(spellcheckSource).toContain('handleClick(view, pos)')
+    expect(spellcheckSource).toContain('resolveSpellcheckPopupRequest(storage.errors, pos')
     expect(spellcheckSource).not.toContain('pointerdown: (view, event) => {')
-    expect(spellcheckSource).not.toContain('handleClick: (view, pos, _event) => {')
     expect(spellcheckSource).not.toContain('click: (view, event) => {')
   })
 
@@ -138,6 +172,15 @@ describe('desktop runtime guards', () => {
     expect(preloadSource).toContain('if (!ALLOWED_IPC_CHANNELS.has(channel))')
     expect(mainSource).toContain("ipcMain.handle('desktop:get-auth-token'")
     expect(mainSource).toContain("ipcMain.handle('desktop:get-backend-base-url'")
+  })
+
+  it('redirects legacy file:// API media requests back to the local backend', () => {
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+
+    expect(mainSource).toContain('webRequest.onBeforeRequest')
+    expect(mainSource).toContain('legacyApiMatch')
+    expect(mainSource).toContain('redirectURL: `${BACKEND_ORIGIN}/api${legacyApiMatch[1] || \'\'}')
   })
 
   it('does not keep dummy note property API implementations in the frontend client', () => {

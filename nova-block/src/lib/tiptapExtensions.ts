@@ -12,7 +12,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import { ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
 import React from 'react';
-import { getApiBase } from './api';
+import { formatUrl, getApiBase } from './api';
 // @ts-ignore
 import container from 'markdown-it-container';
 // @ts-ignore
@@ -562,6 +562,14 @@ export const ResizableImage = Image.extend({
   addNodeView() {
     return ReactNodeViewRenderer((props) => React.createElement(MediaNodeView, { ...props, kind: 'image' }));
   },
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'img',
+      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+        src: formatUrl(HTMLAttributes.src),
+      }),
+    ];
+  },
 });
 
 export const AudioNode = Node.create({
@@ -585,7 +593,7 @@ export const AudioNode = Node.create({
     return [{ tag: 'audio[src]' }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ['audio', { ...HTMLAttributes, controls: 'true', class: 'embedded-audio', style: `width:${HTMLAttributes.width || '100%'};` }];
+    return ['audio', { ...HTMLAttributes, src: formatUrl(HTMLAttributes.src), controls: 'true', class: 'embedded-audio', style: `width:${HTMLAttributes.width || '100%'};` }];
   },
   addNodeView() {
     return ReactNodeViewRenderer((props) => React.createElement(MediaNodeView, { ...props, kind: 'audio' }));
@@ -613,7 +621,7 @@ export const VideoNode = Node.create({
     return [{ tag: 'video[src]' }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ['video', { ...HTMLAttributes, controls: 'true', class: 'embedded-video', style: `width:${HTMLAttributes.width || '100%'};` }];
+    return ['video', { ...HTMLAttributes, src: formatUrl(HTMLAttributes.src), controls: 'true', class: 'embedded-video', style: `width:${HTMLAttributes.width || '100%'};` }];
   },
   addStorage() {
     return {

@@ -164,6 +164,12 @@ describe('api browser fallback', () => {
   })
 
   it('normalizes legacy windows-style API paths when formatting media URLs', () => {
+    expect(formatUrl('/api/media/static/files/example.png')).toBe(
+      'http://127.0.0.1:8765/api/media/static/files/example.png',
+    )
+    expect(formatUrl('/C:/api/media/static/files/example.png')).toBe(
+      'http://127.0.0.1:8765/api/media/static/files/example.png',
+    )
     expect(formatUrl('C:/api/media/static/files/example.png')).toBe(
       'http://127.0.0.1:8765/api/media/static/files/example.png',
     )

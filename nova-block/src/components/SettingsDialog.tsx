@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { useAI } from '../contexts/AIContext';
 import { getThemeConfig, saveThemeConfig, exportThemeConfig, validateThemeConfig, applyThemeConfig } from '../lib/themeUtils';
 import type { ThemeConfig, VaultHealthReport } from '../lib/types';
+import { isSpellcheckFeatureEnabled, saveSpellcheckFeatureEnabled } from '../lib/spellcheckSettings';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     model_name: '',
   });
   const [activeTab, setActiveTab] = useState<'ai' | 'dictionary' | 'theme' | 'vault'>('ai');
+  const [isSpellcheckEnabled, setIsSpellcheckEnabled] = useState(isSpellcheckFeatureEnabled());
   
   // Dictionary Import State
   const [dictText, setDictText] = useState('');
@@ -50,6 +52,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       setThemeImportError(null);
       setThemeImportSuccess(false);
       setModelConfigNotice(null);
+      setIsSpellcheckEnabled(isSpellcheckFeatureEnabled());
       void loadVaultHealth();
     }
   }, [isOpen, refreshAiStatus]);
@@ -157,6 +160,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     } finally {
       setImporting(false);
     }
+  };
+
+  const handleToggleSpellcheck = () => {
+    const next = !isSpellcheckEnabled;
+    setIsSpellcheckEnabled(next);
+    saveSpellcheckFeatureEnabled(next);
   };
 
   const checkHardware = async () => {
@@ -576,6 +585,31 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                 </div>
               ) : activeTab === 'dictionary' ? (
                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="flex items-center justify-between p-4 bg-accent/20 rounded-2xl border border-border/20">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                        <BookOpen className="w-5 h-5 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold">错别字检查</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          关闭后会立即隐藏红线并停止后台检查，编辑器输入不再受影响。
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleToggleSpellcheck}
+                      className="p-1 hover:scale-110 transition-transform"
+                      aria-label={isSpellcheckEnabled ? '关闭错别字检查' : '开启错别字检查'}
+                    >
+                      {isSpellcheckEnabled ? (
+                        <ToggleRight className="w-8 h-8 text-primary" />
+                      ) : (
+                        <ToggleLeft className="w-8 h-8 text-muted-foreground" />
+                      )}
+                    </button>
+                  </div>
+
                   <div className="flex items-center gap-3 mb-2">
                     <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
                       <Database className="w-4 h-4 text-primary" />
