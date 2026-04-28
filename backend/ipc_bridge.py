@@ -224,7 +224,7 @@ def main():
             config = repositories.get_or_create_model_config(db)
             print(json.dumps({
                 "provider": config.provider,
-                "api_key": config.api_key,
+                "api_key_masked": repositories.mask_api_key(config.api_key),
                 "base_url": config.base_url,
                 "model_name": config.model_name
             }))
@@ -233,7 +233,7 @@ def main():
             config = repositories.update_model_config(db, provider=params.get("provider"), api_key=params.get("api_key"), base_url=params.get("base_url"), model_name=params.get("model_name"))
             print(json.dumps({
                 "provider": config.provider,
-                "api_key": config.api_key,
+                "api_key_masked": repositories.mask_api_key(config.api_key),
                 "base_url": config.base_url,
                 "model_name": config.model_name
             }))

@@ -24,12 +24,14 @@ def iso_now() -> str:
     return utc_now().isoformat()
 
 
-def parse_datetime(value: str | None) -> datetime | None:
+def parse_datetime(value: str | datetime | None) -> datetime | None:
     if not value:
         return None
+    if isinstance(value, datetime):
+        return value
     try:
         return datetime.fromisoformat(value)
-    except ValueError:
+    except (TypeError, ValueError):
         return None
 
 

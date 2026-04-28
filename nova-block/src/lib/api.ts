@@ -240,6 +240,43 @@ const normalizeLegacyApiPath = (rawUrl: string) => {
 
 const HTML_URL_ATTR_PATTERN = /(\b(?:src|href)\s*=\s*)(["'])([^"']+)\2/gi;
 const CSS_URL_PATTERN = /url\(\s*(["']?)([^"')]+)\1\s*\)/gi;
+const DANGEROUS_TAG_PATTERN = /<\s*(script|iframe|object|embed|meta|link)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi;
+const DANGEROUS_VOID_TAG_PATTERN = /<\s*(script|iframe|object|embed|meta|link)[^>]*\/?\s*>/gi;
+const EVENT_HANDLER_ATTR_PATTERN = /\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+const DANGEROUS_URL_ATTR_PATTERN = /\s+(href|src|xlink:href)\s*=\s*(["'])\s*javascript:[^"']*\2/gi;
+const DANGEROUS_STYLE_ATTR_PATTERN = /\s+style\s*=\s*(["'])[^"']*(?:javascript:|expression\s*\()[^"']*\1/gi;
+
+const sanitizeEditorHtml = (html: string) => {
+  if (typeof DOMParser !== 'undefined') {
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    document.querySelectorAll('script, iframe, object, embed, meta, link').forEach((node) => node.remove());
+    document.body.querySelectorAll('*').forEach((element) => {
+      for (const attribute of Array.from(element.attributes)) {
+        const name = attribute.name.toLowerCase();
+        const value = attribute.value.trim().toLowerCase();
+        if (name.startsWith('on')) {
+          element.removeAttribute(attribute.name);
+          continue;
+        }
+        if ((name === 'href' || name === 'src' || name === 'xlink:href') && value.startsWith('javascript:')) {
+          element.removeAttribute(attribute.name);
+          continue;
+        }
+        if (name === 'style' && (value.includes('javascript:') || value.includes('expression('))) {
+          element.removeAttribute(attribute.name);
+        }
+      }
+    });
+    return document.body.innerHTML;
+  }
+
+  return html
+    .replace(DANGEROUS_TAG_PATTERN, '')
+    .replace(DANGEROUS_VOID_TAG_PATTERN, '')
+    .replace(EVENT_HANDLER_ATTR_PATTERN, '')
+    .replace(DANGEROUS_URL_ATTR_PATTERN, '')
+    .replace(DANGEROUS_STYLE_ATTR_PATTERN, '');
+};
 
 export const sanitizeLegacyApiUrlsInHtml = (html: string | null | undefined) => {
   if (!html) {
@@ -256,7 +293,9 @@ export const sanitizeLegacyApiUrlsInHtml = (html: string | null | undefined) => 
     return normalized === '/api' || normalized.startsWith('/api/');
   };
 
-  const normalizedHtml = html.replace(HTML_URL_ATTR_PATTERN, (full, prefix, quote, rawValue) => {
+  const safeHtml = sanitizeEditorHtml(html);
+
+  const normalizedHtml = safeHtml.replace(HTML_URL_ATTR_PATTERN, (full, prefix, quote, rawValue) => {
     const normalized = normalizeLegacyApiPath(rawValue);
     if (!normalized) {
       return full;

@@ -105,6 +105,7 @@ class Settings(BaseSettings):
     ]
     desktop_local_token: str = Field(default="", validation_alias="NOVA_DESKTOP_TOKEN")
     access_token: str = ""  # 璁块棶瀵嗛挜锛屼负绌哄垯涓嶅紑鍚璇?
+    run_mode: str = Field(default="desktop_local", validation_alias="RUN_MODE")
     model_config = SettingsConfigDict(env_file=str(runtime_root() / ".env"), extra="ignore")
 
 

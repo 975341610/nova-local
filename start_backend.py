@@ -4,10 +4,6 @@ except ImportError:
     pass
 import uvicorn
 import os
-import sys
-
-# Add second-brain-ai to path
-sys.path.append(os.path.join(os.getcwd(), 'second-brain-ai'))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8765))

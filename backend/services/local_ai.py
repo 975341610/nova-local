@@ -37,6 +37,7 @@ class LocalAIManager:
         self.is_loading = False
         self.is_ready = False
         self.error = None
+        self._ollama_process = None
         
         # 默认模型配置
         self.repo_id = "unsloth/gemma-4-E2B-it-GGUF"
@@ -87,7 +88,7 @@ class LocalAIManager:
         try:
             if os.name == 'nt':
                 # Windows: hide console window
-                subprocess.Popen(
+                self._ollama_process = subprocess.Popen(
                     [str(ollama_bin), "serve"],
                     env=env,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
@@ -95,7 +96,7 @@ class LocalAIManager:
                     stderr=subprocess.DEVNULL
                 )
             else:
-                subprocess.Popen(
+                self._ollama_process = subprocess.Popen(
                     [str(ollama_bin), "serve"],
                     env=env,
                     stdout=subprocess.DEVNULL,
@@ -208,39 +209,17 @@ class LocalAIManager:
         self.llm = None
         
         try:
-            import psutil
-            import os
-            import signal
-
-            found = False
-            # 1. 尝试终止所有相关的 ollama 进程
-            for proc in psutil.process_iter(['pid', 'name', 'exe']):
+            proc = self._ollama_process
+            if proc and proc.poll() is None:
+                proc.terminate()
                 try:
-                    # 匹配进程名或可执行路径中包含 'ollama' 的进程
-                    name = proc.info.get('name', '').lower()
-                    exe = (proc.info.get('exe') or '').lower()
-                    
-                    if 'ollama' in name or 'ollama' in exe:
-                        print(f"[*] Found Ollama process: {proc.info['pid']} ({name})")
-                        found = True
-                        
-                        # 尝试优雅终止
-                        proc.terminate()
-                        
-                        # 等待一会看是否退出
-                        try:
-                            proc.wait(timeout=3)
-                        except psutil.TimeoutExpired:
-                            # 强制杀死
-                            print(f"[!] Process {proc.info['pid']} did not terminate, killing...")
-                            proc.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                    continue
-
-            if not found:
-                print("[*] No active Ollama processes found to stop.")
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    print("[!] Owned Ollama process did not terminate, killing...")
+                    proc.kill()
             else:
-                print("[*] All Ollama processes stopped successfully.")
+                print("[*] No owned Ollama process to stop.")
+            self._ollama_process = None
             
             return True
         except Exception as e:
@@ -256,16 +235,10 @@ class LocalAIManager:
         # 由于 shutdown 通常在同步上下文（如析构或主进程退出）调用，
         # 我们这里使用同步方式执行清理
         try:
-            import psutil
-            for proc in psutil.process_iter(['name', 'exe']):
-                try:
-                    name = proc.info.get('name', '').lower()
-                    exe = (proc.info.get('exe') or '').lower()
-                    if 'ollama' in name or 'ollama' in exe:
-                        print(f"[*] Terminating background process: {proc.info['pid']}")
-                        proc.kill() # 退出时直接强制杀死
-                except:
-                    continue
+            proc = self._ollama_process
+            if proc and proc.poll() is None:
+                proc.kill()
+            self._ollama_process = None
         except Exception as e:
             print(f"[!] Failed to stop Ollama processes during shutdown: {e}")
 

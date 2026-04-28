@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
-from backend.main import app, get_settings
+from backend.main import app, get_settings, validate_runtime_security
 
 client = TestClient(app)
 
@@ -81,4 +81,18 @@ def test_auth_middleware_exempt_paths():
         response = client.get("/")
         assert response.status_code != 401
     finally:
+        settings.access_token = original_token
+
+
+def test_server_mode_requires_access_token():
+    settings = get_settings()
+    original_mode = settings.run_mode
+    original_token = settings.access_token
+    settings.run_mode = "server_mode"
+    settings.access_token = ""
+    try:
+        with pytest.raises(RuntimeError, match="ACCESS_TOKEN"):
+            validate_runtime_security()
+    finally:
+        settings.run_mode = original_mode
         settings.access_token = original_token

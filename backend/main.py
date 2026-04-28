@@ -56,12 +56,46 @@ app.add_middleware(
      allow_headers=["*"],
  )
 
+
+def validate_runtime_security() -> None:
+    run_mode = (settings.run_mode or "desktop_local").strip().lower()
+    if run_mode == "server_mode" and not settings.access_token:
+        raise RuntimeError("ACCESS_TOKEN must be configured when RUN_MODE=server_mode")
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    client_host = request.client.host if request.client else ""
+    is_loopback = client_host in {"127.0.0.1", "::1", "localhost", "testclient"}
+    desktop_token = request.headers.get("x-nova-desktop-token", "")
+    is_local_desktop = bool(settings.desktop_local_token) and is_loopback and secrets.compare_digest(desktop_token, settings.desktop_local_token)
+    desktop_only_api = path in {
+        f"{settings.api_prefix}/system/switch-data-path",
+        f"{settings.api_prefix}/system/update",
+        f"{settings.api_prefix}/system/restart",
+        f"{settings.api_prefix}/system/open-file",
+        f"{settings.api_prefix}/system/import-data",
+    }
+    protected_api = (
+        path == f"{settings.api_prefix}/model-config"
+        or (path.startswith(f"{settings.api_prefix}/system/") and path != f"{settings.api_prefix}/system/version")
+        or path.startswith(f"{settings.api_prefix}/ai/toggle")
+    )
+
+    if desktop_only_api and not is_local_desktop:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Forbidden: desktop-only operation"}
+        )
+
+    if protected_api and is_local_desktop:
+        return await call_next(request)
+
     # 豁免路径：健康检查、静态文件、以及认证配置本身不开启时
     # 基础初始化 API 也不强制鉴权，避免桌面端启动卡死
     is_exempt = (
-        not settings.access_token
+        (not settings.access_token and settings.run_mode == "desktop_local" and not protected_api)
         or request.url.path == "/health"
         or not request.url.path.startswith(settings.api_prefix)
         or request.url.path.startswith(f"{settings.api_prefix}/media/files")
@@ -71,16 +105,10 @@ async def auth_middleware(request: Request, call_next):
         or request.url.path == f"{settings.api_prefix}/media/music-upload"
         or request.url.path.startswith(f"{settings.api_prefix}/stickers")
         or request.url.path == f"{settings.api_prefix}/system/version"
-        or request.url.path == f"{settings.api_prefix}/model-config"
     )
 
     # 如果是本地桌面端发起的请求 (127.0.0.1)，且没有设置环境变量强制开启鉴权，则自动豁免
     # 这确保了打包版在没有配置 token 时也能正常初始化
-    client_host = request.client.host if request.client else ""
-    is_loopback = client_host in {"127.0.0.1", "::1", "localhost"}
-    desktop_token = request.headers.get("x-nova-desktop-token", "")
-    is_local_desktop = bool(settings.desktop_local_token) and is_loopback and secrets.compare_digest(desktop_token, settings.desktop_local_token)
-
     if is_exempt or is_local_desktop:
         return await call_next(request)
 
@@ -188,6 +216,8 @@ def run_migrations() -> None:
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    validate_runtime_security()
+
     # 打印所有挂载的路由，用于调试 404 问题
     print("[*] Registering routes:")
     for route in app.routes:

@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const YAML = require('yaml');
 
 const DEFAULT_NOTEBOOK_NAME = 'Notes';
 const TRASH_DIR_NAME = '.trash';
@@ -400,8 +401,12 @@ function parseYamlLines(lines, startIndex, indent) {
 }
 
 function parseYamlLike(text) {
-  const { value } = parseYamlLines(text.replace(/\r\n/g, '\n').split('\n'), 0, 0);
-  return value || {};
+  try {
+    return YAML.parse(text) || {};
+  } catch {
+    const { value } = parseYamlLines(text.replace(/\r\n/g, '\n').split('\n'), 0, 0);
+    return value || {};
+  }
 }
 
 function formatInlineValue(value) {
@@ -421,6 +426,13 @@ function formatInlineValue(value) {
 }
 
 function stringifyYamlLike(value, indent = 0) {
+  if (indent === 0) {
+    return YAML.stringify(value || {}, {
+      indent: 2,
+      lineWidth: 0,
+    });
+  }
+
   const spaces = ' '.repeat(indent);
 
   if (Array.isArray(value) || (value && typeof value === 'object' && indent > 0)) {
@@ -712,6 +724,18 @@ function createFsBridge(options) {
 
   let _maxId = 0;
   let _isIdInitialized = false;
+  const notePathById = new Map();
+
+  function rememberNotePath(note) {
+    if (note && Number.isFinite(Number(note.id)) && note._path) {
+      notePathById.set(Number(note.id), note._path);
+    }
+    return note;
+  }
+
+  function forgetNotePath(noteId) {
+    notePathById.delete(Number(noteId));
+  }
 
   async function ensureBaseDirs() {
     await ensureDir(vaultRoot);
@@ -1210,7 +1234,7 @@ function createFsBridge(options) {
         throw error;
       }
       note.position = position++;
-      sink.push(note);
+      sink.push(rememberNotePath(note));
     }
   }
 
@@ -1225,8 +1249,18 @@ function createFsBridge(options) {
   }
 
   async function getNote(noteId) {
+    const numericId = Number(noteId);
+    const cachedPath = notePathById.get(numericId);
+    if (cachedPath) {
+      const cachedNote = await findNoteInternalByPath(numericId, cachedPath);
+      if (cachedNote && Number(cachedNote.id) === numericId) {
+        return stripInternalFields(rememberNotePath(cachedNote));
+      }
+      forgetNotePath(numericId);
+    }
+
     const notes = await listNotes({ includeContent: true });
-    const note = notes.find((item) => item.id === Number(noteId));
+    const note = notes.find((item) => item.id === numericId);
     if (!note) {
       throw new Error(`Note ${noteId} not found`);
     }
@@ -1239,12 +1273,22 @@ function createFsBridge(options) {
   }
 
   async function findNoteInternal(noteId) {
+    const numericId = Number(noteId);
+    const cachedPath = notePathById.get(numericId);
+    if (cachedPath) {
+      const cachedNote = await findNoteInternalByPath(numericId, cachedPath);
+      if (cachedNote && Number(cachedNote.id) === numericId) {
+        return rememberNotePath(cachedNote);
+      }
+      forgetNotePath(numericId);
+    }
+
     const notebooks = await listTopLevelNotebooks();
     const notes = [];
     for (const notebook of notebooks) {
       await collectNotes(notebook.path, notebook, null, true, notes);
     }
-    return notes.find((item) => item.id === Number(noteId)) || null;
+    return notes.find((item) => item.id === numericId) || null;
   }
 
   async function findNoteInternalByPath(noteId, notePath) {
@@ -1444,6 +1488,7 @@ function createFsBridge(options) {
     note._meta = await writeNoteFile(targetPath, note);
     note.file_path = targetPath;
     note.summary = summarizeContent(note.content);
+    rememberNotePath(note);
     return stripInternalFields(note);
   }
 
@@ -1527,6 +1572,7 @@ function createFsBridge(options) {
       }
 
       updated.file_path = targetPath;
+      rememberNotePath(updated);
       return stripInternalFields(updated);
     });
   }
@@ -1544,6 +1590,7 @@ function createFsBridge(options) {
 
     await ensureDir(trashRoot);
     await fs.rename(current._path, targetPath);
+    forgetNotePath(noteId);
 
     const deletedAt = nowIso();
     const originalRelPath = path.relative(vaultRoot, current._path);

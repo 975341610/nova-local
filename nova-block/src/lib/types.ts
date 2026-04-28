@@ -136,7 +136,8 @@ export type ChatSession = {
 
 export type ModelConfig = {
   provider: string;
-  api_key: string;
+  api_key?: string;
+  api_key_masked?: string;
   base_url: string;
   model_name: string;
 };

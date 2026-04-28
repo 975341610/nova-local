@@ -47,13 +47,13 @@ describe('SettingsDialog AI config', () => {
   it('loads and saves remote AI model config from settings', async () => {
     apiMock.getModelConfig.mockResolvedValue({
       provider: 'openai',
-      api_key: 'sk-test',
+      api_key_masked: 'sk-****test',
       base_url: 'https://api.openai.com/v1',
       model_name: 'gpt-4o-mini',
     })
     apiMock.updateModelConfig.mockResolvedValue({
       provider: 'openai',
-      api_key: 'sk-next',
+      api_key_masked: 'sk-****next',
       base_url: 'https://example.com/v1',
       model_name: 'gpt-4.1-mini',
     })
@@ -65,7 +65,8 @@ describe('SettingsDialog AI config', () => {
     const modelInput = screen.getByTestId('ai-model-name')
     const saveButton = screen.getByTestId('ai-model-save')
 
-    expect((apiKeyInput as HTMLInputElement).value).toBe('sk-test')
+    expect((apiKeyInput as HTMLInputElement).value).toBe('')
+    expect((apiKeyInput as HTMLInputElement).placeholder).toBe('sk-****test')
     expect((baseUrlInput as HTMLInputElement).value).toBe('https://api.openai.com/v1')
     expect((modelInput as HTMLInputElement).value).toBe('gpt-4o-mini')
 

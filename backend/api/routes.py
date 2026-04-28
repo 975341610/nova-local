@@ -13,6 +13,7 @@ import asyncio
 import threading
 import hashlib
 import re
+import time
 from PIL import Image
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form, BackgroundTasks
@@ -109,6 +110,7 @@ from backend.services.repositories import (
     update_notebook,
     update_note,
     update_template,
+    mask_api_key,
     update_model_config,
     update_note_property,
     update_task,
@@ -117,7 +119,7 @@ from backend.services.repositories import (
     update_user_theme,
     update_user_wallpaper,
 )
-from backend.api.path_security import safe_media_subdir, safe_named_file, validate_uuid
+from backend.api.path_security import safe_child_path, safe_media_subdir, safe_named_file, validate_uuid
 from backend.services.vector_store import vector_store
 
 from backend.services.local_ai import local_ai_manager
@@ -131,6 +133,26 @@ import psutil
 
 # AI 插件状态全局变量
 ai_enabled = True
+UPLOAD_SESSION_TTL_SECONDS = 30 * 60
+
+
+def cleanup_expired_upload_sessions(now: float | None = None, ttl_seconds: int = UPLOAD_SESSION_TTL_SECONDS) -> None:
+    now = now if now is not None else time.time()
+    temp_root = Path(settings.uploads_path) / "temp"
+    if not temp_root.exists():
+        return
+    for session_dir in temp_root.iterdir():
+        if not session_dir.is_dir():
+            continue
+        try:
+            newest_mtime = max(
+                (path.stat().st_mtime for path in session_dir.rglob("*")),
+                default=session_dir.stat().st_mtime,
+            )
+            if now - newest_mtime > ttl_seconds:
+                shutil.rmtree(session_dir)
+        except FileNotFoundError:
+            continue
 
 def load_ai_status():
     """从 ai_config.json 加载 AI 启用状态"""
@@ -539,7 +561,7 @@ async def upload_documents(background_tasks: BackgroundTasks, files: list[Upload
     return UploadResponse(imported_notes=imported)
 
 @router.post("/media/upload")
-def upload_media_api(file: UploadFile = File(...), note_id: str = Form(None)):
+async def upload_media_api(file: UploadFile = File(...), note_id: str = Form(None)):
     try:
         ext = os.path.splitext(file.filename)[1]
         unique_name = f"{uuid.uuid4()}{ext}"
@@ -548,16 +570,15 @@ def upload_media_api(file: UploadFile = File(...), note_id: str = Form(None)):
         upload_base.mkdir(parents=True, exist_ok=True)
             
         save_path = upload_base / unique_name
-        with open(save_path, "wb") as f:
-            # Sync read from UploadFile
-            f.write(file.file.read())
+        content = await file.read()
+        await run_in_threadpool(save_path.write_bytes, content)
             
         url_path = f"{note_id}/{unique_name}" if note_id else unique_name
         return {
             "url": f"/api/media/static/files/{url_path}",
             "name": file.filename,
             "size": save_path.stat().st_size,
-            "type": file.content_type
+            "type": getattr(file, "content_type", None)
         }
     except Exception as e:
         if isinstance(e, HTTPException):
@@ -572,6 +593,7 @@ def upload_media_init(
     total_chunks: int | None = Form(None),
     file_sha256: str | None = Form(None),
 ):
+    cleanup_expired_upload_sessions()
     upload_id = str(uuid.uuid4())
     safe_media_subdir(settings.uploads_path, note_id)
     temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
@@ -604,7 +626,7 @@ def upload_media_status(upload_id: str):
     return {"upload_id": upload_id, "uploaded_chunks": uploaded_chunks}
 
 @router.post("/media/upload/chunk")
-def upload_media_chunk(
+async def upload_media_chunk(
     upload_id: str = Form(...),
     chunk_index: int = Form(...),
     file: UploadFile = File(...),
@@ -615,18 +637,17 @@ def upload_media_chunk(
     temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
     if not temp_dir.exists():
         raise HTTPException(status_code=400, detail="Invalid upload_id")
-    content = file.file.read()
+    content = await file.read()
     if chunk_sha256:
         actual_sha = hashlib.sha256(content).hexdigest()
         if actual_sha.lower() != chunk_sha256.lower():
             raise HTTPException(status_code=400, detail=f"Chunk checksum mismatch: {chunk_index}")
     chunk_path = temp_dir / f"chunk_{chunk_index}"
-    with open(chunk_path, "wb") as f:
-        f.write(content)
+    await run_in_threadpool(chunk_path.write_bytes, content)
     return {"status": "ok"}
 
 @router.post("/media/upload/complete")
-def upload_media_complete(
+async def upload_media_complete(
     upload_id: str = Form(...),
     filename: str = Form(...),
     content_type: str = Form(...),
@@ -651,17 +672,20 @@ def upload_media_complete(
     if total_chunks is not None and len(chunks) != total_chunks:
         raise HTTPException(status_code=400, detail="Chunk count mismatch")
 
-    with open(final_path, "wb") as outfile:
-        for chunk_path in chunks:
-            with open(chunk_path, "rb") as infile:
-                shutil.copyfileobj(infile, outfile)
+    def merge_chunks_and_verify():
+        with open(final_path, "wb") as outfile:
+            for chunk_path in chunks:
+                with open(chunk_path, "rb") as infile:
+                    shutil.copyfileobj(infile, outfile)
 
-    if file_sha256:
-        with open(final_path, "rb") as infile:
-            actual_sha = hashlib.sha256(infile.read()).hexdigest()
-        if actual_sha.lower() != file_sha256.lower():
-            final_path.unlink(missing_ok=True)
-            raise HTTPException(status_code=400, detail="File checksum mismatch")
+        if file_sha256:
+            with open(final_path, "rb") as infile:
+                actual_sha = hashlib.sha256(infile.read()).hexdigest()
+            if actual_sha.lower() != file_sha256.lower():
+                final_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail="File checksum mismatch")
+
+    await run_in_threadpool(merge_chunks_and_verify)
     
     shutil.rmtree(temp_dir)
     url_path = f"{note_id}/{unique_name}" if note_id else unique_name
@@ -1527,7 +1551,7 @@ def get_model_config_api(db: Session = Depends(get_db)) -> dict:
     config = get_or_create_model_config(db)
     return {
         "provider": config.provider,
-        "api_key": config.api_key,
+        "api_key_masked": mask_api_key(config.api_key),
         "base_url": config.base_url,
         "model_name": config.model_name,
     }
@@ -1537,7 +1561,7 @@ def update_model_config_api(payload: ModelConfigPayload, db: Session = Depends(g
     config = update_model_config(db, payload.provider, payload.api_key, payload.base_url, payload.model_name)
     return {
         "provider": config.provider,
-        "api_key": config.api_key,
+        "api_key_masked": mask_api_key(config.api_key),
         "base_url": config.base_url,
         "model_name": config.model_name,
     }
@@ -1740,7 +1764,11 @@ async def system_restart():
         
         print(f"[*] Restarting application via {bat_path}...")
         # 启动脚本，不阻塞当前进程
-        subprocess.Popen([str(bat_path)], shell=True, cwd=str(repo_dir))
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+            subprocess.Popen(["cmd.exe", "/c", str(bat_path)], cwd=str(repo_dir), creationflags=creationflags)
+        else:
+            subprocess.Popen([str(bat_path)], cwd=str(repo_dir))
         return {"status": "ok", "message": "Restarting..."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1755,7 +1783,17 @@ async def open_file(payload: dict):
     # 允许打开本地绝对路径或相对于上传目录的路径
     p = Path(file_path_str)
     if not p.is_absolute():
-        p = Path(settings.uploads_path) / p.name
+        p = safe_child_path(settings.uploads_path, file_path_str, detail="File path is outside allowed roots")
+    else:
+        requested = p.resolve()
+        allowed_roots = (
+            Path(settings.vault_path).resolve(),
+            Path(settings.uploads_path).resolve(),
+            Path(settings.music_path).resolve(),
+        )
+        if not any(requested == root or requested.is_relative_to(root) for root in allowed_roots):
+            raise HTTPException(status_code=403, detail="File path is outside allowed roots")
+        p = requested
     
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {p}")
@@ -1795,33 +1833,80 @@ async def import_data(payload: dict):
     if source_path == data_root:
         raise HTTPException(status_code=400, detail="选择的导入目录与当前数据目录相同，无需导入")
 
+    items_to_copy = ["second_brain.db", "chroma_store", "uploads"]
+    import_id = uuid.uuid4().hex
+    staging_dir = data_root.parent / f".import-staging-{import_id}"
+    backup_dir = data_root.parent / f".import-backup-{import_id}"
+    backed_up = False
+
+    def copy_item(src_item: Path, dest_item: Path):
+        if src_item.is_dir():
+            shutil.copytree(src_item, dest_item)
+        else:
+            dest_item.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_item, dest_item)
+
+    def remove_item(path: Path):
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+
+    def restore_backup():
+        if not backed_up or not backup_dir.exists():
+            return
+        for item_name in items_to_copy:
+            dest_item = data_root / item_name
+            backup_item = backup_dir / item_name
+            remove_item(dest_item)
+            if backup_item.exists():
+                shutil.move(str(backup_item), str(dest_item))
+
     try:
-        # 4. 关闭所有数据库连接以便文件操作
-        engine.dispose()
-        
-        # 5. 复制数据
         print(f"[*] Importing data from {source_path} to {data_root}...")
-        
-        # 定义要复制的文件和目录
-        items_to_copy = ["second_brain.db", "chroma_store", "uploads"]
-        
+        staging_dir.mkdir(parents=True, exist_ok=False)
+        data_root.mkdir(parents=True, exist_ok=True)
+
+        # 先复制到 staging，避免复制到一半时破坏当前数据目录。
         for item_name in items_to_copy:
             src_item = source_path / item_name
-            dest_item = data_root / item_name
-            
             if src_item.exists():
-                if src_item.is_dir():
-                    # 如果目标存在，先删除
-                    if dest_item.exists():
-                        shutil.rmtree(dest_item)
-                    shutil.copytree(src_item, dest_item)
-                else:
-                    # 如果目标是文件且存在，直接复制会覆盖
-                    shutil.copy2(src_item, dest_item)
-                    
+                copy_item(src_item, staging_dir / item_name)
+
+        import sqlite3
+        conn = sqlite3.connect(staging_dir / "second_brain.db")
+        try:
+            integrity = conn.execute("PRAGMA integrity_check").fetchone()
+        finally:
+            conn.close()
+        if not integrity or integrity[0] != "ok":
+            raise RuntimeError("Imported database failed integrity_check")
+
+        # 关闭所有数据库连接以便文件操作；之后才开始替换当前数据。
+        engine.dispose()
+        backup_dir.mkdir(parents=True, exist_ok=False)
+        for item_name in items_to_copy:
+            dest_item = data_root / item_name
+            if dest_item.exists():
+                shutil.move(str(dest_item), str(backup_dir / item_name))
+        backed_up = True
+
+        for item_name in items_to_copy:
+            staged_item = staging_dir / item_name
+            if staged_item.exists():
+                shutil.move(str(staged_item), str(data_root / item_name))
+
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
         return {"status": "ok", "message": "数据导入成功，请重启软件以加载新数据"}
     except Exception as e:
         import logging
+        try:
+            restore_backup()
+        except Exception as restore_error:
+            logging.getLogger(__name__).error(f"Failed to restore import backup: {str(restore_error)}")
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
         logging.getLogger(__name__).error(f"Failed to import data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to import data: {str(e)}")
 

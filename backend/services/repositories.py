@@ -402,10 +402,20 @@ def get_or_create_model_config(db: Session) -> ModelConfig:
     )
 
 
+def mask_api_key(api_key: str) -> str:
+    if not api_key:
+        return ""
+    if len(api_key) <= 4:
+        return "****"
+    prefix = api_key[:3] if api_key.startswith("sk-") else ""
+    return f"{prefix}****{api_key[-4:]}"
+
+
 def update_model_config(db: Session, provider: str, api_key: str, base_url: str, model_name: str) -> ModelConfig:
     config = db.get(ModelConfig, 1) or ModelConfig(id=1)
     config.provider = provider
-    config.api_key = obfuscate(api_key)
+    if api_key:
+        config.api_key = obfuscate(api_key)
     config.base_url = base_url
     config.model_name = model_name
     db.add(config)

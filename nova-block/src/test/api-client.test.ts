@@ -193,6 +193,28 @@ describe('api browser fallback', () => {
     expect(sanitizeLegacyApiUrlsInHtml(content)).toContain('src="http://127.0.0.1:8765/api/media/static/files/example.png"')
   })
 
+  it('removes script tags from stored editor HTML', () => {
+    const content = '<p>safe</p><script>window.evil = true</script>'
+    const sanitized = sanitizeLegacyApiUrlsInHtml(content)
+    expect(sanitized).toContain('<p>safe</p>')
+    expect(sanitized).not.toContain('<script')
+    expect(sanitized).not.toContain('window.evil')
+  })
+
+  it('removes event handler attributes from stored editor HTML', () => {
+    const content = '<img src="/api/media/static/files/example.png" onerror="window.evil = true" />'
+    const sanitized = sanitizeLegacyApiUrlsInHtml(content)
+    expect(sanitized).toContain('src="http://127.0.0.1:8765/api/media/static/files/example.png"')
+    expect(sanitized).not.toContain('onerror')
+  })
+
+  it('removes javascript URLs from stored editor HTML', () => {
+    const content = '<a href="javascript:alert(1)">click</a>'
+    const sanitized = sanitizeLegacyApiUrlsInHtml(content)
+    expect(sanitized).toContain('click')
+    expect(sanitized).not.toContain('javascript:')
+  })
+
   it('requests vault health reports from the backend system endpoint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ summary: { total_issues: 0 }, issues: [] }), {

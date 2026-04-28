@@ -24,6 +24,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
   const [modelConfig, setModelConfig] = useState({
     provider: 'openai',
     api_key: '',
+    api_key_masked: '',
     base_url: '',
     model_name: '',
   });
@@ -76,7 +77,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       const next = await api.getModelConfig();
       setModelConfig({
         provider: next.provider || 'openai',
-        api_key: next.api_key || '',
+        api_key: '',
+        api_key_masked: next.api_key_masked || '',
         base_url: next.base_url || '',
         model_name: next.model_name || '',
       });
@@ -130,10 +132,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     setSavingModelConfig(true);
     setModelConfigNotice(null);
     try {
-      const saved = await api.updateModelConfig(modelConfig);
+      const { api_key_masked: _apiKeyMasked, ...payload } = modelConfig;
+      const saved = await api.updateModelConfig(payload);
       setModelConfig({
         provider: saved.provider || 'openai',
-        api_key: saved.api_key || '',
+        api_key: '',
+        api_key_masked: saved.api_key_masked || '',
         base_url: saved.base_url || '',
         model_name: saved.model_name || '',
       });
@@ -447,6 +451,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                           data-testid="ai-model-api-key"
                           type="password"
                           value={modelConfig.api_key}
+                          placeholder={modelConfig.api_key_masked || ''}
                           onChange={(e) => setModelConfig((prev) => ({ ...prev, api_key: e.target.value }))}
                           className="w-full bg-accent/20 border border-border/30 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
                         />

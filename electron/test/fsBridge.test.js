@@ -350,6 +350,33 @@ test('fsBridge can target a note directly by file_path without scanning by id', 
   assert.match(firstRaw, /First/);
 });
 
+test('fsBridge getNote uses cached note path after notes have been listed', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Indexed Note',
+    content: '<p>Indexed</p>',
+    type: 'note',
+  });
+
+  await bridge.listNotes();
+
+  const originalReaddir = fs.readdir;
+  fs.readdir = async () => {
+    throw new Error('getNote should not scan directories when cached path is valid');
+  };
+  try {
+    const note = await bridge.getNote(created.id);
+    assert.equal(note.id, created.id);
+    assert.equal(note.title, 'Indexed Note');
+    assert.match(note.content, /Indexed/);
+  } finally {
+    fs.readdir = originalReaddir;
+  }
+});
+
 test('fsBridge updates a note by file_path even when the cached note id is stale', async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
   const bridge = createFsBridge({ vaultRoot: tempRoot });
@@ -551,4 +578,48 @@ test('fsBridge persists backlink metadata so links survive restart', async () =>
   const source = notes.find((note) => note.title === 'Source Note');
 
   assert.deepEqual(source?.links, [target.id]);
+});
+
+test('fsBridge reads standard block-style YAML frontmatter emitted by Python', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const notesDir = path.join(tempRoot, 'Notes');
+  await fs.writeFile(
+    path.join(notesDir, 'Python YAML.md'),
+    [
+      '---',
+      'id: 42',
+      'uuid: 00000000-0000-4000-8000-000000000042',
+      'title: Python YAML',
+      'icon: note',
+      'summary: ""',
+      'tags:',
+      '- alpha',
+      '- beta',
+      'type: note',
+      'created_at: "2026-01-01T00:00:00Z"',
+      'updated_at: "2026-01-01T00:00:00Z"',
+      'properties:',
+      '- id: 1',
+      '  name: Status',
+      '  type: text',
+      '  value: Open',
+      'links:',
+      '- 7',
+      'ai_links:',
+      '- 8',
+      '---',
+      '',
+      '<p>Hello</p>',
+    ].join('\n'),
+    'utf8'
+  );
+
+  const note = await bridge.getNote(42);
+
+  assert.equal(note.title, 'Python YAML');
+  assert.deepEqual(note.tags, ['alpha', 'beta']);
+  assert.equal(note.properties[0].name, 'Status');
 });

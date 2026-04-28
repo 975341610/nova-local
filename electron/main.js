@@ -1,14 +1,14 @@
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const { spawn } = require('node:child_process');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const { createFsBridge } = require('./fsBridge');
 const { createVaultWatcher } = require('./vaultWatcher');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const FRONTEND_INDEX = path.join(APP_ROOT, 'frontend_dist', 'index.html');
-const VENV_PYTHON = path.join(APP_ROOT, '.venv', 'Scripts', 'python.exe');
 const VAULT_ROOT = path.join(APP_ROOT, 'data', 'vault');
 const DESKTOP_LOCAL_TOKEN = process.env.NOVA_DESKTOP_TOKEN || crypto.randomBytes(24).toString('hex');
 const BACKEND_HOST = process.env.NOVA_BACKEND_HOST || '127.0.0.1';
@@ -24,6 +24,7 @@ let allowWindowClose = false;
 let isAppQuitting = false;
 let backendRestartTimer = null;
 let backendRestartAttempts = 0;
+let backendLastError = null;
 const recentLocalVaultChanges = new Map();
 
 const fsBridge = createFsBridge({ vaultRoot: VAULT_ROOT });
@@ -103,6 +104,36 @@ function checkBackend(timeoutMs = 800) {
   });
 }
 
+function resolveBackendLauncher({
+  appRoot = APP_ROOT,
+  platform = process.platform,
+  env = process.env,
+  resourcesPath = process.resourcesPath,
+  isPackaged = app.isPackaged,
+} = {}) {
+  const pythonExecutable = platform === 'win32' ? 'python.exe' : 'python';
+  const pythonBin = platform === 'win32' ? path.join('Scripts', pythonExecutable) : path.join('bin', pythonExecutable);
+  const fallbackCommand = platform === 'win32' ? 'python' : 'python3';
+  const candidates = [
+    env.NOVA_BACKEND_PYTHON,
+    isPackaged && resourcesPath ? path.join(resourcesPath, 'python', pythonBin) : null,
+    path.join(appRoot, '.venv', pythonBin),
+    fallbackCommand,
+  ].filter(Boolean);
+
+  const command = candidates.find((candidate) => {
+    if (candidate === fallbackCommand) {
+      return true;
+    }
+    return fs.existsSync(candidate);
+  }) || fallbackCommand;
+
+  return {
+    command,
+    args: [path.join(appRoot, 'start_backend.py')],
+  };
+}
+
 function scheduleBackendRestart(reason = 'exit') {
   if (isAppQuitting || backendRestartTimer) {
     return;
@@ -130,19 +161,47 @@ function startBackendProcess() {
     return;
   }
 
-  backendProcess = spawn(VENV_PYTHON, ['start_backend.py'], {
+  const logsDir = path.join(APP_ROOT, 'data', 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+  const stdoutLog = fs.createWriteStream(path.join(logsDir, 'backend.stdout.log'), { flags: 'a' });
+  const stderrLog = fs.createWriteStream(path.join(logsDir, 'backend.stderr.log'), { flags: 'a' });
+
+  const launcher = resolveBackendLauncher();
+  backendProcess = spawn(launcher.command, launcher.args, {
     cwd: APP_ROOT,
     windowsHide: true,
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
       NOVA_DESKTOP_TOKEN: DESKTOP_LOCAL_TOKEN,
+      RUN_MODE: 'desktop_local',
       HOST: BACKEND_HOST,
       PORT: String(BACKEND_PORT),
     },
   });
 
+  backendProcess.stdout.on('data', (chunk) => {
+    stdoutLog.write(chunk);
+    console.info(`[backend] ${chunk.toString().trimEnd()}`);
+  });
+
+  backendProcess.stderr.on('data', (chunk) => {
+    stderrLog.write(chunk);
+    backendLastError = chunk.toString().trim();
+    console.error(`[backend] ${backendLastError}`);
+  });
+
+  backendProcess.on('error', (error) => {
+    backendLastError = error.message;
+    stdoutLog.end();
+    stderrLog.end();
+    backendProcess = null;
+    console.error('[backend] failed to start', error);
+  });
+
   backendProcess.on('exit', (code, signal) => {
+    stdoutLog.end();
+    stderrLog.end();
     backendProcess = null;
     if (!isAppQuitting) {
       scheduleBackendRestart(`exit(code=${code ?? 'null'}, signal=${signal ?? 'null'})`);
@@ -157,7 +216,7 @@ async function ensureBackend() {
 
   startBackendProcess();
 
-  const maxAttempts = 40;
+  const maxAttempts = 90;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (await checkBackend(1200)) {
       return;
@@ -165,7 +224,38 @@ async function ensureBackend() {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
-  throw new Error(`Backend unavailable at ${BACKEND_ORIGIN}`);
+  const detail = backendLastError ? ` Last backend error: ${backendLastError}` : '';
+  throw new Error(`Backend unavailable at ${BACKEND_ORIGIN}.${detail}`);
+}
+
+async function bootstrapApp() {
+  await fsBridge.ensureBaseDirs();
+  await ensureBackend();
+  registerIpcHandlers();
+  createMainWindow();
+
+  setImmediate(async () => {
+    await fsBridge.repairVaultMetadata();
+    await fsBridge.initializeMaxId();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('vault:ready');
+    }
+  });
+
+  watcher = createVaultWatcher(VAULT_ROOT, (payload) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    if (isRecentLocalVaultChange(payload.filename)) {
+      return;
+    }
+
+    vaultChangeQueue.push(payload);
+    if (!vaultChangeTimer) {
+      vaultChangeTimer = setTimeout(flushVaultChanges, 1000);
+    }
+  });
+  watcher.start();
 }
 
 function createMainWindow() {
@@ -362,36 +452,10 @@ function flushVaultChanges() {
   vaultChangeTimer = null;
 }
 
-app.whenReady().then(async () => {
-  await fsBridge.ensureBaseDirs();
-  await ensureBackend();
-  registerIpcHandlers();
-  createMainWindow();
-
-  // 异步修复元数据和初始化 ID 缓存
-  setImmediate(async () => {
-    await fsBridge.repairVaultMetadata();
-    await fsBridge.initializeMaxId();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('vault:ready');
-    }
-  });
-
-  watcher = createVaultWatcher(VAULT_ROOT, (payload) => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      return;
-    }
-    if (isRecentLocalVaultChange(payload.filename)) {
-      return;
-    }
-    
-    // 批量防抖处理
-    vaultChangeQueue.push(payload);
-    if (!vaultChangeTimer) {
-      vaultChangeTimer = setTimeout(flushVaultChanges, 1000); // 增加前端防抖时间到 1s
-    }
-  });
-  watcher.start();
+app.whenReady().then(bootstrapApp).catch((error) => {
+  console.error('[main] failed to bootstrap application', error);
+  dialog.showErrorBox('Nova startup failed', error?.message || String(error));
+  app.quit();
 });
 
 app.on('window-all-closed', () => {
