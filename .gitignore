@@ -9,3 +9,7 @@ backend/backend.log
 *.log
 out.txt
 cc/
+bin/
+canvas-drag-antijitter.patch.txt
+report_text.txt
+test_repro_session.db
