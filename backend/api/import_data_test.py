@@ -18,14 +18,17 @@ def isolate_data_root(tmp_path):
     original_data_root = settings.data_root
     original_access_token = settings.access_token
     original_desktop_token = settings.desktop_local_token
+    original_legacy_http = settings.enable_legacy_system_http
     settings.data_root = tmp_path / "active_data"
     settings.access_token = "test-token"
     settings.desktop_local_token = "desktop-token"
+    settings.enable_legacy_system_http = True
     settings.data_root.mkdir(parents=True, exist_ok=True)
     yield
     settings.data_root = original_data_root
     settings.access_token = original_access_token
     settings.desktop_local_token = original_desktop_token
+    settings.enable_legacy_system_http = original_legacy_http
 
 
 def create_sqlite_database(path: Path):

@@ -103,6 +103,8 @@ class Settings(BaseSettings):
         "http://localhost:5173",
     ]
     desktop_local_token: str = Field(default="", validation_alias="NOVA_DESKTOP_TOKEN")
+    # Legacy escape hatch for desktop-only operations that have moved to Electron IPC.
+    enable_legacy_system_http: bool = Field(default=False, validation_alias="NOVA_ENABLE_LEGACY_SYSTEM_HTTP")
     access_token: str = ""  # Optional bearer token. Empty disables auth in desktop mode.
     run_mode: str = Field(default="desktop_local", validation_alias="RUN_MODE")
     model_config = SettingsConfigDict(env_file=str(runtime_root() / ".env"), extra="ignore")

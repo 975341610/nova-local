@@ -103,12 +103,14 @@ def test_model_config_requires_auth_when_token_is_configured(isolated_model_conf
         ("post", "/api/system/import-data", {"source_path": "C:/tmp/nova-import"}),
     ],
 )
-def test_destructive_system_routes_reject_bearer_token_without_desktop_token(method: str, path: str, payload: dict):
+def test_destructive_system_routes_are_gone_by_default(method: str, path: str, payload: dict):
     settings = get_settings()
     original_token = settings.access_token
     original_desktop_token = settings.desktop_local_token
+    original_legacy_http = settings.enable_legacy_system_http
     settings.access_token = "test-token"
     settings.desktop_local_token = "desktop-token"
+    settings.enable_legacy_system_http = False
     try:
         response = getattr(TestClient(app), method)(
             path,
@@ -118,16 +120,19 @@ def test_destructive_system_routes_reject_bearer_token_without_desktop_token(met
     finally:
         settings.access_token = original_token
         settings.desktop_local_token = original_desktop_token
+        settings.enable_legacy_system_http = original_legacy_http
 
-    assert response.status_code == 403
+    assert response.status_code == 410
 
 
-def test_destructive_system_routes_allow_loopback_desktop_token():
+def test_destructive_system_routes_allow_loopback_desktop_token_in_legacy_mode():
     settings = get_settings()
     original_token = settings.access_token
     original_desktop_token = settings.desktop_local_token
+    original_legacy_http = settings.enable_legacy_system_http
     settings.access_token = "test-token"
     settings.desktop_local_token = "desktop-token"
+    settings.enable_legacy_system_http = True
     try:
         response = TestClient(app).post(
             "/api/system/open-file",
@@ -137,19 +142,22 @@ def test_destructive_system_routes_allow_loopback_desktop_token():
     finally:
         settings.access_token = original_token
         settings.desktop_local_token = original_desktop_token
+        settings.enable_legacy_system_http = original_legacy_http
 
     assert response.status_code == 404
 
 
-def test_update_ollama_rejects_bearer_token_without_desktop_token(monkeypatch):
+def test_update_ollama_route_is_gone_by_default(monkeypatch):
     async def fail_if_endpoint_runs(*args, **kwargs):
         raise AssertionError("update-ollama endpoint should be blocked by middleware")
 
     settings = get_settings()
     original_token = settings.access_token
     original_desktop_token = settings.desktop_local_token
+    original_legacy_http = settings.enable_legacy_system_http
     settings.access_token = "test-token"
     settings.desktop_local_token = "desktop-token"
+    settings.enable_legacy_system_http = False
     monkeypatch.setattr(routes.asyncio, "create_subprocess_exec", fail_if_endpoint_runs)
     try:
         response = TestClient(app).post(
@@ -159,6 +167,32 @@ def test_update_ollama_rejects_bearer_token_without_desktop_token(monkeypatch):
     finally:
         settings.access_token = original_token
         settings.desktop_local_token = original_desktop_token
+        settings.enable_legacy_system_http = original_legacy_http
+
+    assert response.status_code == 410
+
+
+def test_update_ollama_rejects_bearer_token_without_desktop_token_in_legacy_mode(monkeypatch):
+    async def fail_if_endpoint_runs(*args, **kwargs):
+        raise AssertionError("update-ollama endpoint should be blocked by middleware")
+
+    settings = get_settings()
+    original_token = settings.access_token
+    original_desktop_token = settings.desktop_local_token
+    original_legacy_http = settings.enable_legacy_system_http
+    settings.access_token = "test-token"
+    settings.desktop_local_token = "desktop-token"
+    settings.enable_legacy_system_http = True
+    monkeypatch.setattr(routes.asyncio, "create_subprocess_exec", fail_if_endpoint_runs)
+    try:
+        response = TestClient(app).post(
+            "/api/ai/update-ollama",
+            headers={"Authorization": "Bearer test-token"},
+        )
+    finally:
+        settings.access_token = original_token
+        settings.desktop_local_token = original_desktop_token
+        settings.enable_legacy_system_http = original_legacy_http
 
     assert response.status_code == 403
 
@@ -202,15 +236,21 @@ def test_system_open_file_rejects_absolute_path_outside_allowed_roots(tmp_path: 
 
     settings = get_settings()
     original_token = settings.access_token
+    original_desktop_token = settings.desktop_local_token
+    original_legacy_http = settings.enable_legacy_system_http
     settings.access_token = "test-token"
+    settings.desktop_local_token = "desktop-token"
+    settings.enable_legacy_system_http = True
     try:
         response = TestClient(app).post(
             "/api/system/open-file",
-            headers={"Authorization": "Bearer test-token"},
+            headers={"x-nova-desktop-token": "desktop-token"},
             json={"path": str(outside_file)},
         )
     finally:
         settings.access_token = original_token
+        settings.desktop_local_token = original_desktop_token
+        settings.enable_legacy_system_http = original_legacy_http
 
     assert response.status_code == 403
 

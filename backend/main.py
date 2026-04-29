@@ -85,6 +85,12 @@ async def auth_middleware(request: Request, call_next):
         or path == f"{settings.api_prefix}/ai/update-ollama"
     )
 
+    if desktop_only_api and not settings.enable_legacy_system_http:
+        return JSONResponse(
+            status_code=410,
+            content={"detail": "Gone: desktop-only operation moved to Electron IPC"}
+        )
+
     if desktop_only_api and not is_local_desktop:
         return JSONResponse(
             status_code=403,
