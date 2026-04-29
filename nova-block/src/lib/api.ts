@@ -211,6 +211,14 @@ export const api = {
   getSystemVersion: () => invoke<{ version: string; git_commit?: string; build_time?: string; executable?: string }>('system:version', '/system/version'),
   getVaultHealth: () => invoke<VaultHealthReport>('system:vault-health', '/system/vault-health'),
   openFile: (path: string) => invoke('system:open-file', '/system/open-file', { method: 'POST', body: JSON.stringify({ path }) }),
+  switchDataPath: (dataPath: string) =>
+    invoke<{ status: string; message?: string }>('system:switch-data-path', '/system/switch-data-path', { method: 'POST', body: JSON.stringify({ data_path: dataPath }) }),
+  importData: (sourcePath: string) =>
+    invoke<{ status: string; message?: string; backup_path?: string }>('system:import-data', '/system/import-data', { method: 'POST', body: JSON.stringify({ source_path: sourcePath }) }),
+  updateSystem: (force = false) =>
+    invoke<{ status: string; output?: string }>('system:update', '/system/update', { method: 'POST', body: JSON.stringify({ force }) }),
+  restartSystem: () =>
+    invoke<{ status: string; message?: string }>('system:restart', '/system/restart', { method: 'POST' }),
   // 音乐库列表必须走后端扫描（HTTP），避免 Electron IPC 缺失导致库永远为空
   listMusicLibrary: async () => {
     const API_BASE = getApiBase();

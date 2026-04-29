@@ -133,6 +133,24 @@ describe('api browser fallback', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('routes local system maintenance actions through dedicated Electron IPC channels', async () => {
+    const ipcInvoke = vi.fn().mockResolvedValue({ status: 'ok' })
+    ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+
+    await api.switchDataPath('D:/NovaData')
+    await api.importData('E:/NovaBackup')
+    await api.updateSystem(true)
+    await api.restartSystem()
+
+    expect(ipcInvoke).toHaveBeenCalledWith('system:switch-data-path', { data_path: 'D:/NovaData' })
+    expect(ipcInvoke).toHaveBeenCalledWith('system:import-data', { source_path: 'E:/NovaBackup' })
+    expect(ipcInvoke).toHaveBeenCalledWith('system:update', { force: true })
+    expect(ipcInvoke).toHaveBeenCalledWith('system:restart', {})
+    expect(ipcInvoke).not.toHaveBeenCalledWith('desktop:api-request', expect.anything())
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('does not request or attach desktop auth tokens from the renderer', async () => {
     const ipcInvoke = vi.fn().mockResolvedValue(null)
     ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }

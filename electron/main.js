@@ -467,28 +467,137 @@ function runUpdateOllama() {
   }
 
   const launcher = resolveBackendLauncher();
-  return new Promise((resolve, reject) => {
-    const child = spawn(launcher.command, [scriptPath, '--force'], {
-      cwd: APP_ROOT,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+  return runProcess(launcher.command, [scriptPath, '--force'], { cwd: APP_ROOT })
+    .then((result) => (
+      result.code === 0
+        ? { status: 'success', output: result.stdout }
+        : { status: 'error', message: result.stderr }
+    ));
+}
 
-    const stdout = [];
-    const stderr = [];
-    child.stdout.on('data', (chunk) => stdout.push(chunk));
-    child.stderr.on('data', (chunk) => stderr.push(chunk));
-    child.on('error', reject);
-    child.on('exit', (code) => {
-      const output = Buffer.concat(stdout).toString('utf8');
-      const message = Buffer.concat(stderr).toString('utf8');
-      if (code === 0) {
-        resolve({ status: 'success', output });
-      } else {
-        resolve({ status: 'error', message });
+function switchDataPath(payload) {
+  const input = ensurePlainObject(payload);
+  if (typeof input.data_path !== 'string' || !input.data_path.trim()) {
+    throw new Error('data_path is required');
+  }
+
+  const newPath = path.resolve(input.data_path);
+  const oldPath = path.resolve(DATA_ROOT);
+  if (newPath === oldPath) {
+    return { status: 'ok', message: 'Path is same' };
+  }
+
+  fs.mkdirSync(newPath, { recursive: true });
+  const targetDb = path.join(newPath, 'second_brain.db');
+  if (!fs.existsSync(targetDb) && fs.existsSync(oldPath)) {
+    for (const itemName of fs.readdirSync(oldPath)) {
+      const source = path.join(oldPath, itemName);
+      const target = path.join(newPath, itemName);
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { recursive: true, force: true });
       }
-    });
-  });
+      fs.renameSync(source, target);
+    }
+  }
+
+  fs.writeFileSync(path.join(APP_ROOT, 'data_config.json'), JSON.stringify({ data_path: newPath }, null, 4), 'utf8');
+  return { status: 'ok', message: 'Data path switched. Restart the app to apply it.' };
+}
+
+function importData(payload) {
+  const input = ensurePlainObject(payload);
+  if (typeof input.source_path !== 'string' || !input.source_path.trim()) {
+    throw new Error('source_path is required');
+  }
+
+  const sourcePath = path.resolve(input.source_path);
+  const dataRoot = path.resolve(DATA_ROOT);
+  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isDirectory()) {
+    throw new Error('Invalid source path');
+  }
+  if (sourcePath === dataRoot) {
+    throw new Error('Source path is the current data path');
+  }
+  if (!fs.existsSync(path.join(sourcePath, 'second_brain.db')) || !fs.existsSync(path.join(sourcePath, 'vault'))) {
+    throw new Error('Source path must contain second_brain.db and vault');
+  }
+
+  const backupRoot = path.join(dataRoot, 'backups', `import-backup-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+  fs.mkdirSync(backupRoot, { recursive: true });
+  for (const itemName of ['vault', 'second_brain.db', 'chroma_store']) {
+    const current = path.join(dataRoot, itemName);
+    if (fs.existsSync(current)) {
+      copyPath(current, path.join(backupRoot, itemName));
+    }
+  }
+
+  for (const itemName of ['vault', 'second_brain.db', 'chroma_store']) {
+    const source = path.join(sourcePath, itemName);
+    if (fs.existsSync(source)) {
+      replacePath(source, path.join(dataRoot, itemName));
+    }
+  }
+  return { status: 'ok', message: 'Data imported. Restart the app to apply it.', backup_path: backupRoot };
+}
+
+async function updateSystem(payload = {}) {
+  const input = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  const force = input.force === true;
+  const gitCmd = resolveGitCommand();
+  if (!gitCmd) {
+    return { status: 'error', output: 'Git command not found' };
+  }
+
+  const cwd = repoRoot();
+  if (!fs.existsSync(path.join(cwd, '.git'))) {
+    return { status: 'error', output: `.git directory not found at ${cwd}` };
+  }
+
+  const branchResult = await runProcess(gitCmd, ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd });
+  let branch = branchResult.stdout.trim();
+  if (!branch || branch === 'HEAD') {
+    branch = (process.env.NOVA_RELEASE_CHANNEL || 'main').trim() || 'main';
+  }
+
+  const fetchResult = await runProcess(gitCmd, ['fetch', 'origin', branch], { cwd });
+  if (fetchResult.code !== 0) {
+    return { status: 'error', output: fetchResult.stderr || fetchResult.stdout };
+  }
+
+  const localResult = await runProcess(gitCmd, ['rev-parse', 'HEAD'], { cwd });
+  const remoteResult = await runProcess(gitCmd, ['rev-parse', `origin/${branch}`], { cwd });
+  const local = localResult.stdout.trim();
+  const remote = remoteResult.stdout.trim();
+  if (!local || !remote) {
+    return { status: 'error', output: `Could not resolve local or remote revision for ${branch}` };
+  }
+  if (local === remote && !force) {
+    return { status: 'up-to-date', output: `Already up to date at ${local.slice(0, 7)}` };
+  }
+  if (!force) {
+    return { status: 'pending', output: `Update available: ${local.slice(0, 7)} -> ${remote.slice(0, 7)}` };
+  }
+
+  const pullResult = await runProcess(gitCmd, ['pull', 'origin', branch], { cwd });
+  return {
+    status: pullResult.code === 0 ? 'ok' : 'error',
+    output: `${pullResult.stdout}\n${pullResult.stderr}`,
+  };
+}
+
+function restartSystem() {
+  const batPath = path.join(repoRoot(), 'fast_update.bat');
+  if (!fs.existsSync(batPath)) {
+    throw new Error(`fast_update.bat not found at ${batPath}`);
+  }
+
+  if (process.platform === 'win32') {
+    const creationflags = process.platform === 'win32' ? 0x00000010 : 0;
+    spawn('cmd.exe', ['/c', batPath], { cwd: repoRoot(), detached: true, windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'], creationflags }).unref();
+  } else {
+    spawn(batPath, [], { cwd: repoRoot(), detached: true, stdio: ['ignore', 'ignore', 'ignore'] }).unref();
+  }
+  return { status: 'ok', message: 'Restarting...' };
 }
 
 function normalizeDesktopApiRequest(payload) {
@@ -519,6 +628,62 @@ function normalizeDesktopApiRequest(payload) {
     path: allowed.path,
     body: options.body,
   };
+}
+
+function runProcess(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd || APP_ROOT,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: options.env || process.env,
+    });
+
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      resolve({
+        code,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      });
+    });
+  });
+}
+
+function copyPath(source, target) {
+  const stat = fs.statSync(source);
+  if (stat.isDirectory()) {
+    fs.cpSync(source, target, { recursive: true });
+  } else {
+    fs.copyFileSync(source, target);
+  }
+}
+
+function replacePath(source, target) {
+  if (fs.existsSync(target)) {
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+  copyPath(source, target);
+}
+
+function repoRoot() {
+  return APP_ROOT;
+}
+
+function resolveGitCommand() {
+  const candidates = [
+    'git',
+    'C:\\Program Files\\Git\\bin\\git.exe',
+    'C:\\Program Files\\Git\\cmd\\git.exe',
+    'C:\\Program Files (x86)\\Git\\bin\\git.exe',
+    'C:\\Program Files (x86)\\Git\\cmd\\git.exe',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'cmd', 'git.exe') : null,
+  ].filter(Boolean);
+  return candidates.find((candidate) => candidate === 'git' || fs.existsSync(candidate)) || null;
 }
 
 function requestBackendApi(payload) {
@@ -602,6 +767,10 @@ function registerIpcHandlers() {
   ipcMain.handle('desktop:api-request', async (_event, payload) => requestBackendApi(payload));
   ipcMain.handle('desktop:get-backend-base-url', async () => BACKEND_API_BASE);
   ipcMain.handle('system:open-file', async (_event, payload) => openLocalFile(payload));
+  ipcMain.handle('system:switch-data-path', async (_event, payload) => switchDataPath(payload));
+  ipcMain.handle('system:import-data', async (_event, payload) => importData(payload));
+  ipcMain.handle('system:update', async (_event, payload) => updateSystem(payload));
+  ipcMain.handle('system:restart', async () => restartSystem());
   ipcMain.handle('ai:update-ollama', async () => runUpdateOllama());
   ipcMain.handle('notes:list', async (_event, payload = {}) => {
     const input = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};

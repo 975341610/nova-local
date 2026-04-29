@@ -21,6 +21,10 @@ const LOCAL_FIRST_CHANNELS = new Set([
   'notes:delete',
   'notes:changed',
   'system:open-file',
+  'system:switch-data-path',
+  'system:import-data',
+  'system:update',
+  'system:restart',
   'ai:update-ollama',
 ])
 
