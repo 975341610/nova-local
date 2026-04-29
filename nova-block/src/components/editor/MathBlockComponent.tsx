@@ -42,7 +42,7 @@ export function MathBlockComponent({ node, updateAttributes, selected }: NodeVie
           }} 
         />
       );
-    } catch (e) {
+    } catch {
       return <div className="text-red-500 text-sm">LaTeX 语法错误</div>;
     }
   };

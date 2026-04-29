@@ -76,11 +76,13 @@ async def auth_middleware(request: Request, call_next):
         f"{settings.api_prefix}/system/restart",
         f"{settings.api_prefix}/system/open-file",
         f"{settings.api_prefix}/system/import-data",
+        f"{settings.api_prefix}/ai/update-ollama",
     }
     protected_api = (
         path == f"{settings.api_prefix}/model-config"
         or (path.startswith(f"{settings.api_prefix}/system/") and path != f"{settings.api_prefix}/system/version")
         or path.startswith(f"{settings.api_prefix}/ai/toggle")
+        or path == f"{settings.api_prefix}/ai/update-ollama"
     )
 
     if desktop_only_api and not is_local_desktop:

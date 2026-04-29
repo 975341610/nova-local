@@ -9,7 +9,29 @@ const { createVaultWatcher } = require('./vaultWatcher');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const FRONTEND_INDEX = path.join(APP_ROOT, 'frontend_dist', 'index.html');
-const VAULT_ROOT = path.join(APP_ROOT, 'data', 'vault');
+function resolveDataRoot({ appRoot = APP_ROOT, env = process.env } = {}) {
+  if (env.NOVA_DATA_ROOT) {
+    return path.resolve(env.NOVA_DATA_ROOT);
+  }
+
+  const configPath = path.join(appRoot, 'data_config.json');
+  try {
+    if (fs.existsSync(configPath)) {
+      const raw = fs.readFileSync(configPath, 'utf8');
+      const config = JSON.parse(raw);
+      if (typeof config.data_path === 'string' && config.data_path.trim()) {
+        return path.resolve(config.data_path);
+      }
+    }
+  } catch (error) {
+    console.warn(`[config] Failed to read data_config.json: ${error.message}`);
+  }
+
+  return path.join(appRoot, 'data');
+}
+
+const DATA_ROOT = resolveDataRoot();
+const VAULT_ROOT = path.join(DATA_ROOT, 'vault');
 const DESKTOP_LOCAL_TOKEN = process.env.NOVA_DESKTOP_TOKEN || crypto.randomBytes(24).toString('hex');
 const BACKEND_HOST = process.env.NOVA_BACKEND_HOST || '127.0.0.1';
 const parsedBackendPort = Number.parseInt(process.env.NOVA_BACKEND_PORT || process.env.PORT || '8765', 10);
@@ -161,7 +183,7 @@ function startBackendProcess() {
     return;
   }
 
-  const logsDir = path.join(APP_ROOT, 'data', 'logs');
+  const logsDir = path.join(DATA_ROOT, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
   const stdoutLog = fs.createWriteStream(path.join(logsDir, 'backend.stdout.log'), { flags: 'a' });
   const stderrLog = fs.createWriteStream(path.join(logsDir, 'backend.stderr.log'), { flags: 'a' });
@@ -270,7 +292,7 @@ function createMainWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       spellcheck: false,
     },
   });

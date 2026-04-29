@@ -215,6 +215,14 @@ describe('api browser fallback', () => {
     expect(sanitized).not.toContain('javascript:')
   })
 
+  it('removes obfuscated javascript URLs from stored editor HTML', () => {
+    const content = '<a href="java\nscript:alert(1)">click</a>'
+    const sanitized = sanitizeLegacyApiUrlsInHtml(content)
+    expect(sanitized).toContain('click')
+    expect(sanitized.toLowerCase()).not.toContain('java\nscript:')
+    expect(sanitized.toLowerCase()).not.toContain('alert(1)')
+  })
+
   it('requests vault health reports from the backend system endpoint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ summary: { total_issues: 0 }, issues: [] }), {

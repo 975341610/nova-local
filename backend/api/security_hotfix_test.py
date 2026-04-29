@@ -141,6 +141,61 @@ def test_destructive_system_routes_allow_loopback_desktop_token():
     assert response.status_code == 404
 
 
+def test_update_ollama_rejects_bearer_token_without_desktop_token(monkeypatch):
+    async def fail_if_endpoint_runs(*args, **kwargs):
+        raise AssertionError("update-ollama endpoint should be blocked by middleware")
+
+    settings = get_settings()
+    original_token = settings.access_token
+    original_desktop_token = settings.desktop_local_token
+    settings.access_token = "test-token"
+    settings.desktop_local_token = "desktop-token"
+    monkeypatch.setattr(routes.asyncio, "create_subprocess_exec", fail_if_endpoint_runs)
+    try:
+        response = TestClient(app).post(
+            "/api/ai/update-ollama",
+            headers={"Authorization": "Bearer test-token"},
+        )
+    finally:
+        settings.access_token = original_token
+        settings.desktop_local_token = original_desktop_token
+
+    assert response.status_code == 403
+
+
+def test_system_update_uses_current_branch(monkeypatch, tmp_path: Path):
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".git").mkdir(parents=True)
+    commands = []
+
+    class Completed:
+        def __init__(self, stdout: str = ""):
+            self.stdout = stdout
+            self.stderr = ""
+            self.returncode = 0
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        if command[1:3] == ["rev-parse", "--abbrev-ref"]:
+            return Completed("V4\n")
+        if command[1:3] == ["rev-parse", "HEAD"]:
+            return Completed("abc123\n")
+        if command[1:3] == ["rev-parse", "origin/V4"]:
+            return Completed("abc123\n")
+        return Completed()
+
+    monkeypatch.setattr(routes, "PROJECT_DIR", repo_dir)
+    monkeypatch.setattr(routes.shutil, "which", lambda name: "git")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    response = asyncio.run(routes.system_update())
+
+    assert response["status"] == "up-to-date"
+    assert ["git", "fetch", "origin", "V4"] in commands
+    assert ["git", "rev-parse", "origin/V4"] in commands
+    assert ["git", "pull", "origin", "main"] not in commands
+
+
 def test_system_open_file_rejects_absolute_path_outside_allowed_roots(tmp_path: Path):
     outside_file = tmp_path / "outside.txt"
     outside_file.write_text("secret", encoding="utf-8")

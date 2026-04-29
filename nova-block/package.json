@@ -33,6 +33,7 @@
     "@xyflow/react": "^12.10.2",
     "canvas-confetti": "^1.9.4",
     "date-fns": "^3.6.0",
+    "dompurify": "^3.4.1",
     "framer-motion": "^12.38.0",
     "katex": "^0.16.44",
     "lowlight": "^3.3.0",

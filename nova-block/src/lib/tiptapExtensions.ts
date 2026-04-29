@@ -190,7 +190,6 @@ export const MathInline = Mark.create({
           escape: false,
         },
         parse: {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
           setup: (_markdownit: any) => {
             // 依赖测试环境外部挂载插件
           }

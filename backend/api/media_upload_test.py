@@ -1,6 +1,7 @@
 import time
 import os
 import asyncio
+import inspect
 from pathlib import Path
 
 import pytest
@@ -94,6 +95,13 @@ async def _test_upload_media_api_uses_async_uploadfile_read():
 
 def test_upload_media_complete_is_async_and_merges_chunks():
     asyncio.run(_test_upload_media_complete_is_async_and_merges_chunks())
+
+
+def test_upload_media_complete_does_not_read_final_file_into_memory():
+    source = inspect.getsource(upload_media_complete)
+
+    assert "hashlib.sha256(infile.read())" not in source
+    assert ".update(" in source
 
 
 async def _test_upload_media_complete_is_async_and_merges_chunks():

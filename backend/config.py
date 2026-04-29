@@ -101,7 +101,6 @@ class Settings(BaseSettings):
         "http://localhost:4173",
         "http://127.0.0.1:5173",
         "http://localhost:5173",
-        "null",
     ]
     desktop_local_token: str = Field(default="", validation_alias="NOVA_DESKTOP_TOKEN")
     access_token: str = ""  # 璁块棶瀵嗛挜锛屼负绌哄垯涓嶅紑鍚璇?

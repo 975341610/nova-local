@@ -217,7 +217,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
           setThemeImportError('无效的主题配置文件格式');
           setThemeImportSuccess(false);
         }
-      } catch (err) {
+      } catch {
         setThemeImportError('解析 JSON 失败');
         setThemeImportSuccess(false);
       }

@@ -120,7 +120,12 @@ const HabitCell = React.memo(({
     <motion.button
       whileHover={{ y: -2 }}
       onClick={(e) => isCurrMonth && isEditable && onLeftClick(dateStr, e)}
-      onContextMenu={(e) => { e.preventDefault(); isCurrMonth && isEditable && onRightClick(dateStr, e); }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (isCurrMonth && isEditable) {
+          onRightClick(dateStr, e);
+        }
+      }}
       className={`relative aspect-[1/1.1] flex flex-col items-center justify-between py-2 px-1 transition-all border-b border-r border-stone-100 ${!isCurrMonth ? 'opacity-20 pointer-events-none' : 'hover:bg-stone-50/50'}`}
     >
       <span className={`text-[10px] font-serif ${today ? 'text-blue-600 font-bold' : 'text-stone-400'}`}>

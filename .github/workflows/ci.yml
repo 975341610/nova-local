@@ -34,7 +34,6 @@ jobs:
         working-directory: nova-block
         run: npm ci
       - name: Lint frontend
-        continue-on-error: true
         working-directory: nova-block
         run: npm run lint
       - name: Test frontend

@@ -673,14 +673,20 @@ async def upload_media_complete(
         raise HTTPException(status_code=400, detail="Chunk count mismatch")
 
     def merge_chunks_and_verify():
+        file_hasher = hashlib.sha256() if file_sha256 else None
         with open(final_path, "wb") as outfile:
             for chunk_path in chunks:
                 with open(chunk_path, "rb") as infile:
-                    shutil.copyfileobj(infile, outfile)
+                    while True:
+                        chunk = infile.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        outfile.write(chunk)
+                        if file_hasher:
+                            file_hasher.update(chunk)
 
         if file_sha256:
-            with open(final_path, "rb") as infile:
-                actual_sha = hashlib.sha256(infile.read()).hexdigest()
+            actual_sha = file_hasher.hexdigest()
             if actual_sha.lower() != file_sha256.lower():
                 final_path.unlink(missing_ok=True)
                 raise HTTPException(status_code=400, detail="File checksum mismatch")
@@ -1709,16 +1715,29 @@ async def system_update(force: bool = False):
         print(f"[*] Using git at: {git_cmd}")
         print(f"[*] Git repo dir: {repo_dir}")
         print("[*] Checking for updates...")
+
+        branch_res = subprocess.run(
+            [git_cmd, "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',
+        )
+        branch = (branch_res.stdout or "").strip()
+        if not branch or branch == "HEAD":
+            branch = _os.environ.get("NOVA_RELEASE_CHANNEL", "main").strip() or "main"
         
         # 4. 先执行 fetch 获取远程状态 (设置超时)
         try:
-            subprocess.run([git_cmd, "fetch", "origin", "main"], cwd=repo_dir, capture_output=True, timeout=15)
+            subprocess.run([git_cmd, "fetch", "origin", branch], cwd=repo_dir, capture_output=True, timeout=15)
         except subprocess.TimeoutExpired:
             return {"status": "error", "output": "❌ git fetch 超时 (15s)，请检查网络连接后再重试。"}
         
         # 5. 比较本地和远程版本
         local_res = subprocess.run([git_cmd, "rev-parse", "HEAD"], cwd=repo_dir, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-        remote_res = subprocess.run([git_cmd, "rev-parse", "origin/main"], cwd=repo_dir, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+        remote_ref = f"origin/{branch}"
+        remote_res = subprocess.run([git_cmd, "rev-parse", remote_ref], cwd=repo_dir, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         
         local = local_res.stdout.strip()
         remote = remote_res.stdout.strip()
@@ -1734,7 +1753,7 @@ async def system_update(force: bool = False):
 
         # 6. 执行更新
         process = subprocess.run(
-            [git_cmd, "pull", "origin", "main"],
+            [git_cmd, "pull", "origin", branch],
             cwd=repo_dir,
             capture_output=True,
             text=True,
@@ -1833,7 +1852,10 @@ async def import_data(payload: dict):
     if source_path == data_root:
         raise HTTPException(status_code=400, detail="选择的导入目录与当前数据目录相同，无需导入")
 
-    items_to_copy = ["second_brain.db", "chroma_store", "uploads"]
+    if not (source_path / "vault").exists():
+        raise HTTPException(status_code=400, detail="vault not found in source path")
+
+    items_to_copy = ["second_brain.db", "chroma_store", "vault"]
     import_id = uuid.uuid4().hex
     staging_dir = data_root.parent / f".import-staging-{import_id}"
     backup_dir = data_root.parent / f".import-backup-{import_id}"

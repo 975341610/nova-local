@@ -164,7 +164,7 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (habitLogs.length === 0) return 0;
 
     let streak = 0;
-    let currentDate = new Date();
+    const currentDate = new Date();
 
     // Check if today is completed or yesterday was completed
     const todayStr = format(currentDate, 'yyyy-MM-dd');

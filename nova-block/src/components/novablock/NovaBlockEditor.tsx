@@ -1544,7 +1544,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       if (editor.isDestroyed) return;
       const tr = editor.state.tr.setMeta('lockDragHandle', isBlockMenuOpen);
       editor.view.dispatch(tr);
-    } catch (e) {
+    } catch {
       // Ignore if view is not ready or unmounted
     }
   }, [editor, isBlockMenuOpen]);
@@ -1752,7 +1752,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       // Accessing editor.view throws an error in Tiptap if the view is not mounted yet
       if (editor.isDestroyed) return;
       editorElement = editor.view.dom;
-    } catch (e) {
+    } catch {
       return;
     }
 
