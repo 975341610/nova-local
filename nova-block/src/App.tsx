@@ -79,6 +79,15 @@ export function pickCurrentNoteId(notes: Note[], preferredId?: number | null) {
 
 const LEGACY_MIGRATION_FLAG = 'nova-block-vault-migration-completed'
 
+type VaultChangePayload = {
+  eventType?: string
+  filename?: string | null
+}
+
+const normalizeVaultChangePath = (filename: string | null | undefined) => (
+  filename ? filename.replace(/\//g, '\\').toLowerCase() : ''
+)
+
 function App() {
   const [theme] = useState<'dark' | 'light'>('light')
   const notes = useNoteStore((state) => state.notes)
@@ -297,6 +306,86 @@ function App() {
     return loadedNotes
   }, [hasPendingNoteSave])
 
+  const handleVaultChanged = useCallback(async (payload: VaultChangePayload | VaultChangePayload[]) => {
+    const changes = (Array.isArray(payload) ? payload : [payload]).filter(Boolean)
+    if (changes.length === 0) {
+      return
+    }
+
+    const shouldReloadAll = changes.some(change => (
+      !change.filename ||
+      change.eventType === 'addDir' ||
+      change.eventType === 'unlinkDir'
+    ))
+    if (shouldReloadAll) {
+      await loadNotes(currentNoteId)
+      return
+    }
+
+    const deletedPaths = new Set(
+      changes
+        .filter(change => change.eventType === 'unlink')
+        .map(change => normalizeVaultChangePath(change.filename))
+        .filter(Boolean),
+    )
+    const changedFilenames = changes
+      .filter(change => change.eventType !== 'unlink' && change.filename)
+      .map(change => change.filename as string)
+
+    const changedNotes = changedFilenames.length > 0
+      ? await api.getChangedNotes(changedFilenames)
+      : []
+
+    const previousNotes = useNoteStore.getState().notes
+    const nextNotes = previousNotes
+      .filter(note => !deletedPaths.has(normalizeVaultChangePath(note.file_path)))
+
+    for (const note of changedNotes) {
+      const existingIndex = nextNotes.findIndex(item => (
+        item.id === note.id ||
+        normalizeVaultChangePath(item.file_path) === normalizeVaultChangePath(note.file_path)
+      ))
+      const previous = existingIndex >= 0 ? nextNotes[existingIndex] : undefined
+      const merged = mergeNote(previous, note)
+      if (previous && hasPendingNoteSave(previous.id)) {
+        nextNotes[existingIndex] = {
+          ...merged,
+          title: previous.title,
+          content: previous.content ?? merged.content,
+          is_title_manually_edited: previous.is_title_manually_edited,
+        }
+      } else if (existingIndex >= 0) {
+        nextNotes[existingIndex] = merged
+      } else {
+        nextNotes.push(merged)
+      }
+    }
+
+    setNotes(nextNotes)
+    for (const removed of previousNotes) {
+      if (!nextNotes.some(note => note.id === removed.id)) {
+        searchIndex.removeNote(removed.id)
+      }
+    }
+    for (const note of changedNotes) {
+      if (!note.is_folder) {
+        searchIndex.updateNote({
+          id: note.id,
+          title: note.title,
+          content: buildSearchableText(note),
+          tags: note.tags || [],
+          type: note.type ?? 'note',
+        })
+      }
+    }
+    setCurrentNoteId(prev => {
+      if (prev !== null && nextNotes.some(note => note.id === prev)) {
+        return prev
+      }
+      return pickCurrentNoteId(nextNotes, currentNoteId)
+    })
+  }, [currentNoteId, hasPendingNoteSave, loadNotes, setCurrentNoteId, setNotes])
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -337,8 +426,8 @@ function App() {
       return
     }
 
-    const unsubscribe = window.electron.onVaultChanged(() => {
-      loadNotes(currentNoteId).catch(err => {
+    const unsubscribe = window.electron.onVaultChanged((payload) => {
+      handleVaultChanged(payload).catch(err => {
         console.error('Failed to refresh notes after vault change:', err)
       })
     })
@@ -346,7 +435,7 @@ function App() {
     return () => {
       unsubscribe?.()
     }
-  }, [currentNoteId, loadNotes])
+  }, [handleVaultChanged])
 
   useEffect(() => {
     // @ts-ignore

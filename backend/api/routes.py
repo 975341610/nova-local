@@ -10,7 +10,6 @@ import sys
 import uuid
 import shutil
 import asyncio
-import threading
 import hashlib
 import re
 import time
@@ -70,6 +69,7 @@ from backend.config import get_settings, get_custom_config_path, PROJECT_DIR
 from backend.rag.pipeline import citations_from_results, cosine_similarity, search_knowledge
 from backend.services.ai_client import AIClient
 from backend.services.document_service import chunk_text, parse_document
+from backend.services.note_indexing_queue import NoteIndexingQueue
 from backend.services.template_files import delete_template_file, mirror_template_to_vault
 from backend.services.vault_health import scan_vault_health
 from backend.services.repositories import (
@@ -127,6 +127,7 @@ from backend.services.local_ai import local_ai_manager
 router = APIRouter()
 settings = get_settings()
 ai_client = AIClient()
+note_indexing_queue: NoteIndexingQueue | None = None
 
 import platform
 import psutil
@@ -198,12 +199,13 @@ def should_run_ai_indexing(llm_config: dict[str, str] | None) -> bool:
 
 
 def spawn_note_indexing(*args, **kwargs) -> None:
-    threading.Thread(
-        target=background_index_note_task,
-        args=args,
-        kwargs=kwargs,
-        daemon=True,
-    ).start()
+    global note_indexing_queue
+    if not args:
+        return
+    note_id = int(args[0])
+    if note_indexing_queue is None:
+        note_indexing_queue = NoteIndexingQueue(background_index_note_task)
+    note_indexing_queue.enqueue(note_id, *args[1:], **kwargs)
 
 async def background_index_note_async(
     note_id: int,

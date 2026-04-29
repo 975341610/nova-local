@@ -7,7 +7,8 @@ const ALLOWED_IPC_CHANNELS = new Set([
   'folders:create',
   'notes:update',
   'notes:delete',
-  'desktop:get-auth-token',
+  'notes:changed',
+  'desktop:api-request',
   'desktop:get-backend-base-url',
 ]);
 
@@ -18,7 +19,6 @@ contextBridge.exposeInMainWorld('electron', {
     }
     return ipcRenderer.invoke(channel, payload);
   },
-  getDesktopAuthToken: () => ipcRenderer.invoke('desktop:get-auth-token'),
   getBackendBaseUrl: () => ipcRenderer.invoke('desktop:get-backend-base-url'),
   onVaultChanged: (callback) => {
     const handler = (_event, payload) => callback(payload);

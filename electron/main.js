@@ -1,5 +1,6 @@
 const path = require('node:path');
 const http = require('node:http');
+const https = require('node:https');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
@@ -50,6 +51,15 @@ let backendLastError = null;
 const recentLocalVaultChanges = new Map();
 
 const fsBridge = createFsBridge({ vaultRoot: VAULT_ROOT });
+
+const DESKTOP_API_REQUESTS = new Map([
+  ['config:get-model', { method: 'GET', path: '/model-config' }],
+  ['config:update-model', { method: 'POST', path: '/model-config' }],
+  ['ai:toggle-plugin', { method: 'POST', path: '/ai/toggle-plugin' }],
+  ['ai:update-ollama', { method: 'POST', path: '/ai/update-ollama' }],
+  ['system:open-file', { method: 'POST', path: '/system/open-file' }],
+  ['system:vault-health', { method: 'GET', path: '/system/vault-health' }],
+]);
 
 function normalizeVaultRelativePath(targetPath) {
   return targetPath.replace(/\//g, '\\').toLowerCase();
@@ -375,6 +385,83 @@ function ensureInteger(value, label) {
   return value;
 }
 
+function normalizeDesktopApiRequest(payload) {
+  const input = ensurePlainObject(payload);
+  if (typeof input.channel !== 'string') {
+    throw new Error('channel must be a string');
+  }
+
+  const allowed = DESKTOP_API_REQUESTS.get(input.channel);
+  if (!allowed) {
+    throw new Error(`Desktop API channel not allowed: ${input.channel}`);
+  }
+  if (input.path !== allowed.path) {
+    throw new Error(`Desktop API path not allowed for ${input.channel}`);
+  }
+
+  const options = input.options === undefined ? {} : ensurePlainObject(input.options, 'options');
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== allowed.method) {
+    throw new Error(`Desktop API method not allowed for ${input.channel}`);
+  }
+  if (options.body !== undefined && typeof options.body !== 'string') {
+    throw new Error('body must be a string');
+  }
+
+  return {
+    method,
+    path: allowed.path,
+    body: options.body,
+  };
+}
+
+function requestBackendApi(payload) {
+  const request = normalizeDesktopApiRequest(payload);
+  const targetUrl = new URL(`${BACKEND_API_BASE}${request.path}`);
+  const transport = targetUrl.protocol === 'https:' ? https : http;
+  const body = request.body;
+  const headers = {
+    'x-nova-desktop-token': DESKTOP_LOCAL_TOKEN,
+  };
+
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    headers['Content-Length'] = Buffer.byteLength(body);
+  }
+
+  return new Promise((resolve, reject) => {
+    const req = transport.request(targetUrl, {
+      method: request.method,
+      headers,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(text || `Backend request failed with ${res.statusCode}`));
+          return;
+        }
+        if (!text) {
+          resolve(null);
+          return;
+        }
+        try {
+          resolve(JSON.parse(text));
+        } catch {
+          resolve(text);
+        }
+      });
+    });
+
+    req.on('error', reject);
+    if (body !== undefined) {
+      req.write(body);
+    }
+    req.end();
+  });
+}
+
 function pickNoteWritePayload(payload) {
   const source = ensurePlainObject(payload);
   const allowedKeys = [
@@ -406,7 +493,7 @@ function pickNoteWritePayload(payload) {
 }
 
 function registerIpcHandlers() {
-  ipcMain.handle('desktop:get-auth-token', async () => DESKTOP_LOCAL_TOKEN);
+  ipcMain.handle('desktop:api-request', async (_event, payload) => requestBackendApi(payload));
   ipcMain.handle('desktop:get-backend-base-url', async () => BACKEND_API_BASE);
   ipcMain.handle('notes:list', async (_event, payload = {}) => {
     const input = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
@@ -415,6 +502,10 @@ function registerIpcHandlers() {
   ipcMain.handle('notes:get', async (_event, payload) => {
     const input = ensurePlainObject(payload);
     return fsBridge.getNote(ensureInteger(input.id, 'id'));
+  });
+  ipcMain.handle('notes:changed', async (_event, payload = {}) => {
+    const input = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+    return fsBridge.getNotesByPaths(input.filenames, { includeContent: input.includeContent !== false });
   });
   ipcMain.handle('notes:create', async (_event, payload) => {
     const input = pickNoteWritePayload(payload);

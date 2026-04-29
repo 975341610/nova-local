@@ -97,13 +97,35 @@ describe('api browser fallback', () => {
     })
   })
 
-  it('attaches desktop auth token headers for desktop-only HTTP fallback endpoints', async () => {
-    const ipcInvoke = vi.fn(async (channel: string) => {
-      if (channel === 'desktop:get-auth-token') {
-        return 'desktop-token'
-      }
-      return null
+  it('can request changed vault paths through Electron IPC without a full note reload', async () => {
+    const ipcInvoke = vi.fn().mockResolvedValue([])
+    ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }
+
+    await api.getChangedNotes(['C:/vault/Daily.md'])
+
+    expect(ipcInvoke).toHaveBeenCalledWith('notes:changed', {
+      filenames: ['C:/vault/Daily.md'],
+      includeContent: true,
     })
+  })
+
+  it('routes protected desktop-only actions through Electron IPC without fetch fallback', async () => {
+    const ipcInvoke = vi.fn().mockResolvedValue({ status: 'ok' })
+    ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+
+    await api.updateOllama()
+
+    expect(ipcInvoke).toHaveBeenCalledWith('desktop:api-request', {
+      channel: 'ai:update-ollama',
+      path: '/ai/update-ollama',
+      options: { method: 'POST' },
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does not request or attach desktop auth tokens from the renderer', async () => {
+    const ipcInvoke = vi.fn().mockResolvedValue(null)
     ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }
 
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -115,12 +137,12 @@ describe('api browser fallback', () => {
 
     await api.listMusicLibrary()
 
-    expect(ipcInvoke).toHaveBeenCalledWith('desktop:get-auth-token')
+    expect(ipcInvoke).not.toHaveBeenCalledWith('desktop:get-auth-token')
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8765/api/media/music-library',
       expect.objectContaining({
-        headers: expect.objectContaining({
-          'x-nova-desktop-token': 'desktop-token',
+        headers: expect.not.objectContaining({
+          'x-nova-desktop-token': expect.any(String),
         }),
       }),
     )

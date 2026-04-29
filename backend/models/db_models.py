@@ -115,7 +115,7 @@ def deobfuscate(text: str) -> str:
         if text.startswith(_LOCAL_PREFIX):
             payload = base64.b64decode(text[len(_LOCAL_PREFIX):].encode("utf-8"))
             return _local_decrypt(payload).decode("utf-8")
-        return base64.b64decode(text.encode("utf-8")).decode("utf-8")
+        return text
     except Exception:
         return text
 

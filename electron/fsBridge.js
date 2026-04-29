@@ -1267,6 +1267,38 @@ function createFsBridge(options) {
     return note;
   }
 
+  async function getNotesByPaths(filenames, options = {}) {
+    if (!Array.isArray(filenames)) {
+      return [];
+    }
+
+    const includeContent = options.includeContent !== false;
+    const seen = new Set();
+    const notes = [];
+
+    for (const filename of filenames) {
+      if (typeof filename !== 'string' || !filename.trim()) {
+        continue;
+      }
+
+      const resolvedPath = path.isAbsolute(filename)
+        ? path.resolve(filename)
+        : path.resolve(vaultRoot, filename);
+      const normalizedPath = resolvedPath.toLowerCase();
+      if (seen.has(normalizedPath) || !isPathInsideRoot(vaultRoot, resolvedPath)) {
+        continue;
+      }
+      seen.add(normalizedPath);
+
+      const note = await findNoteInternalByPath(null, resolvedPath, includeContent);
+      if (note) {
+        notes.push(stripInternalFields(rememberNotePath(note)));
+      }
+    }
+
+    return notes;
+  }
+
   function stripInternalFields(note) {
     const { _meta, _path, _notebookName, ...rest } = note;
     return rest;
@@ -1291,7 +1323,7 @@ function createFsBridge(options) {
     return notes.find((item) => item.id === numericId) || null;
   }
 
-  async function findNoteInternalByPath(noteId, notePath) {
+  async function findNoteInternalByPath(noteId, notePath, includeContent = true) {
     if (typeof notePath !== 'string' || !notePath.trim()) {
       return null;
     }
@@ -1333,7 +1365,7 @@ function createFsBridge(options) {
       const stat = await fs.stat(resolvedPath);
       const item = stat.isDirectory()
         ? await parseFolder(resolvedPath, notebook, parentId)
-        : await parseNoteFile(resolvedPath, notebook, parentId, true);
+        : await parseNoteFile(resolvedPath, notebook, parentId, includeContent);
 
       return item;
     } catch (error) {
@@ -1625,6 +1657,7 @@ function createFsBridge(options) {
     listNotebooks,
     listNotes,
     getNote,
+    getNotesByPaths,
     createNote,
     createFolder,
     updateNote,

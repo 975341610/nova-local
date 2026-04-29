@@ -162,7 +162,7 @@ describe('desktop runtime guards', () => {
     expect(sidebarTreeSource).not.toContain('-right-3')
   })
 
-  it('exposes a channel allowlist in preload and registers desktop auth token IPC in main process', () => {
+  it('keeps desktop auth tokens in the main process and exposes only allowlisted IPC', () => {
     const preloadPath = path.resolve(__dirname, '../../../electron/preload.js')
     const mainPath = path.resolve(__dirname, '../../../electron/main.js')
     const preloadSource = fs.readFileSync(preloadPath, 'utf8')
@@ -170,8 +170,30 @@ describe('desktop runtime guards', () => {
 
     expect(preloadSource).toContain('const ALLOWED_IPC_CHANNELS = new Set([')
     expect(preloadSource).toContain('if (!ALLOWED_IPC_CHANNELS.has(channel))')
-    expect(mainSource).toContain("ipcMain.handle('desktop:get-auth-token'")
+    expect(preloadSource).toContain("'desktop:api-request'")
+    expect(preloadSource).not.toContain('getDesktopAuthToken')
+    expect(preloadSource).not.toContain("'desktop:get-auth-token'")
+    expect(mainSource).toContain("ipcMain.handle('desktop:api-request'")
+    expect(mainSource).not.toContain("ipcMain.handle('desktop:get-auth-token'")
     expect(mainSource).toContain("ipcMain.handle('desktop:get-backend-base-url'")
+  })
+
+  it('refreshes vault watcher changes incrementally before falling back to full reloads', () => {
+    const appPath = path.resolve(__dirname, '../App.tsx')
+    const preloadPath = path.resolve(__dirname, '../../../electron/preload.js')
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const fsBridgePath = path.resolve(__dirname, '../../../electron/fsBridge.js')
+    const appSource = fs.readFileSync(appPath, 'utf8')
+    const preloadSource = fs.readFileSync(preloadPath, 'utf8')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+    const fsBridgeSource = fs.readFileSync(fsBridgePath, 'utf8')
+
+    expect(appSource).toContain('const handleVaultChanged = useCallback')
+    expect(appSource).toContain('api.getChangedNotes(changedFilenames)')
+    expect(appSource).toContain('handleVaultChanged(payload)')
+    expect(preloadSource).toContain("'notes:changed'")
+    expect(mainSource).toContain("ipcMain.handle('notes:changed'")
+    expect(fsBridgeSource).toContain('async function getNotesByPaths')
   })
 
   it('redirects legacy file:// API media requests back to the local backend', () => {
@@ -189,5 +211,17 @@ describe('desktop runtime guards', () => {
 
     expect(apiSource).not.toContain('Dummy updateNoteProperty')
     expect(apiSource).toContain("`/notes/${noteId}/properties/${propertyId}`")
+  })
+
+  it('keeps URL normalization and HTML sanitization outside the main API client module', () => {
+    const apiPath = path.resolve(__dirname, '../lib/api.ts')
+    const apiUrlPath = path.resolve(__dirname, '../lib/apiUrl.ts')
+    const apiSource = fs.readFileSync(apiPath, 'utf8')
+    const apiUrlSource = fs.readFileSync(apiUrlPath, 'utf8')
+
+    expect(apiSource).toContain("from './apiUrl'")
+    expect(apiSource).not.toContain("import DOMPurify from 'dompurify'")
+    expect(apiUrlSource).toContain('sanitizeLegacyApiUrlsInHtml')
+    expect(apiUrlSource).toContain('normalizeLegacyApiPath')
   })
 })
