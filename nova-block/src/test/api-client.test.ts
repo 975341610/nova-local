@@ -109,18 +109,27 @@ describe('api browser fallback', () => {
     })
   })
 
-  it('routes protected desktop-only actions through Electron IPC without fetch fallback', async () => {
+  it('routes protected desktop-only actions through dedicated Electron IPC without fetch fallback', async () => {
     const ipcInvoke = vi.fn().mockResolvedValue({ status: 'ok' })
     ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }
     const fetchMock = vi.spyOn(globalThis, 'fetch')
 
     await api.updateOllama()
 
-    expect(ipcInvoke).toHaveBeenCalledWith('desktop:api-request', {
-      channel: 'ai:update-ollama',
-      path: '/ai/update-ollama',
-      options: { method: 'POST' },
-    })
+    expect(ipcInvoke).toHaveBeenCalledWith('ai:update-ollama', {})
+    expect(ipcInvoke).not.toHaveBeenCalledWith('desktop:api-request', expect.anything())
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('opens local files through dedicated Electron IPC without HTTP proxying', async () => {
+    const ipcInvoke = vi.fn().mockResolvedValue({ status: 'ok' })
+    ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+
+    await api.openFile('C:/vault/asset.pdf')
+
+    expect(ipcInvoke).toHaveBeenCalledWith('system:open-file', { path: 'C:/vault/asset.pdf' })
+    expect(ipcInvoke).not.toHaveBeenCalledWith('desktop:api-request', expect.anything())
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

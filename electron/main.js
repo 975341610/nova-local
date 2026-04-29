@@ -4,7 +4,7 @@ const https = require('node:https');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { createFsBridge } = require('./fsBridge');
 const { createVaultWatcher } = require('./vaultWatcher');
 
@@ -56,8 +56,6 @@ const DESKTOP_API_REQUESTS = new Map([
   ['config:get-model', { method: 'GET', path: '/model-config' }],
   ['config:update-model', { method: 'POST', path: '/model-config' }],
   ['ai:toggle-plugin', { method: 'POST', path: '/ai/toggle-plugin' }],
-  ['ai:update-ollama', { method: 'POST', path: '/ai/update-ollama' }],
-  ['system:open-file', { method: 'POST', path: '/system/open-file' }],
   ['system:vault-health', { method: 'GET', path: '/system/vault-health' }],
 ]);
 
@@ -385,6 +383,114 @@ function ensureInteger(value, label) {
   return value;
 }
 
+function isPathInsideRoot(root, targetPath) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedTarget = path.resolve(targetPath);
+  const relative = path.relative(resolvedRoot, resolvedTarget);
+  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function pathFromBackendMediaUrl(rawPath) {
+  if (typeof rawPath !== 'string') {
+    return null;
+  }
+
+  const mediaPrefixes = [
+    { prefix: '/api/media/static/files/', root: path.join(VAULT_ROOT, '_assets') },
+    { prefix: '/api/media/files/', root: path.join(VAULT_ROOT, '_assets') },
+    { prefix: '/api/media/static/music/', root: path.join(DATA_ROOT, 'music') },
+  ];
+
+  try {
+    const parsed = new URL(rawPath, BACKEND_ORIGIN);
+    if (parsed.origin !== BACKEND_ORIGIN && parsed.hostname !== BACKEND_HOST) {
+      return null;
+    }
+    for (const item of mediaPrefixes) {
+      if (parsed.pathname.startsWith(item.prefix)) {
+        const relativePath = decodeURIComponent(parsed.pathname.slice(item.prefix.length));
+        return path.resolve(item.root, relativePath);
+      }
+    }
+  } catch {
+    // Treat non-URL strings as filesystem paths below.
+  }
+
+  for (const item of mediaPrefixes) {
+    if (rawPath.startsWith(item.prefix)) {
+      const relativePath = decodeURIComponent(rawPath.slice(item.prefix.length));
+      return path.resolve(item.root, relativePath);
+    }
+  }
+  return null;
+}
+
+function resolveOpenFilePath(rawPath) {
+  if (typeof rawPath !== 'string' || !rawPath.trim()) {
+    throw new Error('path is required');
+  }
+
+  const fromMediaUrl = pathFromBackendMediaUrl(rawPath.trim());
+  const targetPath = fromMediaUrl || (path.isAbsolute(rawPath)
+    ? path.resolve(rawPath)
+    : path.resolve(path.join(VAULT_ROOT, '_assets'), rawPath));
+
+  const allowedRoots = [
+    VAULT_ROOT,
+    path.join(VAULT_ROOT, '_assets'),
+    path.join(DATA_ROOT, 'music'),
+  ];
+
+  if (!allowedRoots.some((root) => isPathInsideRoot(root, targetPath))) {
+    throw new Error('File path is outside allowed roots');
+  }
+  if (!fs.existsSync(targetPath)) {
+    throw new Error(`File not found: ${targetPath}`);
+  }
+  return targetPath;
+}
+
+async function openLocalFile(payload) {
+  const input = ensurePlainObject(payload);
+  const targetPath = resolveOpenFilePath(input.path);
+  const error = await shell.openPath(targetPath);
+  if (error) {
+    throw new Error(error);
+  }
+  return { status: 'ok' };
+}
+
+function runUpdateOllama() {
+  const scriptPath = path.join(APP_ROOT, 'ensure_ollama.py');
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error('Update script not found');
+  }
+
+  const launcher = resolveBackendLauncher();
+  return new Promise((resolve, reject) => {
+    const child = spawn(launcher.command, [scriptPath, '--force'], {
+      cwd: APP_ROOT,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      const output = Buffer.concat(stdout).toString('utf8');
+      const message = Buffer.concat(stderr).toString('utf8');
+      if (code === 0) {
+        resolve({ status: 'success', output });
+      } else {
+        resolve({ status: 'error', message });
+      }
+    });
+  });
+}
+
 function normalizeDesktopApiRequest(payload) {
   const input = ensurePlainObject(payload);
   if (typeof input.channel !== 'string') {
@@ -495,6 +601,8 @@ function pickNoteWritePayload(payload) {
 function registerIpcHandlers() {
   ipcMain.handle('desktop:api-request', async (_event, payload) => requestBackendApi(payload));
   ipcMain.handle('desktop:get-backend-base-url', async () => BACKEND_API_BASE);
+  ipcMain.handle('system:open-file', async (_event, payload) => openLocalFile(payload));
+  ipcMain.handle('ai:update-ollama', async () => runUpdateOllama());
   ipcMain.handle('notes:list', async (_event, payload = {}) => {
     const input = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
     return fsBridge.listNotes({ includeContent: input.includeContent === true });

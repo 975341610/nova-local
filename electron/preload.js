@@ -8,6 +8,8 @@ const ALLOWED_IPC_CHANNELS = new Set([
   'notes:update',
   'notes:delete',
   'notes:changed',
+  'system:open-file',
+  'ai:update-ollama',
   'desktop:api-request',
   'desktop:get-backend-base-url',
 ]);

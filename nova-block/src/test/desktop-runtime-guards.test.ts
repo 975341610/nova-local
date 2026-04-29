@@ -170,10 +170,16 @@ describe('desktop runtime guards', () => {
 
     expect(preloadSource).toContain('const ALLOWED_IPC_CHANNELS = new Set([')
     expect(preloadSource).toContain('if (!ALLOWED_IPC_CHANNELS.has(channel))')
+    expect(preloadSource).toContain("'system:open-file'")
+    expect(preloadSource).toContain("'ai:update-ollama'")
     expect(preloadSource).toContain("'desktop:api-request'")
     expect(preloadSource).not.toContain('getDesktopAuthToken')
     expect(preloadSource).not.toContain("'desktop:get-auth-token'")
+    expect(mainSource).toContain("ipcMain.handle('system:open-file'")
+    expect(mainSource).toContain("ipcMain.handle('ai:update-ollama'")
     expect(mainSource).toContain("ipcMain.handle('desktop:api-request'")
+    expect(mainSource).not.toContain("['system:open-file', { method: 'POST', path: '/system/open-file' }]")
+    expect(mainSource).not.toContain("['ai:update-ollama', { method: 'POST', path: '/ai/update-ollama' }]")
     expect(mainSource).not.toContain("ipcMain.handle('desktop:get-auth-token'")
     expect(mainSource).toContain("ipcMain.handle('desktop:get-backend-base-url'")
   })
@@ -223,5 +229,31 @@ describe('desktop runtime guards', () => {
     expect(apiSource).not.toContain("import DOMPurify from 'dompurify'")
     expect(apiUrlSource).toContain('sanitizeLegacyApiUrlsInHtml')
     expect(apiUrlSource).toContain('normalizeLegacyApiPath')
+  })
+
+  it('keeps upload hashing and multipart upload flow outside the main API client module', () => {
+    const apiPath = path.resolve(__dirname, '../lib/api.ts')
+    const uploadPath = path.resolve(__dirname, '../lib/apiUpload.ts')
+    const apiSource = fs.readFileSync(apiPath, 'utf8')
+    const uploadSource = fs.readFileSync(uploadPath, 'utf8')
+
+    expect(apiSource).toContain("from './apiUpload'")
+    expect(apiSource).not.toContain('const digestSha256')
+    expect(apiSource).not.toContain('media/upload/chunk')
+    expect(uploadSource).toContain('export const uploadFiles')
+    expect(uploadSource).toContain('export const uploadMusicFile')
+  })
+
+  it('keeps IPC and fetch transport plumbing outside the main API client module', () => {
+    const apiPath = path.resolve(__dirname, '../lib/api.ts')
+    const transportPath = path.resolve(__dirname, '../lib/apiTransport.ts')
+    const apiSource = fs.readFileSync(apiPath, 'utf8')
+    const transportSource = fs.readFileSync(transportPath, 'utf8')
+
+    expect(apiSource).toContain("from './apiTransport'")
+    expect(apiSource).not.toContain('DESKTOP_API_CHANNELS')
+    expect(apiSource).not.toContain('async function invoke')
+    expect(transportSource).toContain('export async function invoke')
+    expect(transportSource).toContain('desktop:api-request')
   })
 })

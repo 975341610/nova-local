@@ -12,6 +12,8 @@ import type {
   VaultHealthReport,
 } from './types';
 import { getApiBase } from './apiUrl';
+import { invoke } from './apiTransport';
+import { uploadFiles, uploadMusicFile } from './apiUpload';
 
 export { formatUrl, getApiBase, sanitizeLegacyApiUrlsInHtml } from './apiUrl';
 
@@ -68,105 +70,6 @@ const pickNoteWritePayload = (payload: Record<string, unknown> = {}): NoteWriteP
     }
   }
   return next
-}
-
-declare global {
-  interface Window {
-    electron?: {
-      ipcInvoke: (channel: string, ...args: any[]) => Promise<any>;
-      getBackendBaseUrl?: () => Promise<string>;
-      onVaultChanged?: (callback: (payload: any) => void) => (() => void);
-      onBeforeAppClose?: (callback: () => void | Promise<void>) => (() => void);
-      finishBeforeAppClose?: () => void;
-    };
-  }
-}
-
-const LOCAL_FIRST_CHANNELS = new Set([
-  'notes:list',
-  'notes:get',
-  'notes:create',
-  'folders:create',
-  'notes:update',
-  'notes:delete',
-  'notes:changed',
-])
-
-const DESKTOP_API_CHANNELS = new Set([
-  'config:get-model',
-  'config:update-model',
-  'ai:toggle-plugin',
-  'ai:update-ollama',
-  'system:open-file',
-  'system:vault-health',
-])
-
-const extractEntityId = (path: string) => {
-  const match = path.match(/\/(\d+)(?:\/|$)/)
-  return match ? parseInt(match[1], 10) : undefined
-}
-
-const supportsWebCrypto = () => typeof crypto !== 'undefined' && !!crypto.subtle
-
-const toHex = (buffer: ArrayBuffer) => (
-  Array.from(new Uint8Array(buffer))
-    .map((value) => value.toString(16).padStart(2, '0'))
-    .join('')
-)
-
-const digestSha256 = async (blob: Blob) => {
-  if (!supportsWebCrypto()) {
-    return null
-  }
-  const bytes = await blob.arrayBuffer()
-  const hash = await crypto.subtle.digest('SHA-256', bytes)
-  return toHex(hash)
-}
-
-// Helper to call IPC or fallback to fetch
-async function invoke<T>(channel: string, path: string, options?: any): Promise<T> {
-  if (window.electron?.ipcInvoke && (LOCAL_FIRST_CHANNELS.has(channel) || DESKTOP_API_CHANNELS.has(channel))) {
-    // 📂 彻底切换到 Electron IPC 进行本地直接 CRUD
-    // 坚决不使用 fetch 向本地 Python 后端发起 HTTP 请求
-    try {
-      if (DESKTOP_API_CHANNELS.has(channel)) {
-        const desktopOptions: { method?: string; body?: string } = {}
-        if (options?.method) desktopOptions.method = options.method
-        if (options?.body !== undefined) desktopOptions.body = options.body
-        return await window.electron.ipcInvoke('desktop:api-request', {
-          channel,
-          path,
-          options: Object.keys(desktopOptions).length > 0 ? desktopOptions : undefined,
-        });
-      }
-
-      const payload = options?.body ? JSON.parse(options.body) : options?.params || options || {};
-      const entityId = extractEntityId(path)
-      if (entityId !== undefined && payload.id === undefined) {
-        payload.id = entityId
-      }
-      return await window.electron.ipcInvoke(channel, payload);
-    } catch (e) {
-      console.error(`IPC call to ${channel} failed:`, e);
-      throw e; // 在 Electron 环境下，IPC 失败就不再回退到 fetch，防止违反离线优先原则
-    }
-  }
-  
-  // Fallback to FastAPI REST API (only if electron is not available, e.g. web preview)
-  const API_BASE = getApiBase();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options?.headers as Record<string, string> || {}),
-  };
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || 'Request failed');
-  }
-  return response.json() as Promise<T>;
 }
 
 export const api = {
@@ -291,78 +194,7 @@ export const api = {
       onChunk(decoder.decode(value, { stream: true }));
     }
   },
-  upload: async (files: File[], noteId?: number | string) => {
-    const API_BASE = getApiBase();
-    const CHUNK_SIZE = 1024 * 256; // 256KB chunks (Strato proxy is extremely strict)
-
-    const results = await Promise.all(files.map(async (file) => {
-      if (file.size <= CHUNK_SIZE) {
-        // Small files, use simple upload
-        const formData = new FormData();
-        formData.append('file', file);
-        if (noteId) formData.append('note_id', noteId.toString());
-        const response = await fetch(`${API_BASE}/media/upload`, { method: 'POST', body: formData });
-        if (!response.ok) throw new Error(await response.text());
-        return response.json();
-      } else {
-        // Large files, use chunked upload
-        const fileSha256 = await digestSha256(file);
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-
-        const initForm = new FormData();
-        initForm.append('filename', file.name);
-        initForm.append('size', file.size.toString());
-        initForm.append('total_chunks', totalChunks.toString());
-        if (fileSha256) initForm.append('file_sha256', fileSha256);
-        if (noteId) initForm.append('note_id', noteId.toString());
-        
-        const initRes = await fetch(`${API_BASE}/media/upload/init`, { method: 'POST', body: initForm });
-        if (!initRes.ok) throw new Error('Failed to init upload');
-        const { upload_id } = await initRes.json();
-
-        let uploadedChunks = new Set<number>();
-        try {
-          const statusRes = await fetch(`${API_BASE}/media/upload/status/${encodeURIComponent(upload_id)}`);
-          if (statusRes.ok) {
-            const status = await statusRes.json();
-            uploadedChunks = new Set(Array.isArray(status.uploaded_chunks) ? status.uploaded_chunks : []);
-          }
-        } catch {
-          // ignore status errors and continue uploading all chunks
-        }
-
-        for (let i = 0; i < totalChunks; i++) {
-          if (uploadedChunks.has(i)) {
-            continue;
-          }
-          const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-          const chunkSha256 = await digestSha256(chunk);
-          const chunkForm = new FormData();
-          chunkForm.append('upload_id', upload_id);
-          chunkForm.append('chunk_index', i.toString());
-          chunkForm.append('file', chunk);
-          if (chunkSha256) chunkForm.append('chunk_sha256', chunkSha256);
-          if (noteId) chunkForm.append('note_id', noteId.toString());
-          
-          const chunkRes = await fetch(`${API_BASE}/media/upload/chunk`, { method: 'POST', body: chunkForm });
-          if (!chunkRes.ok) throw new Error(`Failed to upload chunk ${i}`);
-        }
-
-        const compForm = new FormData();
-        compForm.append('upload_id', upload_id);
-        compForm.append('filename', file.name);
-        compForm.append('content_type', file.type);
-        compForm.append('total_chunks', totalChunks.toString());
-        if (fileSha256) compForm.append('file_sha256', fileSha256);
-        if (noteId) compForm.append('note_id', noteId.toString());
-        
-        const compRes = await fetch(`${API_BASE}/media/upload/complete`, { method: 'POST', body: compForm });
-        if (!compRes.ok) throw new Error('Failed to complete upload');
-        return compRes.json();
-      }
-    }));
-    return results;
-  },
+  upload: uploadFiles,
   getUserStats: async () => {
     const res = await invoke<any>('user:get-stats', '/user/stats');
     if (!res || Array.isArray(res)) return { exp: 0, level: 1, total_captures: 0, current_theme: 'dark' };
@@ -388,15 +220,7 @@ export const api = {
   },
   saveMusicLink: (payload: { title: string; url: string; cover?: string }) =>
     invoke<any>('media:music-link', '/media/music-link', { method: 'POST', body: JSON.stringify(payload) }),
-  uploadMusic: async (file: File, cover?: File) => {
-    const API_BASE = getApiBase();
-    const formData = new FormData();
-    formData.append('file', file);
-    if (cover) formData.append('cover', cover);
-    const response = await fetch(`${API_BASE}/media/music-upload`, { method: 'POST', body: formData });
-    if (!response.ok) throw new Error(await response.text());
-    return response.json();
-  },
+  uploadMusic: uploadMusicFile,
   
   // AI Plugin status and hardware check
   getAIPluginStatus: () => invoke<{ enabled: boolean }>('ai:plugin-status', '/ai/plugin-status'),
