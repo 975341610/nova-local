@@ -11,7 +11,7 @@ Electron is the trusted local shell. It owns:
 - Vault directory watching.
 - Local-only privileged operations.
 
-High-risk operations should move toward Electron IPC, with explicit user confirmation where data can be moved, overwritten, opened, updated, or restarted.
+High-risk operations run through Electron IPC by default, with explicit user confirmation where data can be moved, overwritten, opened, updated, or restarted.
 
 ## Backend Trust
 
@@ -22,7 +22,7 @@ FastAPI owns:
 - Derived index/search services.
 - Compatibility REST APIs.
 
-FastAPI must not silently expose local system actions to normal bearer-token web clients.
+FastAPI must not silently expose local system actions to normal bearer-token web clients. Legacy HTTP access to high-risk local actions is disabled by default and should only be enabled temporarily for compatibility testing.
 
 ## Secret Handling
 
@@ -31,9 +31,11 @@ FastAPI must not silently expose local system actions to normal bearer-token web
 - Empty key updates preserve the existing secret.
 - Stored secrets use OS protection where available and a local encrypted fallback elsewhere.
 
-## Current V4 Guardrails
+## Current Guardrails
 
 - Remote AI TLS verification defaults to on.
-- Destructive `/api/system/*` routes require `x-nova-desktop-token`.
+- Destructive `/api/system/*` and `/api/ai/update-ollama` HTTP routes return `410 Gone` by default.
+- `NOVA_ENABLE_LEGACY_SYSTEM_HTTP=true` restores legacy desktop-token HTTP access for compatibility testing only.
 - `/system/open-file` is restricted to Vault, uploads, and music roots.
+- Renderer code does not receive the desktop token.
 - Electron backend stdout/stderr is captured under `data/logs/` for diagnosis.
