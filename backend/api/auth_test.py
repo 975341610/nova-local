@@ -1,7 +1,15 @@
 from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
-from backend.main import app, get_settings, validate_runtime_security
+from backend.main import (
+    DESKTOP_ONLY_API_PATHS,
+    PROTECTED_API_PATHS,
+    app,
+    get_settings,
+    is_desktop_only_api_path,
+    is_protected_api_path,
+    validate_runtime_security,
+)
 
 client = TestClient(app)
 
@@ -96,3 +104,26 @@ def test_server_mode_requires_access_token():
     finally:
         settings.run_mode = original_mode
         settings.access_token = original_token
+
+
+def test_privileged_api_paths_are_explicitly_classified():
+    assert "/api/system/switch-data-path" in DESKTOP_ONLY_API_PATHS
+    assert "/api/system/update" in DESKTOP_ONLY_API_PATHS
+    assert "/api/system/restart" in DESKTOP_ONLY_API_PATHS
+    assert "/api/system/open-file" in DESKTOP_ONLY_API_PATHS
+    assert "/api/system/import-data" in DESKTOP_ONLY_API_PATHS
+    assert "/api/ai/update-ollama" in DESKTOP_ONLY_API_PATHS
+
+    assert "/api/system/version" not in PROTECTED_API_PATHS
+    assert "/api/model-config" in PROTECTED_API_PATHS
+    assert "/api/ai/toggle" in PROTECTED_API_PATHS
+    assert "/api/ai/toggle-plugin" in PROTECTED_API_PATHS
+
+
+def test_privileged_api_path_helpers_cover_prefix_groups():
+    assert is_desktop_only_api_path("/api/system/open-file")
+    assert is_desktop_only_api_path("/api/ai/update-ollama")
+    assert is_protected_api_path("/api/system/logs")
+    assert is_protected_api_path("/api/system/vault-health")
+    assert is_protected_api_path("/api/ai/toggle-plugin")
+    assert not is_protected_api_path("/api/system/version")

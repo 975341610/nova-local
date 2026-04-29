@@ -63,6 +63,41 @@ def validate_runtime_security() -> None:
         raise RuntimeError("ACCESS_TOKEN must be configured when RUN_MODE=server_mode")
 
 
+DESKTOP_ONLY_API_PATHS = frozenset({
+    f"{settings.api_prefix}/system/switch-data-path",
+    f"{settings.api_prefix}/system/update",
+    f"{settings.api_prefix}/system/restart",
+    f"{settings.api_prefix}/system/open-file",
+    f"{settings.api_prefix}/system/import-data",
+    f"{settings.api_prefix}/ai/update-ollama",
+})
+
+PROTECTED_API_EXEMPT_PATHS = frozenset({
+    f"{settings.api_prefix}/system/version",
+})
+
+PROTECTED_API_PATHS = frozenset({
+    f"{settings.api_prefix}/model-config",
+    f"{settings.api_prefix}/ai/toggle",
+    f"{settings.api_prefix}/ai/toggle-plugin",
+})
+
+
+def is_desktop_only_api_path(path: str) -> bool:
+    return path in DESKTOP_ONLY_API_PATHS
+
+
+def is_protected_api_path(path: str) -> bool:
+    if path in PROTECTED_API_EXEMPT_PATHS:
+        return False
+    return (
+        path in PROTECTED_API_PATHS
+        or path.startswith(f"{settings.api_prefix}/system/")
+        or path.startswith(f"{settings.api_prefix}/ai/toggle")
+        or is_desktop_only_api_path(path)
+    )
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -70,20 +105,8 @@ async def auth_middleware(request: Request, call_next):
     is_loopback = client_host in {"127.0.0.1", "::1", "localhost", "testclient"}
     desktop_token = request.headers.get("x-nova-desktop-token", "")
     is_local_desktop = bool(settings.desktop_local_token) and is_loopback and secrets.compare_digest(desktop_token, settings.desktop_local_token)
-    desktop_only_api = path in {
-        f"{settings.api_prefix}/system/switch-data-path",
-        f"{settings.api_prefix}/system/update",
-        f"{settings.api_prefix}/system/restart",
-        f"{settings.api_prefix}/system/open-file",
-        f"{settings.api_prefix}/system/import-data",
-        f"{settings.api_prefix}/ai/update-ollama",
-    }
-    protected_api = (
-        path == f"{settings.api_prefix}/model-config"
-        or (path.startswith(f"{settings.api_prefix}/system/") and path != f"{settings.api_prefix}/system/version")
-        or path.startswith(f"{settings.api_prefix}/ai/toggle")
-        or path == f"{settings.api_prefix}/ai/update-ollama"
-    )
+    desktop_only_api = is_desktop_only_api_path(path)
+    protected_api = is_protected_api_path(path)
 
     if desktop_only_api and not settings.enable_legacy_system_http:
         return JSONResponse(
