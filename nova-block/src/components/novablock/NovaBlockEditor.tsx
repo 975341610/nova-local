@@ -1,4 +1,4 @@
-﻿import { formatUrl } from "../../lib/api";
+﻿import { formatUrl, api } from "../../lib/api";
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { sanitizeLegacyApiUrlsInHtml } from "../../lib/api";
 import { EditorContent, useEditor, Editor } from '@tiptap/react';
@@ -9,6 +9,7 @@ import { BubbleMenu } from '@tiptap/react/menus';
 import DragHandle from '@tiptap/extension-drag-handle-react';
 import StarterKit from '@tiptap/starter-kit';
 import Dropcursor from '@tiptap/extension-dropcursor';
+import { Focus } from '@tiptap/extensions';
 import Highlight from '@tiptap/extension-highlight';
 import Link from '@tiptap/extension-link';
 import UnderlineExtension from '@tiptap/extension-underline';
@@ -28,19 +29,21 @@ import {
     Link as LinkIcon, Highlighter, Trash2, Copy, Replace, ListPlus, Minus,
     Trash, Columns, Rows, Film, Music, FileText, MonitorPlay, StickyNote as StickyNoteIcon,
     List, ListOrdered, ArrowUpToLine, ArrowDownToLine, CopyPlus, StickyNote, Smile, X,
-    Layout, Bot
+    Layout, Bot, Pencil, MessageSquare, Palette
 } from 'lucide-react';
 
 import pixelMaidUrl from '../../assets/pixel-maid.webp';
 
-import { 
-    AudioNode, CalloutNode, DatabaseTableCell, DatabaseTableHeader, 
+import {
+    AudioNode, CalloutNode, DatabaseTableCell, DatabaseTableHeader,
     EmbedNode, ResizableImage, TaskItem, TaskList, VideoNode, WikiLink,
-    SlashCommands, FileNode, Heading, MathInline, MathBlock, Footnote, 
+    SlashCommands, FileNode, Heading, MathInline, MathBlock, Footnote,
     ColumnGroup, Column, HighlightBlock,
     WashiTape, JournalStamp, Blockquote, CodeBlock, FilePlaceholder, FileUpload,
     CountdownNode, MusicPlayerNode, MiniCalendarNode, KanbanNode, HabitTrackerNode, TodoNode,
-    Emoticon, SliderExtension, NoteLink, TextEffect, AISpellcheck
+    TimelineBlock, TimelineItem,
+    Emoticon, SliderExtension, NoteLink, TextEffect, AISpellcheck, FreehandExtension,
+    TextColorMark, MarginAnchor, ListStyleExtension
    } from '../../lib/tiptapExtensions';
 const AILoadingNode = Node.create({
   name: "aiLoadingPlaceholder",
@@ -427,6 +430,34 @@ const NOVA_BLOCK_SLASH_ITEMS = [
     action: (chain: ChainedCommands) => chain.insertContent({ type: 'slider', attrs: { images: [] } }),
   },
   {
+    label: '画板 · 双击进入全屏编辑',
+    description: '预览+编辑分离:笔记内只做缩略展示,双击进入全屏编辑器(节点/连线/手绘/PlantUML)',
+    group: '插入',
+    icon: <Pencil size={18} />,
+    keywords: ['freehand', 'draw', 'sketch', 'canvas', 'whiteboard', 'flowchart', 'mindmap', 'plantuml', '涂鸦', '手绘', '画板', '流程图', '思维导图', '白板'],
+    action: (chain: ChainedCommands) =>
+      chain.insertContent({
+        type: 'freehand',
+        attrs: {
+          strokes: [],
+          nodes: [
+            {
+              id: Math.random().toString(36).slice(2, 9),
+              x: 60,
+              y: 60,
+              w: 140,
+              h: 64,
+              text: '开始',
+              shape: 'rect',
+            },
+          ],
+          edges: [],
+          width: 720,
+          height: 440,
+        },
+      }),
+  },
+  {
     label: '和纸胶带',
     description: '插入装饰胶带',
     group: '手账装饰',
@@ -490,6 +521,80 @@ const NOVA_BLOCK_SLASH_ITEMS = [
     keywords: ['kanban', 'kb'],
     action: (chain: ChainedCommands) => chain.insertContent({ type: 'kanban' }),
   },
+  // v0.19 D1/D2/D3 扩展
+  {
+    label: '提示 · 墨色纸片',
+    description: '插入一条 Callout · 笔记样',
+    group: '墨境块',
+    icon: <StickyNote size={18} />,
+    keywords: ['callout', '提示', '注意', 'note'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'note' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '在此写下要点…' }] }],
+    }),
+  },
+  {
+    label: '提示 · 信息',
+    description: '蓝色 Info Callout',
+    group: '墨境块',
+    icon: <StickyNote size={18} className="text-blue-500" />,
+    keywords: ['callout', 'info', '信息'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'info' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '信息提示…' }] }],
+    }),
+  },
+  {
+    label: '提示 · 警告',
+    description: '朱砂警告 Callout',
+    group: '墨境块',
+    icon: <StickyNote size={18} className="text-red-500" />,
+    keywords: ['callout', 'warn', '警告', 'danger'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'warn' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '注意：' }] }],
+    }),
+  },
+  {
+    label: '提示 · 引语',
+    description: '古典引语样式',
+    group: '墨境块',
+    icon: <Quote size={18} />,
+    keywords: ['callout', 'quote', '引用'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'quote' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '引一段话…' }] }],
+    }),
+  },
+  {
+    label: '提示 · 思考',
+    description: '思考 Callout · 沉心',
+    group: '墨境块',
+    icon: <Sparkles size={18} />,
+    keywords: ['callout', 'tip', '思考', 'think'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'tip' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '灵光一现…' }] }],
+    }),
+  },
+  {
+    label: '时间线 · Timeline',
+    description: '纵向时间线块 · D3',
+    group: '墨境块',
+    icon: <Timer size={18} />,
+    keywords: ['timeline', '时间', '时间线', '时间轴'],
+    action: (chain: ChainedCommands) => {
+      const today = new Date().toISOString().slice(0, 10)
+      const lastMonth = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10)
+      return chain.insertContent({
+        type: 'timeline',
+        content: [
+          { type: 'timelineItem', attrs: { date: lastMonth }, content: [{ type: 'text', text: '起点' }] },
+          { type: 'timelineItem', attrs: { date: today }, content: [{ type: 'text', text: '现在' }] },
+        ],
+      })
+    },
+  },
 ];
 
 interface NovaBlockEditorProps {
@@ -498,6 +603,9 @@ interface NovaBlockEditorProps {
   onSave: (payload: any) => Promise<Partial<Note> | void>;
   onNotify?: (text: string, tone?: 'success' | 'error' | 'info') => void;
   onSaveAsTemplate?: () => void;
+  onOpenMarginNotes?: () => void;
+  isTypewriterOn?: boolean;
+  onToggleTypewriter?: () => void;
 }
 
 /**
@@ -505,7 +613,8 @@ interface NovaBlockEditorProps {
  * 鏋佽嚧鎬ц兘銆乽ipro 涓撲笟瑙嗚
  */
 export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
-  note, onLiveChange, onSave, onNotify, onSaveAsTemplate
+  note, onLiveChange, onSave, onNotify, onSaveAsTemplate, onOpenMarginNotes,
+  isTypewriterOn = false, onToggleTypewriter,
 }) => {
   const { isAiEnabled } = useAI();
   const [isSaving, setIsSaving] = useState(false);
@@ -520,10 +629,29 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [isStickerMode, setIsStickerMode] = useState(false);
   const [isStickerPanelOpen, setIsStickerPanelOpen] = useState(false);
   const [isEmoticonPanelOpen, setIsEmoticonPanelOpen] = useState(false);
+  // v0.21.1 · BubbleMenu 两个新 popover 的展开状态（合并高亮+取色）
+  const [isTextColorOpen, setIsTextColorOpen] = useState(false);
+  const [isHighlightColorOpen, setIsHighlightColorOpen] = useState(false);
+  const [textColorAnchor, setTextColorAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [highlightColorAnchor, setHighlightColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [backgroundPaper, setBackgroundPaper] = useState<BackgroundPaperType>(note?.background_paper || 'none');
   const [spellcheckError, setSpellcheckError] = useState<{ error: any, rect: any } | null>(null);
   const [editorViewReadyToken, setEditorViewReadyToken] = useState(0);
   const previousStickerModeRef = useRef(false);
+
+  // v0.21.2 · 点击 popover 以外的任何位置都收起色板
+  useEffect(() => {
+    if (!isTextColorOpen && !isHighlightColorOpen) return;
+    const handler = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && t.closest('[data-color-popover]')) return;
+      if (t && t.closest('[data-color-trigger]')) return;
+      setIsTextColorOpen(false);
+      setIsHighlightColorOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isTextColorOpen, isHighlightColorOpen]);
   const blockMenuRef = useRef<HTMLDivElement>(null);
   const emoticonPanelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -638,12 +766,19 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       width: 2,
       class: 'nova-drop-cursor',
     }),
+    Focus.configure({
+      className: 'has-focus',
+      mode: 'shallowest',
+    }),
     Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
     Blockquote,
     CodeBlock,
     Link.configure({ openOnClick: true, autolink: true }),
-    Highlight,
+    Highlight.configure({ multicolor: true }),
     UnderlineExtension,
+    TextColorMark,
+    MarginAnchor,
+    ListStyleExtension,
     TiptapTable.configure({ resizable: true }),
     TableRow,
     DatabaseTableHeader,
@@ -659,6 +794,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     EmbedNode,
     FileNode,
     CalloutNode,
+    TimelineBlock,
+    TimelineItem,
     WikiLink,
     TaskList,
     TaskItem.configure({ nested: true }),
@@ -676,6 +813,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     Emoticon,
     SliderExtension,
     TextEffect,
+    FreehandExtension,
     AISpellcheck.configure({ debounceMs: 800 }),
     NoteLink.configure({ suggestion: getNoteLinkSuggestionConfig() }),
     SlashCommands.configure({ suggestion: getSuggestionConfig(slashItemsRef, isAiEnabled) }),
@@ -969,8 +1107,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       }
 
       try {
-        const { api } = await import('../../lib/api');
-        
+        // v0.21.8 · 直接使用顶层已导入的 api, 不再动态 import
+        //   — 消除 [INEFFECTIVE_DYNAMIC_IMPORT] 告警并让 api 进入同一 chunk.
+
         let streamBuffer = '';
         let isFirstToken = true;
         
@@ -1691,6 +1830,45 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }
   }, [editor, viewMode]);
 
+  // v0.21.3 · 打字机模式：把光标所在块滚到视口纵向中央
+  useEffect(() => {
+    if (!editor || !isTypewriterOn) return;
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) return;
+
+    let frameId = 0;
+    const centerCaret = () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        try {
+          const { view } = editor;
+          if (!view || !view.hasFocus()) return;
+          const { from } = view.state.selection;
+          const coords = view.coordsAtPos(from);
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const viewportCenter = containerRect.top + containerRect.height / 2;
+          const delta = coords.top - viewportCenter;
+          if (Math.abs(delta) < 4) return;
+          scrollContainer.scrollBy({ top: delta, behavior: 'smooth' });
+        } catch {
+          /* noop */
+        }
+      });
+    };
+
+    editor.on('selectionUpdate', centerCaret);
+    editor.on('update', centerCaret);
+    editor.on('focus', centerCaret);
+    centerCaret();
+
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      editor.off('selectionUpdate', centerCaret);
+      editor.off('update', centerCaret);
+      editor.off('focus', centerCaret);
+    };
+  }, [editor, isTypewriterOn]);
+
   useEffect(() => {
     if (previousStickerModeRef.current && !isStickerMode) {
       restoreEditorFocusAfterStickerMode();
@@ -1855,6 +2033,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               lastSavedAt={lastSavedAt}
               showRelations={false}
               showOutline={false}
+              showMarginNotes={false}
+              onToggleMarginNotes={() => onOpenMarginNotes?.()}
+              isTypewriterOn={isTypewriterOn}
+              onToggleTypewriter={onToggleTypewriter}
               viewMode={viewMode}
               isStickerMode={isStickerMode}
               backgroundPaper={backgroundPaper}
@@ -2074,6 +2256,82 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                       </div>
                     </div>
 
+                    {(() => {
+                      // 通过 targetPos 精准判断：支持 NodeSelection 指向 list / listItem / 内部 paragraph
+                      let listKind: 'bulletList' | 'orderedList' | null = null;
+                      try {
+                        if (targetPos !== null && targetPos >= 0) {
+                          const nodeAt = editor.state.doc.nodeAt(targetPos);
+                          if (nodeAt?.type.name === 'bulletList') listKind = 'bulletList';
+                          else if (nodeAt?.type.name === 'orderedList') listKind = 'orderedList';
+                          else {
+                            const $at = editor.state.doc.resolve(targetPos);
+                            for (let d = $at.depth; d >= 0; d -= 1) {
+                              const n = $at.node(d);
+                              if (n.type.name === 'bulletList') { listKind = 'bulletList'; break; }
+                              if (n.type.name === 'orderedList') { listKind = 'orderedList'; break; }
+                            }
+                          }
+                        }
+                      } catch { /* noop */ }
+                      if (!listKind) {
+                        if (editor.isActive('bulletList')) listKind = 'bulletList';
+                        else if (editor.isActive('orderedList')) listKind = 'orderedList';
+                      }
+                      if (!listKind) return null;
+                      return (
+                      <>
+                        <div className="h-px bg-border/20 mx-2" />
+                        <div className="px-2 py-1.5">
+                          <p className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest mb-1.5 px-1">
+                            列表样式
+                          </p>
+                          <div className="grid grid-cols-6 gap-1 px-1">
+                            {(listKind === 'bulletList'
+                              ? [
+                                  { key: 'disc', label: '•', title: '实心圆点 disc' },
+                                  { key: 'circle', label: '◦', title: '空心圆 circle' },
+                                  { key: 'square', label: '▪', title: '方块 square' },
+                                  { key: 'dash', label: '—', title: '短横线 dash' },
+                                  { key: 'arrow', label: '→', title: '箭头 arrow' },
+                                  { key: 'star', label: '★', title: '五角星 star' },
+                                  { key: 'flower', label: '❀', title: '花 flower' },
+                                  { key: 'check', label: '✓', title: '对勾 check' },
+                                ]
+                              : [
+                                  { key: 'decimal', label: '1.', title: '阿拉伯数字' },
+                                  { key: 'lower-alpha', label: 'a.', title: '小写字母' },
+                                  { key: 'upper-alpha', label: 'A.', title: '大写字母' },
+                                  { key: 'lower-roman', label: 'i.', title: '小写罗马' },
+                                  { key: 'upper-roman', label: 'I.', title: '大写罗马' },
+                                  { key: 'cjk-han', label: '一、', title: '汉字' },
+                                ]).map((item) => (
+                              <button
+                                key={item.key}
+                                title={item.title}
+                                onMouseDown={(e) => {
+                                  // 防止 button 获取焦点 + NodeSelection 残留
+                                  e.preventDefault();
+                                }}
+                                onClick={() => {
+                                  const pos = targetPos ?? undefined;
+                                  editor
+                                    .chain()
+                                    .setListStyle(item.key as never, pos)
+                                    .run();
+                                  setIsBlockMenuOpen(false);
+                                }}
+                                className="h-8 flex items-center justify-center text-sm text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-all duration-200"
+                              >
+                                {item.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                      );
+                    })()}
+
                     <div className="h-px bg-border/20 mx-2" />
 
                     <div className="px-2 py-1.5">
@@ -2185,21 +2443,21 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
             {/* 娴姩鑿滃崟 */}
             {editor && (
-              <BubbleMenu 
-                editor={editor} 
+              <BubbleMenu
+                editor={editor}
 
                 shouldShow={({ editor }: { editor: Editor }) => {
                   const { selection } = editor.state;
                   const isNodeSelection = selection instanceof NodeSelection;
-                  
+
                   return (
-                    !isBlockMenuOpen && 
-                    !selection.empty && 
+                    !isBlockMenuOpen &&
+                    !selection.empty &&
                     !isNodeSelection &&
                     !editor.isActive('table')
                   );
                 }}
-                className="flex overflow-hidden rounded-2xl border shadow-soft p-1.5"
+                className="flex rounded-2xl border shadow-soft p-1.5"
                 style={{
                   opacity: 'var(--text-menu-opacity, 0.9)',
                   backdropFilter: 'blur(var(--text-menu-blur, 10px))',
@@ -2270,12 +2528,91 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                     <LinkIcon size={16} />
                   </button>
 
-                  <button 
-                    onClick={() => editor.chain().focus().toggleHighlight({ color: '#ffec3d' }).run()} 
-                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${editor.isActive('highlight') ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
-                    title="高亮"
+                  {/* v0.21.1 · 文字颜色 */}
+                  <button
+                    data-color-trigger="text"
+                    ref={(el) => {
+                      if (el && isTextColorOpen && !textColorAnchor) {
+                        const r = el.getBoundingClientRect();
+                        setTextColorAnchor({ x: r.left + r.width / 2, y: r.bottom + 6 });
+                      }
+                    }}
+                    onMouseDown={(e) => { e.preventDefault(); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const r = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                      setTextColorAnchor({ x: r.left + r.width / 2, y: r.bottom + 6 });
+                      setIsHighlightColorOpen(false);
+                      setIsTextColorOpen((v) => !v);
+                    }}
+                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${editor.isActive('textColor') || isTextColorOpen ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+                    title="文字颜色"
+                  >
+                    <Palette size={16} />
+                  </button>
+
+                  {/* v0.21.1 · 高亮:点击切换默认色,右侧小箭头选色 */}
+                  <button
+                    data-color-trigger="highlight"
+                    onMouseDown={(e) => { e.preventDefault(); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const r = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                      setHighlightColorAnchor({ x: r.left + r.width / 2, y: r.bottom + 6 });
+                      setIsTextColorOpen(false);
+                      setIsHighlightColorOpen((v) => !v);
+                    }}
+                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${editor.isActive('highlight') || isHighlightColorOpen ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+                    title="高亮 (点击选择颜色)"
                   >
                     <Highlighter size={16} />
+                  </button>
+
+                  {/* v0.21.1 · Margin Notes 入口 */}
+                  <button
+                    onMouseDown={(e) => { e.preventDefault(); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      try {
+                        const noteId = note?.id;
+                        if (noteId == null) {
+                          onNotify?.('请先保存笔记再新增批注', 'info');
+                          return;
+                        }
+                        const selText = editor.state.doc.textBetween(
+                          editor.state.selection.from,
+                          editor.state.selection.to,
+                          ' '
+                        ).trim();
+                        if (!selText) {
+                          onNotify?.('请先选中一段文字', 'info');
+                          return;
+                        }
+                        const now = Date.now();
+                        const anchorId = `mn_${now}_${Math.random().toString(36).slice(2, 7)}`;
+                        try {
+                          const key = `nova.margin.${noteId}`;
+                          const raw = localStorage.getItem(key);
+                          const list = raw ? (JSON.parse(raw) as any[]) : [];
+                          const newNote = {
+                            id: anchorId,
+                            excerpt: selText.slice(0, 160),
+                            body: '',
+                            createdAt: now,
+                            updatedAt: now,
+                          };
+                          localStorage.setItem(key, JSON.stringify([newNote, ...list]));
+                        } catch { /* noop */ }
+                        editor.chain().focus().setMarginAnchor(anchorId).run();
+                        onOpenMarginNotes?.();
+                      } catch (err) {
+                        console.error('[MarginNotes] create failed', err);
+                      }
+                    }}
+                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${editor.isActive('marginAnchor') ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+                    title={editor.isActive('marginAnchor') ? '已有批注 · 点击再次打开批注面板' : '为选中文字添加边栏批注'}
+                  >
+                    <MessageSquare size={16} />
                   </button>
 
                   <button 
@@ -2370,6 +2707,102 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               notes={stickyNotes}
               onChange={handleStickyNotesChange}
             />
+
+            {/* v0.21.2 · 文字颜色 / 高亮取色 popover (Portal 至 body,避免被 BubbleMenu 裁切/卸载) */}
+            {(isTextColorOpen || isHighlightColorOpen) && createPortal(
+              <div
+                data-color-popover="true"
+                onMouseDown={(e) => { e.preventDefault(); }}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: 'fixed',
+                  left: (isTextColorOpen ? textColorAnchor?.x : highlightColorAnchor?.x) ?? 0,
+                  top: (isTextColorOpen ? textColorAnchor?.y : highlightColorAnchor?.y) ?? 0,
+                  transform: 'translateX(-50%)',
+                  zIndex: 10000,
+                }}
+                className="rounded-xl border border-border/40 bg-background/98 shadow-xl backdrop-blur-md p-2 flex flex-col gap-1.5"
+              >
+                <div className="text-[10px] text-muted-foreground px-0.5 flex items-center justify-between">
+                  <span>{isTextColorOpen ? '文字颜色' : '高亮颜色'}</span>
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      if (isTextColorOpen) {
+                        editor?.chain().focus().unsetTextColor().run();
+                        setIsTextColorOpen(false);
+                      } else {
+                        editor?.chain().focus().unsetHighlight().run();
+                        setIsHighlightColorOpen(false);
+                      }
+                    }}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    清除
+                  </button>
+                </div>
+                <div className="grid grid-cols-8 gap-1" style={{ width: 196 }}>
+                  {(isTextColorOpen
+                    ? [
+                        { c: '#000000', n: '墨' },
+                        { c: '#d32f2f', n: '朱砂' },
+                        { c: '#e65100', n: '赤金' },
+                        { c: '#f9a825', n: '杏黄' },
+                        { c: '#2e7d32', n: '翠绿' },
+                        { c: '#0288d1', n: '靛青' },
+                        { c: '#6a1b9a', n: '玄紫' },
+                        { c: '#5d4037', n: '褐' },
+                      ]
+                    : [
+                        { c: '#fff59d', n: '淡黄' },
+                        { c: '#ffec3d', n: '柠黄' },
+                        { c: '#ffcdd2', n: '胭脂' },
+                        { c: '#ffab91', n: '橘粉' },
+                        { c: '#c8e6c9', n: '嫩绿' },
+                        { c: '#b3e5fc', n: '浅蓝' },
+                        { c: '#d1c4e9', n: '淡紫' },
+                        { c: '#d7ccc8', n: '米褐' },
+                      ]
+                  ).map(({ c, n }) => (
+                    <button
+                      key={c}
+                      title={n}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        if (isTextColorOpen) {
+                          editor?.chain().focus().setTextColor(c).run();
+                          setIsTextColorOpen(false);
+                        } else {
+                          editor?.chain().focus().toggleHighlight({ color: c }).run();
+                          setIsHighlightColorOpen(false);
+                        }
+                      }}
+                      className="w-5 h-5 rounded-full border border-border/60 hover:scale-110 transition-transform"
+                      style={{ background: c }}
+                    />
+                  ))}
+                </div>
+                <label
+                  className="flex items-center gap-2 pt-1.5 border-t border-border/30 text-[11px] text-muted-foreground cursor-pointer"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  <input
+                    type="color"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (isTextColorOpen) {
+                        editor?.chain().focus().setTextColor(v).run();
+                      } else {
+                        editor?.chain().focus().setHighlight({ color: v }).run();
+                      }
+                    }}
+                    className="w-6 h-6 rounded cursor-pointer"
+                  />
+                  <span>自定义颜色</span>
+                </label>
+              </div>,
+              document.body
+            )}
 
             {/* Global Emoticon Panel (Detached from BubbleMenu) */}
             <AnimatePresence>

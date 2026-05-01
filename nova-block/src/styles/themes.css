@@ -1,0 +1,205 @@
+/**
+ * Nova Theme System v2 — "三境"
+ *
+ * 三种氛围主题（非简单明暗），每种都是一套完整的色彩 + 字体 + 阴影语汇。
+ *
+ * - rice-paper : 宣纸（晴日 · 静） 象牙白 + 朱砂
+ * - ink-midnight : 墨夜（深夜 · 思） 墨青 + 琥珀
+ * - bamboo : 青竹（雨天 · 润） 青灰 + 苔绿
+ *
+ * 通过 <html data-nv-theme="..."> 切换。
+ * 默认主题：rice-paper。
+ */
+
+/* ---------- RICE PAPER (Light · 宣纸) ---------- */
+html[data-nv-theme="rice-paper"],
+html:not([data-nv-theme]) {
+  --nv-color-bg: hsl(38 32% 96%);
+  --nv-color-bg-subtle: hsl(38 24% 92%);
+  --nv-color-bg-strong: hsl(38 20% 88%);
+
+  --nv-color-surface-1: hsla(38 40% 99% / 0.72);
+  --nv-color-surface-2: hsla(38 40% 99% / 0.88);
+  --nv-color-surface-3: hsla(38 40% 99% / 0.98);
+  --nv-color-surface-raised: hsl(38 38% 99%);
+  --nv-color-surface-sunken: hsl(38 20% 94%);
+
+  --nv-color-fg: hsl(222 20% 14%);
+  --nv-color-fg-muted: hsl(222 12% 38%);
+  --nv-color-fg-subtle: hsl(222 10% 55%);
+
+  --nv-color-border: hsla(222 18% 16% / 0.08);
+  --nv-color-border-strong: hsla(222 18% 16% / 0.18);
+
+  --nv-color-accent: hsl(10 68% 52%);
+  --nv-color-accent-hover: hsl(10 70% 46%);
+  --nv-color-accent-muted: hsla(10 68% 52% / 0.12);
+  --nv-color-accent-fg: hsl(10 80% 28%);
+
+  --nv-color-indigo: hsl(222 55% 48%);
+  --nv-color-indigo-muted: hsla(222 55% 48% / 0.12);
+  --nv-color-indigo-fg: hsl(222 70% 28%);
+
+  --nv-color-ochre: hsl(32 78% 48%);
+  --nv-color-ochre-muted: hsla(32 78% 48% / 0.14);
+
+  --nv-glass-bg: hsla(38 40% 99% / 0.62);
+  --nv-glass-border: hsla(222 18% 16% / 0.09);
+  --nv-glass-blur: 22px;
+  --nv-glass-saturation: 180%;
+
+  --nv-reader-bg: hsl(38 36% 95%);
+  --nv-reader-fg: hsl(24 14% 16%);
+
+  --nv-shadow-rest: 0 1px 2px rgba(60, 35, 25, 0.04),
+                    0 0 1px rgba(60, 35, 25, 0.04);
+  --nv-shadow-hover: 0 4px 12px -4px rgba(60, 35, 25, 0.10),
+                     0 1px 3px rgba(60, 35, 25, 0.06);
+  --nv-shadow-float: 0 10px 28px -8px rgba(60, 35, 25, 0.16),
+                     0 2px 6px rgba(60, 35, 25, 0.06);
+  --nv-shadow-lift: 0 24px 60px -16px rgba(60, 35, 25, 0.22),
+                    0 8px 20px -8px rgba(60, 35, 25, 0.08);
+  --nv-shadow-accent: 0 10px 28px -8px rgba(186, 54, 32, 0.24),
+                      0 2px 8px -2px rgba(186, 54, 32, 0.16);
+
+  --nv-font-display: "Source Serif 4", "Source Han Serif SC", Georgia, serif;
+  --nv-font-body: "Inter", "PingFang SC", "HarmonyOS Sans", -apple-system,
+                  BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* ---------- INK MIDNIGHT (Dark · 墨夜) ---------- */
+html[data-nv-theme="ink-midnight"],
+html[data-theme="dark"],
+.dark {
+  --nv-color-bg: hsl(222 28% 9%);
+  --nv-color-bg-subtle: hsl(222 24% 12%);
+  --nv-color-bg-strong: hsl(222 22% 16%);
+
+  --nv-color-surface-1: hsla(222 20% 17% / 0.72);
+  --nv-color-surface-2: hsla(222 20% 19% / 0.86);
+  --nv-color-surface-3: hsla(222 20% 21% / 0.96);
+  --nv-color-surface-raised: hsl(222 20% 16%);
+  --nv-color-surface-sunken: hsl(222 28% 7%);
+
+  --nv-color-fg: hsl(40 20% 94%);
+  --nv-color-fg-muted: hsl(222 14% 68%);
+  --nv-color-fg-subtle: hsl(222 10% 50%);
+
+  --nv-color-border: hsla(40 20% 94% / 0.08);
+  --nv-color-border-strong: hsla(40 20% 94% / 0.18);
+
+  --nv-color-accent: hsl(38 85% 62%);
+  --nv-color-accent-hover: hsl(38 90% 68%);
+  --nv-color-accent-muted: hsla(38 85% 62% / 0.18);
+  --nv-color-accent-fg: hsl(38 100% 84%);
+
+  --nv-color-indigo: hsl(222 70% 68%);
+  --nv-color-indigo-muted: hsla(222 70% 68% / 0.18);
+  --nv-color-indigo-fg: hsl(222 80% 86%);
+
+  --nv-color-ochre: hsl(38 85% 62%);
+  --nv-color-ochre-muted: hsla(38 85% 62% / 0.18);
+
+  --nv-glass-bg: hsla(222 22% 14% / 0.62);
+  --nv-glass-border: hsla(40 20% 94% / 0.08);
+  --nv-glass-blur: 22px;
+  --nv-glass-saturation: 180%;
+
+  --nv-reader-bg: hsl(222 24% 10%);
+  --nv-reader-fg: hsl(40 18% 90%);
+
+  --nv-shadow-rest: 0 1px 2px rgba(0, 0, 0, 0.3),
+                    0 0 1px rgba(0, 0, 0, 0.2);
+  --nv-shadow-hover: 0 4px 12px -4px rgba(0, 0, 0, 0.45),
+                     0 1px 3px rgba(0, 0, 0, 0.3);
+  --nv-shadow-float: 0 10px 28px -8px rgba(0, 0, 0, 0.55),
+                     0 2px 8px rgba(0, 0, 0, 0.4);
+  --nv-shadow-lift: 0 24px 60px -16px rgba(0, 0, 0, 0.6),
+                    0 8px 20px -8px rgba(0, 0, 0, 0.4);
+  --nv-shadow-accent: 0 10px 28px -8px rgba(240, 190, 100, 0.32),
+                      0 2px 8px -2px rgba(240, 190, 100, 0.22);
+
+  --nv-font-display: "Source Serif 4", "Source Han Serif SC", Georgia, serif;
+  --nv-font-body: "Inter", "PingFang SC", "HarmonyOS Sans", -apple-system,
+                  BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* ---------- BAMBOO (Rainy · 青竹) ---------- */
+html[data-nv-theme="bamboo"] {
+  --nv-color-bg: hsl(150 8% 92%);
+  --nv-color-bg-subtle: hsl(150 10% 88%);
+  --nv-color-bg-strong: hsl(150 10% 84%);
+
+  --nv-color-surface-1: hsla(150 15% 97% / 0.72);
+  --nv-color-surface-2: hsla(150 15% 97% / 0.88);
+  --nv-color-surface-3: hsla(150 15% 97% / 0.98);
+  --nv-color-surface-raised: hsl(150 18% 96%);
+  --nv-color-surface-sunken: hsl(150 10% 90%);
+
+  --nv-color-fg: hsl(158 20% 16%);
+  --nv-color-fg-muted: hsl(158 12% 38%);
+  --nv-color-fg-subtle: hsl(158 10% 55%);
+
+  --nv-color-border: hsla(158 18% 16% / 0.10);
+  --nv-color-border-strong: hsla(158 18% 16% / 0.20);
+
+  --nv-color-accent: hsl(158 42% 38%);
+  --nv-color-accent-hover: hsl(158 48% 32%);
+  --nv-color-accent-muted: hsla(158 42% 38% / 0.14);
+  --nv-color-accent-fg: hsl(158 60% 22%);
+
+  --nv-color-indigo: hsl(200 40% 42%);
+  --nv-color-indigo-muted: hsla(200 40% 42% / 0.14);
+  --nv-color-indigo-fg: hsl(200 55% 26%);
+
+  --nv-color-ochre: hsl(32 62% 44%);
+  --nv-color-ochre-muted: hsla(32 62% 44% / 0.14);
+
+  --nv-glass-bg: hsla(150 15% 97% / 0.64);
+  --nv-glass-border: hsla(158 18% 16% / 0.10);
+  --nv-glass-blur: 22px;
+  --nv-glass-saturation: 170%;
+
+  --nv-reader-bg: hsl(150 12% 94%);
+  --nv-reader-fg: hsl(158 20% 18%);
+
+  --nv-shadow-rest: 0 1px 2px rgba(40, 60, 50, 0.05),
+                    0 0 1px rgba(40, 60, 50, 0.05);
+  --nv-shadow-hover: 0 4px 12px -4px rgba(40, 60, 50, 0.12),
+                     0 1px 3px rgba(40, 60, 50, 0.06);
+  --nv-shadow-float: 0 10px 28px -8px rgba(40, 60, 50, 0.18),
+                     0 2px 6px rgba(40, 60, 50, 0.08);
+  --nv-shadow-lift: 0 24px 60px -16px rgba(40, 60, 50, 0.26),
+                    0 8px 20px -8px rgba(40, 60, 50, 0.10);
+  --nv-shadow-accent: 0 10px 28px -8px rgba(50, 120, 88, 0.26),
+                      0 2px 8px -2px rgba(50, 120, 88, 0.16);
+
+  --nv-font-display: "Noto Serif SC", "Source Serif 4", Georgia, serif;
+  --nv-font-body: "Noto Sans SC", "Inter", "PingFang SC", sans-serif;
+}
+
+/* ---------- Page-flip Theme Transition Overlay ---------- */
+.nv-theme-flip-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: var(--nv-color-bg);
+  transform-origin: right center;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+}
+
+/* ---------- Theme-aware body ---------- */
+body {
+  background-color: var(--nv-color-bg);
+  color: var(--nv-color-fg);
+  font-family: var(--nv-font-body);
+  transition: background-color 320ms cubic-bezier(0.32, 0.72, 0, 1),
+              color 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Headings use display face */
+h1, h2, h3, .nv-display {
+  font-family: var(--nv-font-display);
+  letter-spacing: -0.01em;
+}

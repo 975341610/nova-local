@@ -24,7 +24,7 @@ export const StickerPanel: React.FC<StickerPanelProps> = ({ onSelect, onClose })
   const fetchStickers = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${getApiBase()}/stickers/list`);
+      const res = await fetch(`${getApiBase()}/stickers/list`, { cache: 'no-store' });
       const data = await res.json();
       setStickers(data);
     } catch (err) {
@@ -49,6 +49,7 @@ export const StickerPanel: React.FC<StickerPanelProps> = ({ onSelect, onClose })
       
       const res = await fetch(`${getApiBase()}/stickers/upload`, {
         method: 'POST',
+        cache: 'no-store',
         body: formData,
       });
       
@@ -69,6 +70,7 @@ export const StickerPanel: React.FC<StickerPanelProps> = ({ onSelect, onClose })
     try {
       const res = await fetch(`${getApiBase()}/stickers/files/${filename}`, {
         method: 'DELETE',
+        cache: 'no-store',
       });
       if (res.ok) {
         setStickers(prev => prev.filter(s => s.name !== filename));

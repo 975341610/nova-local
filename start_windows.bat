@@ -103,23 +103,19 @@ if not exist "electron\main.js" (
 set "ELECTRON_RUNTIME_DIR=%APP_ROOT%electron\runtime"
 set "ELECTRON_EXE=%ELECTRON_RUNTIME_DIR%\electron.exe"
 
-if not exist "%ELECTRON_EXE%" (
-    if exist "C:\AI\nova\nova-block\node_modules\electron\dist\electron.exe" (
-        echo [*] Copying Electron runtime from C:\AI\nova...
-        if not exist "%ELECTRON_RUNTIME_DIR%" mkdir "%ELECTRON_RUNTIME_DIR%"
-        xcopy /E /I /Y "C:\AI\nova\nova-block\node_modules\electron\dist" "%ELECTRON_RUNTIME_DIR%" >nul
-    ) else if exist "C:\AI\x\node_modules\electron\dist\electron.exe" (
-        echo [*] Copying Electron runtime from C:\AI\x...
-        if not exist "%ELECTRON_RUNTIME_DIR%" mkdir "%ELECTRON_RUNTIME_DIR%"
-        xcopy /E /I /Y "C:\AI\x\node_modules\electron\dist" "%ELECTRON_RUNTIME_DIR%" >nul
-    )
-)
+REM -------- Detect Git LFS pointer / corrupted electron.exe --------
+if exist "%ELECTRON_EXE%" call :check_exe_size
+if not exist "%ELECTRON_EXE%" call :locate_runtime
+if exist "%ELECTRON_EXE%" call :check_exe_size
 
 if not exist "%ELECTRON_EXE%" (
-    echo [!] Electron runtime not found.
-    echo [!] Expected one of:
-    echo     C:\AI\nova\nova-block\node_modules\electron\dist\electron.exe
-    echo     C:\AI\x\node_modules\electron\dist\electron.exe
+    echo [!] Electron runtime not found or invalid.
+    echo [!] Fix it with ONE of the following:
+    echo     1^) cd nova-block ^&^& npm install
+    echo     2^) Run fetch_electron.bat to download official runtime
+    echo     3^) Manually download electron-v36.2.1-win32-x64.zip from
+    echo        https://github.com/electron/electron/releases/tag/v36.2.1
+    echo        and extract INTO %ELECTRON_RUNTIME_DIR%
     pause
     exit /b 1
 )
@@ -129,8 +125,41 @@ pushd "electron"
 call "%ELECTRON_EXE%" .
 set "NOVA_EXIT_CODE=%ERRORLEVEL%"
 popd
-if errorlevel 1 (
-    echo [!] Nova desktop exited with an error.
+if not "%NOVA_EXIT_CODE%"=="0" (
+    echo [!] Nova desktop exited with code %NOVA_EXIT_CODE%.
     pause
     exit /b %NOVA_EXIT_CODE%
 )
+pause
+exit /b 0
+
+:check_exe_size
+for %%F in ("%ELECTRON_EXE%") do set "ELECTRON_SIZE=%%~zF"
+if not defined ELECTRON_SIZE goto :eof
+if %ELECTRON_SIZE% LSS 1048576 (
+    echo [!] electron.exe is only %ELECTRON_SIZE% bytes - treating as Git LFS pointer or corrupted.
+    if exist "%ELECTRON_RUNTIME_DIR%" rd /s /q "%ELECTRON_RUNTIME_DIR%"
+)
+goto :eof
+
+:locate_runtime
+if exist "%APP_ROOT%nova-block\node_modules\electron\dist\electron.exe" (
+    echo [*] Copying Electron runtime from local nova-block\node_modules...
+    if not exist "%ELECTRON_RUNTIME_DIR%" mkdir "%ELECTRON_RUNTIME_DIR%"
+    xcopy /E /I /Y "%APP_ROOT%nova-block\node_modules\electron\dist" "%ELECTRON_RUNTIME_DIR%" >nul
+    goto :eof
+)
+if exist "C:\AI\nova\nova-block\node_modules\electron\dist\electron.exe" (
+    echo [*] Copying Electron runtime from C:\AI\nova...
+    if not exist "%ELECTRON_RUNTIME_DIR%" mkdir "%ELECTRON_RUNTIME_DIR%"
+    xcopy /E /I /Y "C:\AI\nova\nova-block\node_modules\electron\dist" "%ELECTRON_RUNTIME_DIR%" >nul
+    goto :eof
+)
+if exist "C:\AI\x\node_modules\electron\dist\electron.exe" (
+    echo [*] Copying Electron runtime from C:\AI\x...
+    if not exist "%ELECTRON_RUNTIME_DIR%" mkdir "%ELECTRON_RUNTIME_DIR%"
+    xcopy /E /I /Y "C:\AI\x\node_modules\electron\dist" "%ELECTRON_RUNTIME_DIR%" >nul
+    goto :eof
+)
+echo [!] No Electron runtime found in any known location.
+goto :eof

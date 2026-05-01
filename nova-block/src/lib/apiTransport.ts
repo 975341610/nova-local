@@ -71,7 +71,10 @@ export async function invoke<T>(channel: string, path: string, options?: any): P
     'Content-Type': 'application/json',
     ...(options?.headers as Record<string, string> || {}),
   }
+  // v0.21.9 hotfix · 本地后端不需要 HTTP 缓存;
+  // 显式 no-store 避免 Chromium 触发条件请求导致 ERR_CACHE_OPERATION_NOT_SUPPORTED.
   const response = await fetch(`${API_BASE}${path}`, {
+    cache: 'no-store',
     ...options,
     headers,
   })

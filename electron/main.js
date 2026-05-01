@@ -8,6 +8,16 @@ const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { createFsBridge } = require('./fsBridge');
 const { createVaultWatcher } = require('./vaultWatcher');
 
+// v0.21.9 hotfix · 禁掉 Chromium HTTP 磁盘缓存
+// ------------------------------------------------------------
+// 现象: 控制台报 "Failed to load resource: net::ERR_CACHE_OPERATION_NOT_SUPPORTED"
+// 根因: 页面用 file:// 载入, 而 webRequest.onBeforeRequest 会把 file:// 下的
+//       /[drive]:/api/... 重定向到 http://127.0.0.1:8765/api/..., 跨协议重定向
+//       让 disk_cache 在某些请求上返回 OPERATION_NOT_SUPPORTED.
+// 方案: 我们的后端都是本地 127.0.0.1, 不需要 HTTP 缓存; 直接关掉最干净.
+// 必须在 app.whenReady() 之前执行.
+app.commandLine.appendSwitch('disable-http-cache');
+
 const APP_ROOT = path.resolve(__dirname, '..');
 const FRONTEND_INDEX = path.join(APP_ROOT, 'frontend_dist', 'index.html');
 function resolveDataRoot({ appRoot = APP_ROOT, env = process.env } = {}) {
@@ -326,6 +336,11 @@ function createMainWindow() {
       callback({});
     }
   });
+
+  // v0.21.9 hotfix · 清理一次历史磁盘缓存, 避免升级后首屏仍命中旧条目导致 OPERATION_NOT_SUPPORTED
+  mainWindow.webContents.session
+    .clearCache()
+    .catch((err) => console.warn('[cache] clearCache failed:', err?.message || err));
 
   mainWindow.loadFile(FRONTEND_INDEX);
   mainWindow.on('close', (event) => {
