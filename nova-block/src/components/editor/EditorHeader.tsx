@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  BookMarked,
   ChevronRight,
   Circle,
   Copy,
   Eye,
   Grid3X3,
+  History,
+  Keyboard,
   Layers,
   Library,
+  MessageSquare,
   Pen,
   Save,
   Sticker,
@@ -39,6 +41,12 @@ type EditorHeaderProps = {
   viewMode: 'edit' | 'preview'
   isStickerMode: boolean
   backgroundPaper?: BackgroundPaperType
+  /** v0.21.1 · 替代顶部 outline 按钮 */
+  showMarginNotes?: boolean
+  onToggleMarginNotes?: () => void
+  /** v0.21.3 · 打字机模式开关 */
+  isTypewriterOn?: boolean
+  onToggleTypewriter?: () => void
   onSave: () => void
   onUpdateTitle: (newTitle: string, isManual: boolean) => void
   onToggleRelations: () => void
@@ -50,6 +58,8 @@ type EditorHeaderProps = {
   onClearStickers?: () => void
   onSaveAsTemplate?: () => void
   onChangeBackgroundPaper?: (type: BackgroundPaperType) => void
+  /** v0.22.0 · 打开版本历史抽屉 */
+  onOpenHistory?: () => void
 }
 
 const BACKGROUND_OPTIONS: Array<{ type: BackgroundPaperType; title: string; icon: ReactNode }> = [
@@ -69,6 +79,10 @@ export function EditorHeader(props: EditorHeaderProps) {
     viewMode,
     isStickerMode,
     backgroundPaper = 'none',
+    showMarginNotes = false,
+    onToggleMarginNotes,
+    isTypewriterOn = false,
+    onToggleTypewriter,
     onSave,
     onOutlineEnter,
     onOutlineLeave,
@@ -78,6 +92,7 @@ export function EditorHeader(props: EditorHeaderProps) {
     onClearStickers,
     onSaveAsTemplate,
     onChangeBackgroundPaper,
+    onOpenHistory,
   } = props
 
   const [isBackgroundMenuOpen, setIsBackgroundMenuOpen] = useState(false)
@@ -160,6 +175,20 @@ export function EditorHeader(props: EditorHeaderProps) {
               <Eye size={15} strokeWidth={2.5} />
             </button>
           </div>
+
+          <button
+            onClick={onToggleTypewriter}
+            title={isTypewriterOn ? '退出打字机模式 · ⌘T' : '打字机模式 · ⌘T'}
+            aria-label="toggle-typewriter-mode"
+            aria-pressed={isTypewriterOn}
+            className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg border transition-all duration-300 ${
+              isTypewriterOn
+                ? 'border-indigo-500/60 bg-indigo-500/10 text-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
+                : 'border-border/40 bg-accent/30 text-muted-foreground hover:border-border/60 hover:text-foreground'
+            }`}
+          >
+            <Keyboard size={15} strokeWidth={isTypewriterOn ? 2.5 : 2} className={isTypewriterOn ? 'animate-pulse' : ''} />
+          </button>
 
           <div className="relative flex items-center" ref={backgroundMenuRef}>
             <button
@@ -268,15 +297,27 @@ export function EditorHeader(props: EditorHeaderProps) {
             >
               <Save size={16} />
             </button>
+            {onOpenHistory && (
+              <button
+                onClick={onOpenHistory}
+                title="版本历史"
+                aria-label="open-revision-history"
+                className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <History size={16} />
+              </button>
+            )}
             <button
+              onClick={onToggleMarginNotes}
               onMouseEnter={onOutlineEnter}
               onMouseLeave={onOutlineLeave}
-              title="Outline"
+              title="边栏批注 · Margin Notes"
+              aria-label="toggle-margin-notes"
               className={`rounded-lg p-2 transition-colors ${
-                showOutline ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                showMarginNotes || showOutline ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
               }`}
             >
-              <BookMarked size={16} />
+              <MessageSquare size={16} />
             </button>
           </div>
         </div>
