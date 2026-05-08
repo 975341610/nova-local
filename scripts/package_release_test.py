@@ -73,6 +73,15 @@ def test_batch_wrapper_defaults_to_pinned_local_release_key():
     assert "Using bundled local release signing key" in text
 
 
+def test_batch_wrapper_supports_double_click_interactive_mode():
+    text = ASCII_BAT.read_text(encoding="utf-8")
+
+    assert "INTERACTIVE=1" in text
+    assert "set /p VERSION=" in text
+    assert "set /p MODE=" in text
+    assert "pause >nul" in text
+
+
 def test_chinese_batch_wrapper_delegates_to_ascii_entrypoint():
     text = BAT.read_text(encoding="utf-8")
 
