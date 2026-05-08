@@ -70,6 +70,7 @@ const uploadFileToLocal = async (file: File): Promise<string> => {
   formData.append('file', file);
   const response = await fetch('/api/media/upload', {
     method: 'POST',
+    cache: 'no-store',
     body: formData,
   });
   if (!response.ok) throw new Error('Upload failed');

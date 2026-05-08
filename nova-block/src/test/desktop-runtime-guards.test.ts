@@ -264,4 +264,18 @@ describe('desktop runtime guards', () => {
     expect(transportSource).toContain('export async function invoke')
     expect(transportSource).toContain('desktop:api-request')
   })
+
+  it('captures a backend revision snapshot before desktop local note overwrites', () => {
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+    const updateHandlerStart = mainSource.indexOf("ipcMain.handle('notes:update'")
+    const updateHandlerEnd = mainSource.indexOf("ipcMain.handle('notes:delete'", updateHandlerStart)
+    const updateHandler = mainSource.slice(updateHandlerStart, updateHandlerEnd)
+
+    expect(mainSource).toContain('async function captureRevisionSnapshotBeforeLocalUpdate')
+    expect(updateHandler.indexOf('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input)')).toBeGreaterThan(-1)
+    expect(updateHandler.indexOf('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input)')).toBeLessThan(
+      updateHandler.indexOf('fsBridge.updateNote(noteId, input)'),
+    )
+  })
 })

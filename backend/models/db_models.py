@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
@@ -258,3 +258,23 @@ class NoteTemplate(Base):
     category: Mapped[str] = mapped_column(String(50), default="general")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# v0.22.0 · 笔记版本快照
+class NoteRevision(Base):
+    __tablename__ = "note_revisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    note_id: Mapped[int] = mapped_column(
+        ForeignKey("notes.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, index=True
+    )
+    # gzip(content.encode("utf-8"))
+    content_gz: Mapped[bytes] = mapped_column(LargeBinary)
+    content_hash: Mapped[str] = mapped_column(String(40), index=True)
+    title_snapshot: Mapped[str] = mapped_column(String(255), default="")
+    byte_size: Mapped[int] = mapped_column(Integer, default=0)
+    # 手动触发("save","restore-point") vs 自动("auto")
+    source: Mapped[str] = mapped_column(String(16), default="auto")

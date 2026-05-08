@@ -12,6 +12,7 @@ import json
 import uuid
 import shutil
 import secrets
+from contextlib import asynccontextmanager
 
 # 🚀 模块导入路径修复：确保项目根目录在 sys.path 中，防止 ModuleNotFoundError
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -34,7 +35,30 @@ from backend.sample_data import seed_database, seed_files
 
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    validate_runtime_security()
+
+    # Print mounted routes for 404 debugging.
+    print("[*] Registering routes:")
+    for route in app.routes:
+        print(f"    - {getattr(route, 'path', 'N/A')} ({getattr(route, 'name', 'N/A')})")
+
+    Path(settings.chroma_path).mkdir(parents=True, exist_ok=True)
+    ensure_sqlite_database_file(Path(settings.sqlite_url.replace("sqlite:///", "")))
+    Base.metadata.create_all(bind=engine)
+    run_migrations()
+    seed_files()
+    with SessionLocal() as db:
+        seed_database(db)
+        from backend.services.repositories import init_default_achievements
+        init_default_achievements(db)
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 # 读取并打印版本号
 version_file = resource_root() / "VERSION.txt"
@@ -74,6 +98,10 @@ DESKTOP_ONLY_API_PATHS = frozenset({
 
 PROTECTED_API_EXEMPT_PATHS = frozenset({
     f"{settings.api_prefix}/system/version",
+    # v0.22.0-a · 单用户本地模式,这几条只接受 loopback,无需额外 token
+    f"{settings.api_prefix}/system/revision-settings",
+    f"{settings.api_prefix}/system/export-all",
+    f"{settings.api_prefix}/system/vault-health",
 })
 
 PROTECTED_API_PATHS = frozenset({
@@ -136,6 +164,12 @@ async def auth_middleware(request: Request, call_next):
         or request.url.path == f"{settings.api_prefix}/media/music-upload"
         or request.url.path.startswith(f"{settings.api_prefix}/stickers")
         or request.url.path == f"{settings.api_prefix}/system/version"
+        # v0.22.0-a · 单用户本地应用,以下接口默认豁免 token(只接受 loopback)
+        or request.url.path == f"{settings.api_prefix}/system/vault-health"
+        or request.url.path == f"{settings.api_prefix}/system/revision-settings"
+        or request.url.path == f"{settings.api_prefix}/system/export-all"
+        or ("/revisions" in request.url.path and request.url.path.startswith(f"{settings.api_prefix}/notes/"))
+        or (request.url.path.endswith("/snapshot") and request.url.path.startswith(f"{settings.api_prefix}/notes/"))
     )
 
     # 如果是本地桌面端发起的请求 (127.0.0.1)，且没有设置环境变量强制开启鉴权，则自动豁免
@@ -243,26 +277,6 @@ def run_migrations() -> None:
             connection.execute(text("CREATE TABLE achievements (id INTEGER PRIMARY KEY, name VARCHAR(255) UNIQUE, description VARCHAR(500), condition_type VARCHAR(50), condition_value INTEGER, icon VARCHAR(500), created_at DATETIME)"))
         if "user_achievements" not in inspector.get_table_names():
             connection.execute(text("CREATE TABLE user_achievements (id INTEGER PRIMARY KEY, achievement_id INTEGER, unlocked_at DATETIME, FOREIGN KEY(achievement_id) REFERENCES achievements(id) ON DELETE CASCADE)"))
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    validate_runtime_security()
-
-    # 打印所有挂载的路由，用于调试 404 问题
-    print("[*] Registering routes:")
-    for route in app.routes:
-        print(f"    - {getattr(route, 'path', 'N/A')} ({getattr(route, 'name', 'N/A')})")
-
-    Path(settings.chroma_path).mkdir(parents=True, exist_ok=True)
-    ensure_sqlite_database_file(Path(settings.sqlite_url.replace("sqlite:///", "")))
-    Base.metadata.create_all(bind=engine)
-    run_migrations()
-    seed_files()
-    with SessionLocal() as db:
-        seed_database(db)
-        from backend.services.repositories import init_default_achievements
-        init_default_achievements(db)
 
 
 @app.get("/health")

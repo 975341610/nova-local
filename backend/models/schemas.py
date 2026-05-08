@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NotePropertyBase(BaseModel):
@@ -21,11 +21,10 @@ class NotePropertyUpdate(BaseModel):
 
 
 class NotePropertyResponse(NotePropertyBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     note_id: int
-
-    class Config:
-        from_attributes = True
 
 
 class NoteBase(BaseModel):
@@ -78,6 +77,8 @@ class BulkNoteAction(BaseModel):
 
 
 class NoteResponse(NoteBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     summary: str
     tags: list[str]
@@ -91,11 +92,9 @@ class NoteResponse(NoteBase):
     created_at: datetime
     deleted_at: datetime | None = None
 
-    class Config:
-        from_attributes = True
-
-
 class NoteListItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     """笔记列表条目（不包含 content 大字段）"""
 
     id: int
@@ -119,10 +118,6 @@ class NoteListItemResponse(BaseModel):
     is_folder: bool = False
     created_at: datetime
     deleted_at: datetime | None = None
-
-    class Config:
-        from_attributes = True
-
 
 class NoteTreeResponse(NoteResponse):
     children: list["NoteTreeResponse"] = []
@@ -153,11 +148,10 @@ class TaskUpdate(BaseModel):
 
 
 class TaskResponse(TaskBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class SearchRequest(BaseModel):
@@ -232,15 +226,13 @@ class NotebookUpdate(BaseModel):
 
 
 class NotebookResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     icon: str
     created_at: datetime
     deleted_at: datetime | None = None
-
-    class Config:
-        from_attributes = True
-
 
 class TrashResponse(BaseModel):
     notes: list[NoteResponse]
@@ -260,17 +252,17 @@ class QuickCaptureResponse(BaseModel):
 
 
 class UserStatsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     exp: int
     level: int
     total_captures: int
     current_theme: str
     wallpaper_url: Optional[str] = None
 
-    class Config:
-        from_attributes = True
-
-
 class AchievementResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     description: str
@@ -279,19 +271,13 @@ class AchievementResponse(BaseModel):
     icon: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
-
 class UserAchievementResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     achievement_id: int
     unlocked_at: datetime
     achievement: AchievementResponse
-
-    class Config:
-        from_attributes = True
-
 
 class ThemeUpdatePayload(BaseModel):
     theme: str
@@ -319,9 +305,8 @@ class NoteTemplateUpdate(BaseModel):
 
 
 class NoteTemplateResponse(NoteTemplateBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True

@@ -54,6 +54,23 @@ export type Note = {
   background_paper?: BackgroundPaperType;
 };
 
+export type NoteRevision = {
+  id: number;
+  note_id: number;
+  created_at: string | null;
+  content_hash: string;
+  title_snapshot: string;
+  byte_size: number;
+  source: 'auto' | 'save' | 'restore' | 'restore-point' | 'missing' | string;
+  content?: string;
+  missing?: boolean;
+};
+
+export type RevisionSettings = {
+  debounce_seconds: number;
+  max_keep: number;
+};
+
 export type OutlineItem = {
   id: string;
   text: string;

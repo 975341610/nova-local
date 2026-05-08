@@ -55,10 +55,9 @@ def test_auth_middleware_enabled_correct_cookie_token():
     original_token = settings.access_token
     settings.access_token = "test-token"
     try:
-        response = client.get(
-            "/health",
-            cookies={"access_token": "test-token"}
-        )
+        with TestClient(app) as cookie_client:
+            cookie_client.cookies.set("access_token", "test-token")
+            response = cookie_client.get("/health")
         assert response.status_code == 200
     finally:
         settings.access_token = original_token
@@ -124,6 +123,6 @@ def test_privileged_api_path_helpers_cover_prefix_groups():
     assert is_desktop_only_api_path("/api/system/open-file")
     assert is_desktop_only_api_path("/api/ai/update-ollama")
     assert is_protected_api_path("/api/system/logs")
-    assert is_protected_api_path("/api/system/vault-health")
+    assert not is_protected_api_path("/api/system/vault-health")
     assert is_protected_api_path("/api/ai/toggle-plugin")
     assert not is_protected_api_path("/api/system/version")

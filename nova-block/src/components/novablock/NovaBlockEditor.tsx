@@ -631,6 +631,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [isStickerPanelOpen, setIsStickerPanelOpen] = useState(false);
   // v0.22.0 · 版本历史抽屉
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [historyNoteId, setHistoryNoteId] = useState<number | null>(null);
   const [isEmoticonPanelOpen, setIsEmoticonPanelOpen] = useState(false);
   // v0.21.1 · BubbleMenu 两个新 popover 的展开状态（合并高亮+取色）
   const [isTextColorOpen, setIsTextColorOpen] = useState(false);
@@ -2065,7 +2066,16 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               onOpenStickerPanel={() => setIsStickerPanelOpen(true)}
               onClearStickers={() => handleStickersChange([])}
               onSaveAsTemplate={onSaveAsTemplate}
-              onOpenHistory={() => setIsHistoryOpen(true)}
+              onOpenHistory={() => {
+                const stableNoteId =
+                  typeof latestNoteRef.current?.id === 'number'
+                    ? latestNoteRef.current.id
+                    : typeof note?.id === 'number'
+                      ? note.id
+                      : null;
+                setHistoryNoteId(stableNoteId);
+                setIsHistoryOpen(true);
+              }}
               onChangeBackgroundPaper={(type) => {
                 setBackgroundPaper(type);
                 if (latestNoteRef.current) {
@@ -2866,8 +2876,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       {/* v0.22.0 · 版本历史抽屉 */}
       <RevisionHistoryDrawer
         isOpen={isHistoryOpen}
-        noteId={note?.id ?? null}
-        onClose={() => setIsHistoryOpen(false)}
+        noteId={isHistoryOpen ? historyNoteId : null}
+        onClose={() => {
+          setIsHistoryOpen(false);
+          setHistoryNoteId(null);
+        }}
         onRestored={(updated: any) => {
           // 恢复成功后 · 用返回的 note 刷新当前编辑器内容
           if (editor && updated && typeof updated.content === 'string') {
@@ -2941,5 +2954,4 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     </motion.div>
   );
 });
-
 

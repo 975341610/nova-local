@@ -72,6 +72,7 @@ from backend.services.document_service import chunk_text, parse_document
 from backend.services.note_indexing_queue import NoteIndexingQueue
 from backend.services.template_files import delete_template_file, mirror_template_to_vault
 from backend.services.vault_health import scan_vault_health
+from backend.services import revision_service
 from backend.services.repositories import (
     add_exp,
     create_note,
@@ -1159,7 +1160,20 @@ def update_note_api(note_id: int, payload: NoteUpdate, background_tasks: Backgro
         )
     
     note = do_quick_update()
-    
+
+    # v0.22.0 · 旁路打快照(去重+去抖)
+    try:
+        revision_service.maybe_snapshot(
+            db,
+            note_id=note_id,
+            title=title or "",
+            content=content or "",
+            source="auto",
+        )
+    except Exception as snapshot_error:
+        # 快照失败不阻塞主流程
+        print(f"[revision] maybe_snapshot failed for note {note_id}: {snapshot_error}")
+
     # 1.5 更新手动链接
     manual_link_ids = extract_manual_links(content or "")
     # 即使为空也更新，以防用户删除了所有链接
@@ -1232,6 +1246,217 @@ def purge_trash_api(db: Session = Depends(get_db)) -> dict:
     if not purge_trash(db):
         raise HTTPException(status_code=500, detail="Failed to purge trash")
     return {"status": "ok"}
+
+
+# ============================================================
+# 📜 v0.22.0 · 笔记版本快照 (revisions)
+# ============================================================
+
+@router.get("/system/revision-settings")
+def get_revision_settings_api() -> dict:
+    """读取版本快照策略(去抖秒数 / 保留条数)."""
+    return revision_service.get_settings()
+
+
+@router.put("/system/revision-settings")
+def update_revision_settings_api(payload: dict) -> dict:
+    """更新版本快照策略. 参数: {debounce_seconds?: int, max_keep?: int}"""
+    allowed = {k: v for k, v in (payload or {}).items() if k in ("debounce_seconds", "max_keep")}
+    return revision_service.update_settings(allowed)
+
+
+@router.get("/notes/{note_id}/revisions")
+def list_note_revisions_api(note_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """列出某笔记的所有版本快照(元信息),不含正文.
+
+    v0.22.0-a hotfix8 · 笔记不存在(如回滚后竞态/vault 扫描未命中)时返回空列表,
+    不再 404,避免 Chrome DevTools 红字打印且前端显示 raw JSON 错误.
+
+    v0.23.4 hotfix (idle-collapse) · 回退后 vault 扫描瞬间 get_note 可能抖回
+    None, 这里改为: 即使 get_note 找不到笔记, 只要 note_revisions 表还有本
+    note_id 的行, 就把快照列出来, 避免历史抽屉被"扫描抖动"清空.
+    """
+    note_present = get_note(db, note_id) is not None
+    rows = revision_service.list_revisions(db, note_id)
+    if not note_present and not rows:
+        # 笔记真的没了, 且数据库也没快照 → 返回空
+        return []
+    if not note_present:
+        # vault 扫描瞬时抖动: 保留历史, 不让前端以为记录被清了
+        print(
+            f"[revision] list: note {note_id} missing in vault but "
+            f"{len(rows)} revision rows still in DB — serving cached"
+        )
+    return [
+        {
+            "id": r.id,
+            "note_id": r.note_id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "content_hash": r.content_hash,
+            "title_snapshot": r.title_snapshot,
+            "byte_size": r.byte_size,
+            "source": r.source,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/notes/{note_id}/revisions/{revision_id}")
+def get_note_revision_api(note_id: int, revision_id: int, db: Session = Depends(get_db)) -> dict:
+    """获取指定版本的完整内容.
+
+    v0.22.0-a hotfix6 · 版本被 prune 是正常业务流,不再返回 404
+    (会被 Chrome DevTools 红字打印且无法拦截),改为 200 + {"missing": true},
+    由前端静默刷新列表.
+
+    v0.23.4 hotfix (idle-collapse v2) · 回退过程中 vault 扫描可能瞬时返回
+    get_note=None, 旧代码直接 404 → 前端捕获异常后重新拉 list → list 又去
+    拉 detail → 再 404 → 循环刷新. 改成只要 revision 行在 DB 里就返回内容,
+    不再用 vault 状态做 404 门槛.
+    """
+    result = revision_service.get_revision(db, note_id, revision_id)
+    if result is None:
+        # 只有"笔记不存在 且 快照行也不存在"才算真正 missing
+        return {
+            "id": revision_id,
+            "note_id": note_id,
+            "created_at": None,
+            "content_hash": "",
+            "title_snapshot": "",
+            "byte_size": 0,
+            "source": "missing",
+            "content": "",
+            "missing": True,
+        }
+    content, rev = result
+    return {
+        "id": rev.id,
+        "note_id": rev.note_id,
+        "created_at": rev.created_at.isoformat() if rev.created_at else None,
+        "content_hash": rev.content_hash,
+        "title_snapshot": rev.title_snapshot,
+        "byte_size": rev.byte_size,
+        "source": rev.source,
+        "content": content,
+        "missing": False,
+    }
+
+
+@router.post("/notes/{note_id}/revisions/{revision_id}/restore")
+def restore_note_revision_api(note_id: int, revision_id: int, db: Session = Depends(get_db)):
+    """回滚到指定版本:
+      1. 先为当前版本打一条 restore-point 兜底
+      2. 用目标版本内容覆盖 note.content
+
+    v0.22.0-a hotfix7 · 目标版本若已被 prune 删除,返回 200 + {"missing": true},
+    由前端提示"该版本已失效,请刷新列表",避免 Chrome DevTools 红字 404.
+
+    v0.23.4 hotfix (idle-collapse) · 在关键步骤前后打印快照行数, 方便回退后
+    "历史变空"时定位是: (a) DB 真被清了 / (b) vault 扫描抖动 / (c) 前端未触发刷新.
+    """
+    existing = get_note(db, note_id)
+    if not existing:
+        # v0.23.4 idle-collapse v2: vault 扫描瞬时抖动不应阻断 restore.
+        # 只要有任意快照行, 再等 3ms 重试一次; 依旧 None 才真 404
+        from backend.models.db_models import NoteRevision as _NR0
+        if db.query(_NR0).filter(_NR0.note_id == note_id).count() > 0:
+            import time as _time
+            _time.sleep(0.003)
+            existing = get_note(db, note_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Note not found")
+
+    from backend.models.db_models import NoteRevision as _NR
+    rows_before = db.query(_NR).filter(_NR.note_id == note_id).count()
+    print(f"[revision][restore] before: note={note_id} revisions={rows_before}")
+
+    result = revision_service.restore_revision(
+        db,
+        note_id=note_id,
+        revision_id=revision_id,
+        current_title=existing.title or "",
+        current_content=existing.content or "",
+    )
+    if result is None:
+        # 版本已失效(被 prune 或其它会话删除),前端会捕获 missing 并刷新列表
+        return {"missing": True, "detail": "Revision not found"}
+    target_content, _rev = result
+
+    # 覆盖写回
+    from backend.database import with_db_retry
+
+    @with_db_retry(max_retries=3)
+    def do_restore():
+        return update_note(
+            db,
+            note_id,
+            title=existing.title,
+            content=target_content,
+            summary=existing.summary,
+        )
+
+    note = do_restore()
+    if not note:
+        raise HTTPException(status_code=500, detail="Failed to restore revision")
+
+    # 再为"新当前版本"打一条 manual 快照, 方便后续继续版本回溯
+    try:
+        revision_service.maybe_snapshot(
+            db,
+            note_id=note_id,
+            title=note.title or "",
+            content=note.content or "",
+            source="restore",
+        )
+    except Exception as err:
+        print(f"[revision] post-restore snapshot failed for note {note_id}: {err}")
+
+    rows_after = db.query(_NR).filter(_NR.note_id == note_id).count()
+    print(f"[revision][restore] after:  note={note_id} revisions={rows_after}")
+
+    return note_to_response(note)
+
+
+# v0.22.0-a hotfix2 · 独立的快照触发接口
+# 前端在 Electron IPC 保存成功后调用,解决 IPC 绕过 FastAPI 路由导致快照不生成的问题
+@router.post("/notes/{note_id}/snapshot")
+def capture_note_snapshot_api(
+    note_id: int,
+    payload: dict | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """主动触发一次快照(去重+去抖).
+    Body: {"source": "auto" | "save"}  — 默认 auto
+    返回 {"status": "ok", "snapshot_id": int | null}
+    """
+    existing = get_note(db, note_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    source = "auto"
+    if isinstance(payload, dict):
+        raw_source = payload.get("source")
+        if raw_source in ("auto", "save", "manual"):
+            source = "save" if raw_source == "manual" else raw_source
+
+    try:
+        rev = revision_service.maybe_snapshot(
+            db,
+            note_id=note_id,
+            title=existing.title or "",
+            content=existing.content or "",
+            source=source,
+        )
+    except Exception as err:
+        print(f"[revision] snapshot API failed for note {note_id}: {err}")
+        return {"status": "error", "snapshot_id": None, "detail": str(err)}
+
+    return {
+        "status": "ok",
+        "snapshot_id": rev.id if rev else None,
+        "skipped": rev is None,
+    }
+
 
 # ============================================================
 # 🎵 音乐库接口 (整合自 main.py)
@@ -1587,6 +1812,145 @@ async def get_system_logs():
 @router.get("/system/vault-health")
 async def get_vault_health():
     return scan_vault_health(settings.vault_path)
+
+
+# ============================================================
+# 📦 v0.22.0 · 一键导出全部数据 (single-user backup)
+# ============================================================
+
+@router.post("/system/export-all")
+async def export_all_data(payload: dict | None = None):
+    """打包导出 Nova 的全部本地数据为一个 zip 文件.
+
+    包含:
+      - manifest.json         · 元信息(版本, 导出时间, 各区尺寸)
+      - nova.db               · SQLite 主库 (WAL checkpoint 后)
+      - vault/**              · 笔记 markdown 物理文件
+      - music/** stickers/** emoticons/**  · 用户上传的多媒体资源
+      - widgets-kv.json       · 前端 LocalStorage dump (来自调用方)
+
+    请求体 (可选):
+      { "localstorage": { ...前端 localStorage 的键值 JSON... } }
+    """
+    import zipfile
+    import tempfile
+    import json as _json
+    from datetime import datetime as _dt
+
+    localstorage_dump: dict = {}
+    if isinstance(payload, dict):
+        ls = payload.get("localstorage")
+        if isinstance(ls, dict):
+            localstorage_dump = ls
+
+    data_root: Path = settings.data_root
+    db_file = data_root / "second_brain.db"
+
+    # 1. WAL checkpoint + integrity_check
+    integrity = "unknown"
+    checkpoint_ok = False
+    try:
+        with engine.connect() as conn:
+            try:
+                conn.exec_driver_sql("PRAGMA wal_checkpoint(FULL)")
+                checkpoint_ok = True
+            except Exception as e:
+                print(f"[export-all] wal_checkpoint failed: {e}")
+            try:
+                row = conn.exec_driver_sql("PRAGMA integrity_check").fetchone()
+                if row:
+                    integrity = str(row[0])
+            except Exception as e:
+                print(f"[export-all] integrity_check failed: {e}")
+    except Exception as e:
+        print(f"[export-all] sqlite pragma phase failed: {e}")
+
+    # 2. 组装 zip 到临时文件
+    tmp = tempfile.NamedTemporaryFile(prefix="nova-export-", suffix=".zip", delete=False)
+    tmp.close()
+    tmp_path = Path(tmp.name)
+
+    def _add_dir(zf: zipfile.ZipFile, root: Path, arcprefix: str) -> int:
+        if not root.exists() or not root.is_dir():
+            return 0
+        count = 0
+        for p in root.rglob("*"):
+            if p.is_file():
+                try:
+                    zf.write(p, arcname=f"{arcprefix}/{p.relative_to(root).as_posix()}")
+                    count += 1
+                except Exception as e:
+                    print(f"[export-all] skip {p}: {e}")
+        return count
+
+    file_counts: dict[str, int] = {}
+    try:
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+            # manifest 先占位, 最后再写
+            if db_file.exists():
+                zf.write(db_file, arcname="nova.db")
+                file_counts["nova.db"] = 1
+
+            file_counts["vault"] = _add_dir(zf, Path(settings.vault_path), "vault")
+            file_counts["music"] = _add_dir(zf, Path(settings.music_path), "music")
+            file_counts["stickers"] = _add_dir(zf, Path(settings.stickers_path), "stickers")
+            file_counts["emoticons"] = _add_dir(zf, Path(settings.emoticons_path), "emoticons")
+
+            # chroma 向量库可选(体积较大, 但缺失可重建, 这里也一并带上以便完全还原)
+            chroma_dir = Path(settings.chroma_path)
+            file_counts["chroma_store"] = _add_dir(zf, chroma_dir, "chroma_store")
+
+            # LocalStorage dump
+            zf.writestr(
+                "widgets-kv.json",
+                _json.dumps(localstorage_dump, ensure_ascii=False, indent=2),
+            )
+
+            # manifest
+            manifest = {
+                "schema": "nova-export/v1",
+                "exported_at": _dt.utcnow().isoformat() + "Z",
+                "integrity_check": integrity,
+                "wal_checkpoint": checkpoint_ok,
+                "file_counts": file_counts,
+                "data_root": str(data_root),
+            }
+            zf.writestr(
+                "manifest.json",
+                _json.dumps(manifest, ensure_ascii=False, indent=2),
+            )
+    except Exception as e:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"export failed: {e}")
+
+    # 3. 流式返回并在完成后清理临时文件
+    def _iter_and_cleanup():
+        try:
+            with open(tmp_path, "rb") as f:
+                while True:
+                    chunk = f.read(1024 * 512)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    filename = f"nova-export-{_dt.utcnow().strftime('%Y%m%d-%H%M%S')}.zip"
+    return StreamingResponse(
+        _iter_and_cleanup(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Nova-Integrity-Check": integrity,
+        },
+    )
+
 
 @router.post("/system/switch-data-path")
 async def switch_data_path(payload: dict):

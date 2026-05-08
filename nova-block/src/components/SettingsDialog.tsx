@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Settings, BookOpen, Upload, Database, RefreshCw, Zap, Palette, Download, FileJson } from 'lucide-react';
+import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Settings, BookOpen, Upload, Database, RefreshCw, Zap, Palette, Download, FileJson, Save, Package } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAI } from '../contexts/AIContext';
 import { getThemeConfig, saveThemeConfig, exportThemeConfig, validateThemeConfig, applyThemeConfig } from '../lib/themeUtils';
 import type { ThemeConfig, VaultHealthReport } from '../lib/types';
 import { isSpellcheckFeatureEnabled, saveSpellcheckFeatureEnabled } from '../lib/spellcheckSettings';
+import { UpdaterPanel } from './UpdaterPanel';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -28,7 +29,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     base_url: '',
     model_name: '',
   });
-  const [activeTab, setActiveTab] = useState<'ai' | 'dictionary' | 'theme' | 'vault'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'dictionary' | 'theme' | 'vault' | 'updater'>('ai');
   const [isSpellcheckEnabled, setIsSpellcheckEnabled] = useState(isSpellcheckFeatureEnabled());
   
   // Dictionary Import State
@@ -44,6 +45,93 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
   const [vaultHealthLoading, setVaultHealthLoading] = useState(false);
   const [vaultHealthError, setVaultHealthError] = useState<string | null>(null);
 
+  // v0.22.0 · 全量导出
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+
+  // v0.22.0 · 快照策略(去抖秒数 / 最大保留条数)
+  const [revDebounce, setRevDebounce] = useState<number>(120);
+  const [revMaxKeep, setRevMaxKeep] = useState<number>(30);
+  const [revLoading, setRevLoading] = useState(false);
+  const [revSaving, setRevSaving] = useState(false);
+  const [revNotice, setRevNotice] = useState<{ success: boolean; message: string } | null>(null);
+
+  const loadRevisionSettings = async () => {
+    setRevLoading(true);
+    try {
+      const cfg = await api.getRevisionSettings();
+      setRevDebounce(cfg.debounce_seconds);
+      setRevMaxKeep(cfg.max_keep);
+    } catch (err: any) {
+      console.warn('load revision settings failed', err);
+    } finally {
+      setRevLoading(false);
+    }
+  };
+
+  const saveRevisionSettings = async () => {
+    setRevSaving(true);
+    setRevNotice(null);
+    try {
+      const cfg = await api.updateRevisionSettings({
+        debounce_seconds: revDebounce,
+        max_keep: revMaxKeep,
+      });
+      setRevDebounce(cfg.debounce_seconds);
+      setRevMaxKeep(cfg.max_keep);
+      setRevNotice({ success: true, message: `已保存 · 去抖 ${cfg.debounce_seconds}s · 保留 ${cfg.max_keep}+1 条` });
+    } catch (err: any) {
+      setRevNotice({ success: false, message: err?.message || '保存失败' });
+    } finally {
+      setRevSaving(false);
+    }
+  };
+
+  const handleExportAll = async () => {
+    setExporting(true);
+    setExportError(null);
+    setExportSuccess(null);
+    try {
+      // 采集 LocalStorage 里与 Nova 相关的键(nova_ 前缀)
+      const snapshot: Record<string, unknown> = {};
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key) continue;
+          if (!key.startsWith('nova') && !key.startsWith('nv-') && !key.startsWith('whiteboard')) continue;
+          const raw = localStorage.getItem(key);
+          if (raw == null) continue;
+          try {
+            snapshot[key] = JSON.parse(raw);
+          } catch {
+            snapshot[key] = raw;
+          }
+        }
+      } catch (err) {
+        console.warn('[export-all] dump localStorage failed', err);
+      }
+
+      const blob = await api.exportAllData(snapshot);
+      const url = URL.createObjectURL(blob);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `nova-export-${stamp}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const sizeMb = (blob.size / 1024 / 1024).toFixed(2);
+      setExportSuccess(`已生成备份包 · ${sizeMb} MB`);
+    } catch (err: any) {
+      console.error('export-all failed', err);
+      setExportError(err?.message || '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       refreshAiStatus();
@@ -55,6 +143,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       setModelConfigNotice(null);
       setIsSpellcheckEnabled(isSpellcheckFeatureEnabled());
       void loadVaultHealth();
+      void loadRevisionSettings();
     }
   }, [isOpen, refreshAiStatus]);
 
@@ -380,6 +469,15 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
               >
                 <Database size={14} />
                 Vault 体检
+              </button>
+              <button
+                onClick={() => setActiveTab('updater')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-lg transition-all ${
+                  activeTab === 'updater' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Package size={14} />
+                更新
               </button>
             </div>
 
@@ -749,6 +847,115 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                 </div>
               ) : activeTab === 'vault' ? (
                 <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  {/* v0.22.0 · 一键导出全部数据 */}
+                  <div className="rounded-2xl border border-border/30 bg-accent/5 p-4 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <Download className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-sm font-bold">一键导出全部数据</h3>
+                        <p className="text-[10px] text-muted-foreground">
+                          打包 SQLite / vault / 多媒体 / LocalStorage 为 zip,单机备份无需云同步
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleExportAll}
+                        disabled={exporting}
+                        className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold flex items-center gap-2 disabled:opacity-50 hover:opacity-90"
+                      >
+                        {exporting ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Download className="w-3 h-3" />
+                        )}
+                        {exporting ? '打包中…' : '导出全部数据'}
+                      </button>
+                    </div>
+                    {exportError && (
+                      <div className="p-2 rounded-lg border border-rose-500/20 bg-rose-500/10 text-rose-600 text-[11px]">
+                        {exportError}
+                      </div>
+                    )}
+                    {exportSuccess && (
+                      <div className="p-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 text-[11px]">
+                        {exportSuccess}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* v0.22.0 · 快照策略设置 */}
+                  <div className="rounded-2xl border border-border/30 bg-accent/5 p-4 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <RefreshCw className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-sm font-bold">版本快照策略</h3>
+                        <p className="text-[10px] text-muted-foreground">
+                          编辑笔记时自动落一条历史版本,去抖避免过于频繁,保留最近 N 条 + 首版
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                          去抖时长 (秒)
+                        </label>
+                        <input
+                          type="number"
+                          min={10}
+                          max={86400}
+                          step={10}
+                          value={revDebounce}
+                          onChange={(e) => setRevDebounce(Number(e.target.value) || 0)}
+                          disabled={revLoading}
+                          className="w-full px-3 py-2 rounded-xl bg-background border border-border/40 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                        <p className="text-[10px] text-muted-foreground/70">
+                          两次自动快照间隔下限 · 默认 120s
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                          保留条数 (+ 首版)
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={500}
+                          step={1}
+                          value={revMaxKeep}
+                          onChange={(e) => setRevMaxKeep(Number(e.target.value) || 0)}
+                          disabled={revLoading}
+                          className="w-full px-3 py-2 rounded-xl bg-background border border-border/40 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                        <p className="text-[10px] text-muted-foreground/70">
+                          除首版外保留最近 N 条 · 默认 30
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[11px]">
+                        {revNotice && (
+                          <span className={revNotice.success ? 'text-emerald-600' : 'text-rose-500'}>
+                            {revNotice.message}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={saveRevisionSettings}
+                        disabled={revSaving || revLoading}
+                        className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold flex items-center gap-2 disabled:opacity-50 hover:opacity-90"
+                      >
+                        {revSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                        保存策略
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -816,6 +1023,10 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                       </div>
                     )}
                   </div>
+                </div>
+              ) : activeTab === 'updater' ? (
+                <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <UpdaterPanel className="space-y-4" />
                 </div>
               ) : null}
             </div>

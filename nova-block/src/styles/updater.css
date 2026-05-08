@@ -1,0 +1,426 @@
+/*
+ * UpdaterPanel styling — M4 hotfix (v0.23.3 pipeline).
+ *
+ * UpdaterPanel was shipped in v0.23.2 using raw `.updater-*` class names
+ * but no stylesheet was ever added, so Settings → 更新 rendered as plain
+ * unstyled text. This file provides the minimum layout rules.
+ *
+ * Design: follows design-tokens.css (ink-on-paper theme); no Tailwind
+ * utility classes so the file stays self-contained and easy to diff.
+ */
+
+/* ---- top meta strip: 当前版本 + 回滚点 ---- */
+.updater-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--muted) / 0.4);
+}
+
+.updater-header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.updater-header-label {
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+  letter-spacing: 0.02em;
+}
+
+.updater-header strong {
+  font-size: 0.95rem;
+  color: hsl(var(--foreground));
+  font-weight: 600;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ---- tab bar: 检查更新 / 版本管理 / 崩溃报告 ---- */
+.updater-tablist {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  margin-bottom: 1rem;
+  border-radius: 0.5rem;
+  background: hsl(var(--muted) / 0.5);
+}
+
+.updater-tablist > button {
+  flex: 1 1 0;
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.updater-tablist > button:hover {
+  color: hsl(var(--foreground));
+}
+
+.updater-tablist > button[aria-selected='true'] {
+  background: hsl(var(--background));
+  color: hsl(var(--primary));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+}
+
+/* ---- tab panel shell ---- */
+.updater-tabpanel {
+  min-height: 12rem;
+}
+
+/* ---- check-updates tab ---- */
+.updater-check {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ---- v0.23.3 · remote auto-update card ---- */
+.updater-remote {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--muted) / 0.25);
+}
+
+.updater-remote-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.updater-remote-row > button {
+  padding: 0.4rem 0.9rem;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.updater-remote-row > button:hover:not(:disabled) {
+  background: hsl(var(--muted) / 0.6);
+  border-color: hsl(var(--primary) / 0.4);
+}
+
+.updater-remote-row > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.updater-remote-hint {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.8rem;
+}
+
+.updater-remote-error {
+  color: hsl(0 70% 45%);
+}
+
+.updater-remote-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid hsl(var(--primary) / 0.5);
+  border-radius: 0.5rem;
+  background: hsl(var(--primary) / 0.06);
+}
+
+.updater-remote-card strong {
+  font-size: 0.95rem;
+  color: hsl(var(--foreground));
+}
+
+.updater-remote-channel {
+  margin-left: 0.75rem;
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.updater-remote-card > button {
+  align-self: flex-start;
+  padding: 0.45rem 1rem;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+
+.updater-remote-card > button:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.updater-remote-card > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+.updater-check > button {
+  align-self: flex-start;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.updater-check > button:hover:not(:disabled) {
+  background: hsl(var(--muted) / 0.6);
+  border-color: hsl(var(--primary) / 0.4);
+}
+
+.updater-check > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.updater-check > button:last-of-type {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: hsl(var(--primary));
+}
+
+.updater-check > button:last-of-type:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.updater-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+  word-break: break-all;
+  padding: 0.5rem 0.75rem;
+  background: hsl(var(--muted) / 0.4);
+  border-radius: 0.375rem;
+  margin: 0;
+}
+
+.updater-error {
+  color: hsl(0 70% 45%);
+  background: hsl(0 80% 95%);
+  border: 1px solid hsl(0 60% 80%);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.updater-success {
+  color: hsl(140 60% 30%);
+  background: hsl(140 60% 95%);
+  border: 1px solid hsl(140 40% 75%);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+/* ---- manifest preview card ---- */
+.updater-manifest {
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: hsl(var(--card));
+}
+
+.updater-manifest dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.75rem 0;
+}
+
+.updater-manifest dt {
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+  align-self: baseline;
+}
+
+.updater-manifest dd {
+  font-size: 0.875rem;
+  color: hsl(var(--foreground));
+  margin: 0;
+  word-break: break-all;
+}
+
+.updater-release-notes {
+  margin: 0;
+  padding: 0.75rem;
+  background: hsl(var(--muted) / 0.4);
+  border-radius: 0.375rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- manage-versions tab ---- */
+.updater-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.updater-version-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.updater-version-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--card));
+}
+
+.updater-version-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: hsl(var(--foreground));
+  font-feature-settings: 'tnum' 1;
+  min-width: 4.5rem;
+}
+
+.updater-version-installed {
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+  margin-left: auto;
+}
+
+.updater-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+}
+
+.updater-badge-rollback {
+  background: hsl(38 85% 90%);
+  color: hsl(30 70% 35%);
+}
+
+.updater-version-row > button {
+  padding: 0.3rem 0.75rem;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.updater-version-row > button:hover:not(:disabled) {
+  background: hsl(var(--muted) / 0.6);
+}
+
+.updater-version-row > button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---- crash tab ---- */
+.updater-crash,
+.updater-crash-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.updater-crash-empty {
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.875rem;
+}
+
+.updater-crash > ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.updater-crash > ul > li {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.375rem;
+  background: hsl(var(--card));
+  font-size: 0.8rem;
+}
+
+.updater-crash > ul > li > span:first-child {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: hsl(var(--muted-foreground));
+}
+
+.updater-crash > ul > li > span:nth-child(2) {
+  font-weight: 600;
+  color: hsl(var(--primary));
+}
+
+.updater-crash > button {
+  align-self: flex-start;
+  padding: 0.45rem 1rem;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.updater-crash > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

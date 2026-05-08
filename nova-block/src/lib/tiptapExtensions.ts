@@ -24,8 +24,9 @@ import { CodeBlockComponent } from '../components/editor/CodeBlockComponent';
 
 import { SliderExtension } from '../components/novablock/extensions/SliderExtension';
 import { TextEffect } from '../components/novablock/extensions/TextEffect';
+import { FreehandExtension } from '../components/novablock/extensions/FreehandExtension';
 
-export { TaskList, TaskItem, SliderExtension, TextEffect };
+export { TaskList, TaskItem, SliderExtension, TextEffect, FreehandExtension };
 
 // --- Widgets ---
 export { CountdownNode } from './novablock/extensions/CountdownNode';
@@ -34,6 +35,11 @@ export { MiniCalendarNode } from './novablock/extensions/MiniCalendarNode';
 export { KanbanNode } from './novablock/extensions/KanbanNode';
 export { HabitTrackerNode } from './novablock/extensions/HabitTrackerNode';
 export { TodoNode } from './novablock/extensions/TodoNode';
+export { TimelineBlock, TimelineItem } from './novablock/extensions/TimelineNode';
+export { TextColorMark } from './novablock/extensions/TextColorMark';
+export { MarginAnchor } from './novablock/extensions/MarginAnchor';
+export { ListStyleExtension } from './novablock/extensions/ListStyle';
+export type { BulletListStyle, OrderedListStyle, ListStyle } from './novablock/extensions/ListStyle';
 export { Emoticon } from '../components/novablock/extensions/Emoticon';
 export { NoteLink } from '../components/novablock/extensions/NoteLink';
 export { AISpellcheck, spellcheckPluginKey } from '../components/novablock/extensions/AISpellcheck';
@@ -847,6 +853,7 @@ async function handleFilesUpload(view: any, files: File[], pos: number) {
       
       const response = await fetch(`${API_BASE}/media/upload`, {
         method: 'POST',
+        cache: 'no-store',
         body: formData,
       });
 
@@ -916,15 +923,41 @@ export const CalloutNode = Node.create({
   content: 'block+',
   defining: true,
 
+  addAttributes() {
+    return {
+      tone: {
+        default: 'note',
+        parseHTML: el => (el as HTMLElement).getAttribute('data-tone') || 'note',
+        renderHTML: attrs => ({ 'data-tone': attrs.tone }),
+      },
+    }
+  },
+
   parseHTML() {
-    return [{ tag: 'div[data-callout]' }];
+    return [{
+      tag: 'div[data-callout]',
+      // v0.21.1 · 修复切换笔记时图标 "墨/i/!/…" 被当作正文内容反复追加
+      contentElement: (node) => {
+        const el = (node as HTMLElement).querySelector('.callout-content')
+        return (el as HTMLElement) ?? (node as HTMLElement)
+      },
+    }];
   },
 
   renderHTML({ HTMLAttributes }) {
+    const tone = (HTMLAttributes as any)['data-tone'] || 'note';
+    const iconMap: Record<string, string> = {
+      note: '墨',
+      info: 'i',
+      warn: '!',
+      quote: '"',
+      tip: '思',
+    };
+    const icon = iconMap[tone] ?? '墨';
     return [
-      'div', 
-      mergeAttributes(HTMLAttributes, { 'data-callout': 'true', class: 'callout-block' }), 
-      ['span', { class: 'callout-icon', contenteditable: 'false' }, '💡'],
+      'div',
+      mergeAttributes(HTMLAttributes, { 'data-callout': 'true', class: 'callout-block' }),
+      ['span', { class: 'callout-icon', contenteditable: 'false' }, icon],
       ['div', { class: 'callout-content' }, 0]
     ];
   },

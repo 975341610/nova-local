@@ -495,12 +495,8 @@ textarea {
   color: #4b5563;
 }
 
-.callout-block {
-  border-left: 4px solid #f59e0b;
-  background: #fef3c7;
-  border-radius: 0 1rem 1rem 0;
-  padding: 0.9rem 1rem;
-}
+/* .callout-block 的视觉由 styles/v019.css 统一定义，此处不再覆盖，
+ * 避免编辑模式下 padding/border 错乱、图标遮挡正文。 */
 
 .tiptap-editor img,
 .tiptap-preview img,
@@ -1093,7 +1089,7 @@ input {
 .novablock-editor {
   line-height: 1.8;
   letter-spacing: -0.01em;
-  color: #1a1a1a;
+  color: var(--nv-color-fg, #1a1a1a);
   padding-bottom: 30vh !important;
 }
 
@@ -1108,7 +1104,7 @@ input {
   letter-spacing: -0.03em;
   margin-top: 2.5rem;
   margin-bottom: 1.25rem;
-  color: #000;
+  color: var(--nv-color-fg, #000);
   line-height: 1.2;
 }
 
@@ -1118,7 +1114,7 @@ input {
   letter-spacing: -0.02em;
   margin-top: 2rem;
   margin-bottom: 0.75rem;
-  color: #111;
+  color: var(--nv-color-fg, #111);
 }
 
 .novablock-editor h3 {
@@ -1126,7 +1122,7 @@ input {
   font-weight: 600;
   margin-top: 1.5rem;
   margin-bottom: 0.5rem;
-  color: #222;
+  color: var(--nv-color-fg, #222);
 }
 
 /* uipro Block Handle */
@@ -1323,3 +1319,20 @@ input {
   stroke-width: 24px;
   cursor: pointer;
 }
+
+/* v0.21.1 · Margin Anchor 轻微视觉提示 */
+.nv-margin-anchor {
+  background: linear-gradient(transparent 60%, rgba(250, 204, 21, 0.18) 60%);
+  border-bottom: 1px dashed rgba(234, 88, 12, 0.55);
+  padding-bottom: 1px;
+  cursor: help;
+  transition: background 160ms ease;
+}
+.nv-margin-anchor:hover {
+  background: linear-gradient(transparent 55%, rgba(250, 204, 21, 0.32) 55%);
+}
+[data-theme="dark"] .nv-margin-anchor {
+  background: linear-gradient(transparent 60%, rgba(250, 204, 21, 0.14) 60%);
+  border-bottom-color: rgba(251, 146, 60, 0.7);
+}
+

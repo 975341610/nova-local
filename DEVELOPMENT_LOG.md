@@ -1,5 +1,50 @@
 # Development Log
 
+## [2026-04-29] - v0.17.0 M1 视觉底座 + M2 核心体验升级 [已解决]
+
+### 1. 视觉统一 — Design Token 体系 [x]
+- **Design Token 层**: 新增 `nova-block/src/styles/design-tokens.css`，引入 `--nv-*` 统一设计变量（颜色 / 圆角 / 阴影 / 动效 / 间距 / 字体），覆盖浅色与深色主题，所有本次新增组件强制引用，解决此前 hex / 独立 CSS 变量散落在各组件的"视觉拼贴"问题。
+- **玻璃态工具类**: `.nv-glass` / `.nv-glass-sm` 统一所有浮层的毛玻璃、阴影、边框与圆角，取代以往各自为政的菜单/弹窗样式。
+- **主题切换**: `html/body` 加入 `--nv-motion-slow` 曲线平滑过渡；`QuickActionsBar` 提供一键浅/深色切换并持久化到 `localStorage`，同时同步 `data-theme` 与 `.dark` 两种主题钩子。
+- **无障碍**: 通过 `@media (prefers-reduced-motion: reduce)` 统一降级动效，`<kbd>` / `.nv-kbd` 统一键盘按键标签样式。
+
+### 2. Command Palette 2.0 [x]
+- **重构 `nova-block/src/components/search/CommandPalette.tsx`**: 从纯笔记跳转升级为"命令面板 + 笔记搜索"混合式面板。
+- **新 `PaletteAction` 类型**: `{id, label, hint?, keywords?, icon?, section?, run()}`；支持按 label / hint / keywords 模糊匹配。
+- **内置命令**: 新建笔记 / 新建画布 / 打开今天的 Daily Note / 打开日历 / 打开 Graph View / 切换阅读模式 / 打开设置。
+- **交互**: ↑↓ 选择、Enter 执行、Esc 关闭；沿用并兼容原有笔记正文 hydration 链路 (`getNotesMissingContent`)；面板整体采用 `.nv-glass` 玻璃态。
+
+### 3. Graph View 图谱视图 [x]
+- **新增 `nova-block/src/components/graph/GraphView.tsx`**: 零第三方依赖的 Canvas 2D 力导向双向链接图，手写 Coulomb 斥力 + 弹簧引力 + 中心重力 + 冷却衰减 `alpha = max(0.05, exp(-tick/180))`，500 节点内平滑。
+- **交互**: 拖拽节点、滚轮以鼠标为中心缩放、空白拖动平移、点击节点跳转到对应笔记；节点半径随度数 (degree) 变化，当前笔记以强调色高亮。
+- **快捷键**: `⌘⇧G` / `Ctrl+Shift+G` 打开。
+
+### 4. Daily Notes 日历 [x]
+- **新增 `nova-block/src/components/daily/DailyNotesPanel.tsx`**: 月视图日历 + 侧栏当月 Daily 列表，支持上月 / 下月 / 跳回今天。
+- **新增 `nova-block/src/lib/dailyNotes.ts`**: `formatDailyTitle` (`YYYY-MM-DD`)、`parseDailyTitle`、`getDailyNoteForDate`、`buildDailyNoteContent` 模板（今日目标 / 日志 / 关联笔记 / 灵感）。
+- **自动创建**: 点击不存在的日期会以模板内容创建新笔记并自动打上 `daily` 标签，纳入全文索引。
+- **快捷键**: `⌘⇧D` / `Ctrl+Shift+D` 打开。
+
+### 5. Reader Mode 阅读模式 [x]
+- **新增 `nova-block/src/components/reader/ReaderMode.tsx` + `nova-block/src/styles/reader-mode.css`**: 沉浸式阅读当前笔记，米色阅读底、衬线排版、72ch 窄栏、1.85 行距。
+- **浮动工具条**: 字号 `[` / `]` 五档 (`[0.92, 1, 1.08, 1.18, 1.3]`)、`T` 切换衬线/无衬线、`Esc` 退出。
+- **新增 `nova-block/src/lib/readerContent.ts`**: 自动识别 Tiptap HTML 与轻量 Markdown 混合内容；Canvas JSON 笔记显示跳转提示；统一通过 DOMPurify 过滤 XSS。
+- **快捷键**: `⌘⇧R` / `Ctrl+Shift+R` 切换。
+
+### 6. QuickActionsBar 悬浮工具条 [x]
+- **新增 `nova-block/src/components/widgets/QuickActionsBar.tsx`**: 主编辑区右上角悬浮玻璃态工具条，一键进入 Daily / Graph / Reader / 浅深色切换；Reader 模式下通过 `.nv-hide-in-reader` 自动隐藏。
+
+### 7. App 层接线 [x]
+- **修改 `nova-block/src/App.tsx`**: 新增 `isReaderOpen / isGraphOpen / isDailyOpen` 状态；新增全局快捷键监听 (`⌘K` / `⌘⇧R` / `⌘⇧G` / `⌘⇧D`)；新增 `paletteActions` memo（7 条）；新增 `handleCreateDailyNote` 回调（调用 `api.createNote` 并自动打 `daily` 标签）。
+- **修改 `nova-block/src/index.css`**: 顶部引入 `./styles/design-tokens.css` 与 `./styles/reader-mode.css` 样式层。
+
+### 8. 质量与验证 [x]
+- **Typecheck**: `cd nova-block && npx tsc --noEmit` 本地通过（exit 0）。
+- **可访问性**: 所有新组件均提供 Prop 校验、键盘可达、`prefers-reduced-motion` 降级。
+- **构建说明**: 沙箱环境下 `npx vite build` 因 Rolldown 线程池资源受限而报 `ThreadPoolBuildError`，非代码问题；已通过 tsc 验证类型正确。建议在本机再执行一次完整构建。
+
+---
+
 ## [2026-04-22] - Windows EPERM 彻底修复（Canvas 保存串行化 + rename 协同） [已解决]
 
 ### 1. 根因对齐与修复决策 [x]

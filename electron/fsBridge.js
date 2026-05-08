@@ -471,6 +471,30 @@ function splitFrontmatter(raw) {
   };
 }
 
+// v0.22.0-a hotfix10 · 更宽松的 body 内嵌 frontmatter 剥离.
+// hotfix9 的旧实现只认 "---\n<yaml>\n---\n" (纯 LF), Windows 上 fs.readFile
+// 读回的是 CRLF, 也可能是 YAML 序列化后把 frontmatter 压到单行 / 末尾无换行,
+// 导致 stripEmbeddedFrontmatter 静默失效, 污染一路穿过到 Reader / 编辑器.
+// 这里先规范化换行, 再用正则匹配任意空白 + --- 开头的 YAML 段, 循环最多 5 次.
+function stripEmbeddedFrontmatter(content) {
+  if (!content || typeof content !== 'string') {
+    return content || '';
+  }
+  let body = content;
+  if (body.indexOf('\r') !== -1) {
+    body = body.replace(/\r\n?/g, '\n');
+  }
+  const pattern = /^---[ \t]*\n[\s\S]*?\n---[ \t]*(?:\n|$)/;
+  for (let i = 0; i < 5; i += 1) {
+    const stripped = body.replace(/^\s+/, '');
+    if (!stripped.startsWith('---')) break;
+    const match = pattern.exec(stripped);
+    if (!match) break;
+    body = stripped.slice(match[0].length);
+  }
+  return body.replace(/^\n+/, '');
+}
+
 function serializeFrontmatter(meta, body) {
   return `---\n${stringifyYamlLike(meta).trimEnd()}\n---\n\n${body || ''}`;
 }
@@ -1119,7 +1143,9 @@ function createFsBridge(options) {
   async function parseNoteFile(notePath, notebook, parentId, includeContent) {
     const raw = await fs.readFile(notePath, 'utf8');
     const { meta, body } = splitFrontmatter(raw);
-    const sanitizedBody = sanitizeLegacyApiUrlsInHtml(body);
+    // hotfix9: 防御性剥掉 body 内嵌的 frontmatter (历史污染 / 版本回滚遗留)
+    const cleanBody = stripEmbeddedFrontmatter(body);
+    const sanitizedBody = sanitizeLegacyApiUrlsInHtml(cleanBody);
     const noteId = Number(meta.id || (await nextNoteId()));
     const content = includeContent ? sanitizedBody : undefined;
     const noteType = looksLikeCanvasContent(sanitizedBody) ? 'canvas' : String(meta.type || 'note');
@@ -1420,7 +1446,9 @@ function createFsBridge(options) {
   }
 
   async function writeNoteFile(notePath, note) {
-    const sanitizedContent = sanitizeLegacyApiUrlsInHtml(note.content || '');
+    // hotfix9: 写盘前最终兜底 — 无论上游给了什么, body 绝不能再带 frontmatter
+    const rawContent = stripEmbeddedFrontmatter(note.content || '');
+    const sanitizedContent = sanitizeLegacyApiUrlsInHtml(rawContent);
     const sanitizedStickers = sanitizeStickers(note.stickers || []);
     const sanitizedStickyNotes = sanitizeStickyNotes(note.sticky_notes || []);
     const derivedLinks = extractLinkedNoteIds(sanitizedContent);
@@ -1541,7 +1569,27 @@ function createFsBridge(options) {
       let parentId = current.parent_id;
 
       if (hasOwn(payload, 'parent_id') && payload.parent_id !== current.parent_id) {
-        const location = await resolveParentLocation(payload.parent_id);
+        // v0.22.0-a hotfix11 · 硬防护: 禁止把节点移动到自身或自身的子孙
+        // (前端 isDescendant 偶尔被绕过 → Windows `fs.rename` EINVAL)
+        const requestedParentId = payload.parent_id;
+        if (requestedParentId !== null && requestedParentId !== undefined) {
+          if (Number(requestedParentId) === Number(current.id)) {
+            throw new Error('Cannot move a note into itself');
+          }
+        }
+        const location = await resolveParentLocation(requestedParentId);
+        // 归一化路径后再判包含关系, 避免大小写 / 分隔符差异
+        const normalizedCurrent = path.resolve(current._path);
+        const normalizedTargetDir = path.resolve(location.dir);
+        const withSep = normalizedCurrent.endsWith(path.sep)
+          ? normalizedCurrent
+          : normalizedCurrent + path.sep;
+        if (
+          normalizedTargetDir === normalizedCurrent ||
+          normalizedTargetDir.startsWith(withSep)
+        ) {
+          throw new Error('Cannot move a folder into itself or its descendant');
+        }
         targetPath = await uniquePath(path.join(location.dir, path.basename(targetPath)));
         targetPath = await safeRename(current._path, targetPath);
         notebookName = location.notebookName;
@@ -1562,7 +1610,7 @@ function createFsBridge(options) {
       }
 
       const updatedContent = hasOwn(payload, 'content')
-        ? sanitizeLegacyApiUrlsInHtml(payload.content || '')
+        ? sanitizeLegacyApiUrlsInHtml(stripEmbeddedFrontmatter(payload.content || ''))
         : current.content;
       const requestedType = hasOwn(payload, 'type') ? payload.type : current.type;
       const inferredType = looksLikeCanvasContent(updatedContent) ? 'canvas' : requestedType;

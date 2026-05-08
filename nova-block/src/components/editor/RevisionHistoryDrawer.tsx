@@ -7,7 +7,7 @@
  *   - 一键"恢复到此版本" (后端会自动为当前版本打一条 restore-point 兜底快照)
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { History, Loader2, RotateCcw, X } from 'lucide-react'
 
@@ -57,6 +57,37 @@ const SOURCE_LABEL: Record<string, { text: string; color: string }> = {
   'restore-point': { text: '回滚兜底', color: 'bg-amber-500/10 text-amber-600' },
 }
 
+const revisionCacheByNoteId = new Map<number, RevisionMeta[]>()
+const REVISION_CACHE_STORAGE_PREFIX = 'nova.revision-history.'
+
+function rememberRevisionRows(noteId: number, rows: RevisionMeta[]) {
+  if (rows.length === 0) return
+  revisionCacheByNoteId.set(noteId, rows)
+  try {
+    sessionStorage.setItem(`${REVISION_CACHE_STORAGE_PREFIX}${noteId}`, JSON.stringify(rows.slice(0, 50)))
+  } catch {
+    // sessionStorage can be unavailable in restricted WebViews; memory cache still works.
+  }
+}
+
+function getRememberedRevisionRows(noteId: number): RevisionMeta[] {
+  const memoryRows = revisionCacheByNoteId.get(noteId)
+  if (memoryRows?.length) return memoryRows
+  try {
+    const raw = sessionStorage.getItem(`${REVISION_CACHE_STORAGE_PREFIX}${noteId}`)
+    if (!raw) return []
+    const rows = JSON.parse(raw)
+    if (!Array.isArray(rows)) return []
+    const ownRows = rows.filter((row): row is RevisionMeta => row?.note_id === noteId && typeof row?.id === 'number')
+    if (ownRows.length > 0) {
+      revisionCacheByNoteId.set(noteId, ownRows)
+    }
+    return ownRows
+  } catch {
+    return []
+  }
+}
+
 export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: Props) {
   const [revisions, setRevisions] = useState<RevisionMeta[]>([])
   const [loading, setLoading] = useState(false)
@@ -65,20 +96,70 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
   const [previewContent, setPreviewContent] = useState<string>('')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [restoring, setRestoring] = useState(false)
+  const currentNoteIdRef = useRef<number | null>(noteId)
+  const openNoteIdRef = useRef<number | null>(null)
+  const loadRequestSeqRef = useRef(0)
+  const revisionsRef = useRef<RevisionMeta[]>([])
+
+  if (isOpen) {
+    if (openNoteIdRef.current == null && noteId != null) {
+      openNoteIdRef.current = noteId
+    } else if (
+      noteId != null &&
+      noteId !== openNoteIdRef.current &&
+      revisions.every((row) => row.note_id !== openNoteIdRef.current) &&
+      !restoring
+    ) {
+      openNoteIdRef.current = noteId
+    }
+    if (openNoteIdRef.current != null) {
+      currentNoteIdRef.current = openNoteIdRef.current
+    }
+  } else {
+    openNoteIdRef.current = null
+  }
+  revisionsRef.current = revisions
+  const activeNoteId = isOpen ? openNoteIdRef.current : null
 
   const load = useCallback(async () => {
-    if (!noteId) return
+    if (!activeNoteId) return
+    const requestedNoteId = activeNoteId
+    const requestSeq = ++loadRequestSeqRef.current
     setLoading(true)
     setError(null)
     // v0.22.0-a hotfix4 · 切笔记/回滚后立即清空旧 selectedId,避免预览 effect 用旧 revisionId 去请求新 noteId 导致 404
-    setSelectedId(null)
-    setPreviewContent('')
     setPreviewLoading(false)
     try {
-      const rows = await api.listNoteRevisions(noteId)
-      setRevisions(rows)
-      setSelectedId(rows[0]?.id ?? null)
+      const rows = await api.listNoteRevisions(requestedNoteId)
+      if (loadRequestSeqRef.current !== requestSeq || currentNoteIdRef.current !== requestedNoteId) {
+        return
+      }
+      const ownRows = rows.filter((row) => row.note_id === requestedNoteId)
+      if (ownRows.length === 0) {
+        const currentRows = revisionsRef.current.filter((row) => row.note_id === requestedNoteId)
+        const fallbackRows = currentRows.length > 0 ? currentRows : getRememberedRevisionRows(requestedNoteId)
+        if (fallbackRows.length > 0) {
+          rememberRevisionRows(requestedNoteId, fallbackRows)
+          setRevisions(fallbackRows)
+          setSelectedId((prev) =>
+            prev != null && fallbackRows.some((row) => row.id === prev) ? prev : fallbackRows[0]?.id ?? null,
+          )
+          return
+        }
+        setRevisions([])
+        setSelectedId(null)
+        setPreviewContent('')
+        return
+      }
+      rememberRevisionRows(requestedNoteId, ownRows)
+      setRevisions(ownRows)
+      setSelectedId((prev) =>
+        prev != null && ownRows.some((row) => row.id === prev) ? prev : ownRows[0]?.id ?? null,
+      )
     } catch (err: any) {
+      if (loadRequestSeqRef.current !== requestSeq || currentNoteIdRef.current !== requestedNoteId) {
+        return
+      }
       // v0.22.0-a hotfix8 · 不再把后端 raw JSON body 当错误文案暴露给用户
       const raw = err?.message || String(err)
       let friendly = '加载版本失败'
@@ -88,29 +169,45 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
         friendly = '网络异常,请重试'
       }
       setError(friendly)
-      setRevisions([])
+      const currentRows = revisionsRef.current.filter((row) => row.note_id === requestedNoteId)
+      const fallbackRows = currentRows.length > 0 ? currentRows : getRememberedRevisionRows(requestedNoteId)
+      if (fallbackRows.length > 0) {
+        rememberRevisionRows(requestedNoteId, fallbackRows)
+        setRevisions(fallbackRows)
+      } else {
+        setRevisions([])
+        setSelectedId(null)
+      }
     } finally {
-      setLoading(false)
+      if (loadRequestSeqRef.current === requestSeq && currentNoteIdRef.current === requestedNoteId) {
+        setLoading(false)
+      }
     }
-  }, [noteId])
+  }, [activeNoteId])
 
   useEffect(() => {
-    if (isOpen && noteId) {
+    if (isOpen && activeNoteId) {
       // 立即重置,防止新 noteId + 旧 selectedId 竞态
       setRevisions([])
-      setSelectedId(null)
+      const cachedRows = getRememberedRevisionRows(activeNoteId)
+      if (cachedRows.length > 0 && revisionsRef.current.every((row) => row.note_id !== activeNoteId)) {
+        setRevisions(cachedRows)
+        setSelectedId(cachedRows[0]?.id ?? null)
+      } else if (revisionsRef.current.length === 0) {
+        setSelectedId(null)
+      }
       setPreviewContent('')
       void load()
-    } else {
+    } else if (!isOpen) {
       setRevisions([])
       setSelectedId(null)
       setPreviewContent('')
       setError(null)
     }
-  }, [isOpen, noteId, load])
+  }, [isOpen, activeNoteId, load])
 
   useEffect(() => {
-    if (!isOpen || !noteId || selectedId == null) {
+    if (!isOpen || !activeNoteId || selectedId == null) {
       setPreviewContent('')
       return
     }
@@ -127,7 +224,7 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
     }
     let cancelled = false
     setPreviewLoading(true)
-    const requestedNoteId = noteId
+    const requestedNoteId = activeNoteId
     const requestedRevisionId = selectedId
     api
       .getNoteRevision(requestedNoteId, requestedRevisionId)
@@ -136,7 +233,10 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
         // v0.22.0-a hotfix6 · 后端改为 200 + missing:true,此时静默刷新列表
         if (rev?.missing) {
           setPreviewContent('')
-          void load()
+          return
+        }
+        if (rev?.note_id !== undefined && rev.note_id !== requestedNoteId) {
+          setPreviewContent('')
           return
         }
         try {
@@ -164,7 +264,7 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
     return () => {
       cancelled = true
     }
-  }, [isOpen, noteId, selectedId, revisions, load])
+  }, [isOpen, activeNoteId, selectedId, revisions, load])
 
   const selectedMeta = useMemo(
     () => revisions.find((r) => r.id === selectedId) ?? null,
@@ -172,7 +272,8 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
   )
 
   const onRestore = useCallback(async () => {
-    if (!noteId || selectedId == null) return
+    if (!activeNoteId || selectedId == null) return
+    if (!selectedMeta || selectedMeta.note_id !== activeNoteId) return
     const confirmed = await confirmCompat({
       title: '恢复到此版本?',
       description:
@@ -184,7 +285,7 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
     if (!confirmed) return
     setRestoring(true)
     try {
-      const updated: any = await api.restoreNoteRevision(noteId, selectedId)
+      const updated: any = await api.restoreNoteRevision(activeNoteId, selectedId)
       // v0.22.0-a hotfix7 · 目标版本已失效(被 prune),后端返回 {missing: true}
       if (updated?.missing) {
         setError('该版本已失效,列表已自动刷新')
@@ -195,7 +296,7 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
       // 避免"立刻重新拉列表"触发的 vault 扫描竞态 404
       onRestored?.(updated)
       setError(null)
-      onClose()
+      await load()
     } catch (err: any) {
       const raw = err?.message || String(err)
       let friendly = '恢复失败'
@@ -208,7 +309,7 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
     } finally {
       setRestoring(false)
     }
-  }, [noteId, selectedId, onRestored, load, onClose])
+  }, [activeNoteId, selectedId, selectedMeta, onRestored, load])
 
   return (
     <AnimatePresence>

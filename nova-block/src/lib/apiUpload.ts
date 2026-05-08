@@ -27,7 +27,7 @@ export const uploadFiles = async (files: File[], noteId?: number | string) => {
       const formData = new FormData()
       formData.append('file', file)
       if (noteId) formData.append('note_id', noteId.toString())
-      const response = await fetch(`${API_BASE}/media/upload`, { method: 'POST', body: formData })
+      const response = await fetch(`${API_BASE}/media/upload`, { method: 'POST', cache: 'no-store', body: formData })
       if (!response.ok) throw new Error(await response.text())
       return response.json()
     }
@@ -42,13 +42,13 @@ export const uploadFiles = async (files: File[], noteId?: number | string) => {
     if (fileSha256) initForm.append('file_sha256', fileSha256)
     if (noteId) initForm.append('note_id', noteId.toString())
 
-    const initRes = await fetch(`${API_BASE}/media/upload/init`, { method: 'POST', body: initForm })
+    const initRes = await fetch(`${API_BASE}/media/upload/init`, { method: 'POST', cache: 'no-store', body: initForm })
     if (!initRes.ok) throw new Error('Failed to init upload')
     const { upload_id } = await initRes.json()
 
     let uploadedChunks = new Set<number>()
     try {
-      const statusRes = await fetch(`${API_BASE}/media/upload/status/${encodeURIComponent(upload_id)}`)
+      const statusRes = await fetch(`${API_BASE}/media/upload/status/${encodeURIComponent(upload_id)}`, { cache: 'no-store' })
       if (statusRes.ok) {
         const status = await statusRes.json()
         uploadedChunks = new Set(Array.isArray(status.uploaded_chunks) ? status.uploaded_chunks : [])
@@ -70,7 +70,7 @@ export const uploadFiles = async (files: File[], noteId?: number | string) => {
       if (chunkSha256) chunkForm.append('chunk_sha256', chunkSha256)
       if (noteId) chunkForm.append('note_id', noteId.toString())
 
-      const chunkRes = await fetch(`${API_BASE}/media/upload/chunk`, { method: 'POST', body: chunkForm })
+      const chunkRes = await fetch(`${API_BASE}/media/upload/chunk`, { method: 'POST', cache: 'no-store', body: chunkForm })
       if (!chunkRes.ok) throw new Error(`Failed to upload chunk ${i}`)
     }
 
@@ -82,7 +82,7 @@ export const uploadFiles = async (files: File[], noteId?: number | string) => {
     if (fileSha256) compForm.append('file_sha256', fileSha256)
     if (noteId) compForm.append('note_id', noteId.toString())
 
-    const compRes = await fetch(`${API_BASE}/media/upload/complete`, { method: 'POST', body: compForm })
+    const compRes = await fetch(`${API_BASE}/media/upload/complete`, { method: 'POST', cache: 'no-store', body: compForm })
     if (!compRes.ok) throw new Error('Failed to complete upload')
     return compRes.json()
   }))
@@ -95,7 +95,7 @@ export const uploadMusicFile = async (file: File, cover?: File) => {
   const formData = new FormData()
   formData.append('file', file)
   if (cover) formData.append('cover', cover)
-  const response = await fetch(`${API_BASE}/media/music-upload`, { method: 'POST', body: formData })
+  const response = await fetch(`${API_BASE}/media/music-upload`, { method: 'POST', cache: 'no-store', body: formData })
   if (!response.ok) throw new Error(await response.text())
   return response.json()
 }

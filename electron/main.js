@@ -7,9 +7,52 @@ const { spawn } = require('node:child_process');
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { createFsBridge } = require('./fsBridge');
 const { createVaultWatcher } = require('./vaultWatcher');
+const {
+  bootstrapVersionedLayout,
+  resolveCurrentSlot,
+  registerIpc: registerUpdaterIpc,
+} = require('./updaterBridge');
 
-const APP_ROOT = path.resolve(__dirname, '..');
-const FRONTEND_INDEX = path.join(APP_ROOT, 'frontend_dist', 'index.html');
+// v0.21.9 hotfix · 禁掉 Chromium HTTP 磁盘缓存
+// ------------------------------------------------------------
+// 现象: 控制台报 "Failed to load resource: net::ERR_CACHE_OPERATION_NOT_SUPPORTED"
+// 根因: 页面用 file:// 载入, 而 webRequest.onBeforeRequest 会把 file:// 下的
+//       /[drive]:/api/... 重定向到 http://127.0.0.1:8765/api/..., 跨协议重定向
+//       让 disk_cache 在某些请求上返回 OPERATION_NOT_SUPPORTED.
+// 方案: 我们的后端都是本地 127.0.0.1, 不需要 HTTP 缓存; 直接关掉最干净.
+// 必须在 app.whenReady() 之前执行.
+app.commandLine.appendSwitch('disable-http-cache');
+
+// v0.23.2 · NTFS junction 兜底
+// ---------------------------------------------------------------
+// Windows 上 versions/<ver>/ 通过 `current` directory junction 暴露给运行时,
+// 而 Node.js 的 __dirname 会把 junction 解析到真实目标路径
+// (e.g. C:\AI\nova-local\versions\0.23.1\electron),
+// 导致 path.resolve(__dirname, '..') 落到 versions/<ver>/ 而非真正的 NovaRoot.
+// 一旦 APP_ROOT 错位, bootstrapVersionedLayout 会把 versions/<ver>/backend
+// 再往里塞一层, 触发 EBUSY rename 与无限递归.
+// 解法: 优先信 NOVA_APP_ROOT 环境变量 (由 start_windows.bat 传入),
+// 缺省时再回退到 __dirname 推导.
+const APP_ROOT = process.env.NOVA_APP_ROOT
+  ? path.resolve(process.env.NOVA_APP_ROOT)
+  : path.resolve(__dirname, '..');
+
+// v0.23.0 · 版本化布局 bootstrap
+// ---------------------------------------------------------------
+// 早期版本 (≤ v0.22.x) 的 APP_ROOT 下直接是 backend/ electron/ frontend_dist/,
+// v0.23.0 起改为 versions/<X.Y.Z>/... + current 软链接指向当前运行版本.
+// 首次从老布局启动时, 此调用会把裸文件搬进 versions/<现版本>/ 并建立 current 软链接.
+// 若已经是版本化布局 (或已有 current 链接), 此调用为 no-op.
+// data/ 永不被迁移或触碰.
+try {
+  bootstrapVersionedLayout(APP_ROOT);
+} catch (error) {
+  console.warn(`[updater] bootstrap skipped: ${error.message}`);
+}
+
+// 解析 current 指向的真实 slot, 没有就回退到 APP_ROOT 本身 (理论上不会发生).
+const CURRENT_SLOT = resolveCurrentSlot(APP_ROOT) || APP_ROOT;
+const FRONTEND_INDEX = path.join(CURRENT_SLOT, 'frontend_dist', 'index.html');
 function resolveDataRoot({ appRoot = APP_ROOT, env = process.env } = {}) {
   if (env.NOVA_DATA_ROOT) {
     return path.resolve(env.NOVA_DATA_ROOT);
@@ -57,6 +100,29 @@ const DESKTOP_API_REQUESTS = new Map([
   ['config:update-model', { method: 'POST', path: '/model-config' }],
   ['ai:toggle-plugin', { method: 'POST', path: '/ai/toggle-plugin' }],
   ['system:vault-health', { method: 'GET', path: '/system/vault-health' }],
+  ['system:revision-settings:get', { method: 'GET', path: '/system/revision-settings' }],
+  ['system:revision-settings:update', { method: 'PUT', path: '/system/revision-settings' }],
+  // v0.23.4: parameterized paths use a RegExp; normalizeDesktopApiRequest
+  // matches input.path against pathPattern when present, otherwise falls back
+  // to literal `path` equality. This lets the renderer reach per-note revision
+  // endpoints over the same `desktop:api-request` channel without growing
+  // a separate IPC handler per route.
+  ['notes:revisions:list', {
+    method: 'GET',
+    pathPattern: /^\/notes\/\d+\/revisions$/,
+  }],
+  ['notes:revisions:get', {
+    method: 'GET',
+    pathPattern: /^\/notes\/\d+\/revisions\/\d+$/,
+  }],
+  ['notes:revisions:restore', {
+    method: 'POST',
+    pathPattern: /^\/notes\/\d+\/revisions\/\d+\/restore$/,
+  }],
+  ['notes:snapshot', {
+    method: 'POST',
+    pathPattern: /^\/notes\/\d+\/snapshot$/,
+  }],
 ]);
 
 function normalizeVaultRelativePath(targetPath) {
@@ -326,6 +392,11 @@ function createMainWindow() {
       callback({});
     }
   });
+
+  // v0.21.9 hotfix · 清理一次历史磁盘缓存, 避免升级后首屏仍命中旧条目导致 OPERATION_NOT_SUPPORTED
+  mainWindow.webContents.session
+    .clearCache()
+    .catch((err) => console.warn('[cache] clearCache failed:', err?.message || err));
 
   mainWindow.loadFile(FRONTEND_INDEX);
   mainWindow.on('close', (event) => {
@@ -610,8 +681,20 @@ function normalizeDesktopApiRequest(payload) {
   if (!allowed) {
     throw new Error(`Desktop API channel not allowed: ${input.channel}`);
   }
-  if (input.path !== allowed.path) {
-    throw new Error(`Desktop API path not allowed for ${input.channel}`);
+  // v0.23.4: support parameterized paths via `pathPattern` (RegExp). When
+  // present, validate input.path against the pattern; otherwise enforce the
+  // literal path equality used by static endpoints.
+  let resolvedPath;
+  if (allowed.pathPattern instanceof RegExp) {
+    if (typeof input.path !== 'string' || !allowed.pathPattern.test(input.path)) {
+      throw new Error(`Desktop API path not allowed for ${input.channel}`);
+    }
+    resolvedPath = input.path;
+  } else {
+    if (input.path !== allowed.path) {
+      throw new Error(`Desktop API path not allowed for ${input.channel}`);
+    }
+    resolvedPath = allowed.path;
   }
 
   const options = input.options === undefined ? {} : ensurePlainObject(input.options, 'options');
@@ -625,7 +708,7 @@ function normalizeDesktopApiRequest(payload) {
 
   return {
     method,
-    path: allowed.path,
+    path: resolvedPath,
     body: options.body,
   };
 }
@@ -733,6 +816,29 @@ function requestBackendApi(payload) {
   });
 }
 
+async function captureRevisionSnapshotBeforeLocalUpdate(noteId, input) {
+  if (!Object.prototype.hasOwnProperty.call(input, 'content')) {
+    return;
+  }
+
+  try {
+    const current = await fsBridge.getNote(noteId);
+    if (!current || (current.content || '') === (input.content || '')) {
+      return;
+    }
+    await requestBackendApi({
+      channel: 'notes:snapshot',
+      path: '/notes/' + noteId + '/snapshot',
+      options: {
+        method: 'POST',
+        body: JSON.stringify({ source: 'auto' }),
+      },
+    });
+  } catch (error) {
+    console.warn('[revision] failed to capture desktop snapshot for note ' + noteId + ':', error && error.message ? error.message : error);
+  }
+}
+
 function pickNoteWritePayload(payload) {
   const source = ensurePlainObject(payload);
   const allowedKeys = [
@@ -772,6 +878,26 @@ function registerIpcHandlers() {
   ipcMain.handle('system:update', async (_event, payload) => updateSystem(payload));
   ipcMain.handle('system:restart', async () => restartSystem());
   ipcMain.handle('ai:update-ollama', async () => runUpdateOllama());
+
+  // v0.23.0 · 离线更新与版本管理 IPC
+  // ---------------------------------------------------------------
+  // updaterBridge 把调用转发给 python -m backend.services.updater_cli,
+  // 这样 UpdaterService 的所有校验/落盘/切换逻辑只存在一处.
+  try {
+    const { command, args } = resolveBackendLauncher();
+    // Prefer the resolved Python executable; fall back to 'python' so CI/dev can run it.
+    const pythonExe = (() => {
+      if (Array.isArray(args) && args.length > 0 && command.endsWith('python')) {
+        return command;
+      }
+      if (command && /python(\.exe)?$/i.test(command)) return command;
+      return process.env.NOVA_BACKEND_PYTHON || 'python';
+    })();
+    registerUpdaterIpc(ipcMain, { appRoot: APP_ROOT, pythonExe, dialog });
+  } catch (error) {
+    console.warn(`[updater] failed to register IPC: ${error.message}`);
+  }
+
   ipcMain.handle('notes:list', async (_event, payload = {}) => {
     const input = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
     return fsBridge.listNotes({ includeContent: input.includeContent === true });
@@ -808,8 +934,24 @@ function registerIpcHandlers() {
     if (typeof input.file_path === 'string') {
       markLocalVaultChange(input.file_path);
     }
+    await captureRevisionSnapshotBeforeLocalUpdate(noteId, input);
     const updated = await fsBridge.updateNote(noteId, input);
     markLocalVaultChange(updated.file_path);
+    // v0.23.4 hotfix: auto-snapshot after save (front-end bundle misses the call)
+    try {
+      requestBackendApi({
+        channel: 'notes:snapshot',
+        path: '/notes/' + noteId + '/snapshot',
+        options: {
+          method: 'POST',
+          body: JSON.stringify({ source: 'auto' }),
+        },
+      }).catch((err) => {
+        console.warn('[notes:update] auto-snapshot failed:', err && err.message ? err.message : err);
+      });
+    } catch (err) {
+      console.warn('[notes:update] auto-snapshot dispatch error:', err && err.message ? err.message : err);
+    }
     return updated;
   });
   ipcMain.handle('notes:delete', async (_event, payload) => {
@@ -842,11 +984,74 @@ function flushVaultChanges() {
   vaultChangeTimer = null;
 }
 
-app.whenReady().then(bootstrapApp).catch((error) => {
-  console.error('[main] failed to bootstrap application', error);
-  dialog.showErrorBox('Nova startup failed', error?.message || String(error));
-  app.quit();
+app.whenReady().then(async () => {
+  try {
+    await bootstrapApp();
+    // M5 — startup health self-check: mark current version healthy after a
+    // successful bootstrap. We swallow errors here because failing the
+    // bookkeeping must not block a working app.
+    try {
+      await runUpdaterCli('mark_healthy', { version: resolveCurrentVersionFromMain() }).catch(() => {});
+    } catch (_) {}
+  } catch (error) {
+    console.error('[main] failed to bootstrap application', error);
+    // M5 · two-crash breaker: record the crash and try auto-rollback before bailing
+    try {
+      const ver = resolveCurrentVersionFromMain();
+      if (ver) {
+        await runUpdaterCli('mark_failed', { version: ver, reason: String(error?.message || error) }).catch(() => {});
+        const rb = await runUpdaterCli('auto_rollback_if_needed', {}).catch(() => null);
+        if (rb && rb.rolled_back) {
+          console.warn('[main] auto-rolled back', rb);
+          // Tell the user we rolled back; on next launch the previous version runs
+          dialog.showErrorBox(
+            'Nova auto-rolled back',
+            `Version ${rb.from_version} crashed twice; rolled back to ${rb.to_version}. Restart the app.`
+          );
+          app.quit();
+          return;
+        }
+      }
+    } catch (cleanupErr) {
+      console.error('[main] auto-rollback bookkeeping failed', cleanupErr);
+    }
+    dialog.showErrorBox('Nova startup failed', error?.message || String(error));
+    app.quit();
+  }
 });
+
+function resolveCurrentVersionFromMain() {
+  try {
+    const slot = resolveCurrentSlot(APP_ROOT);
+    if (!slot) return null;
+    const v = require('node:fs').readFileSync(require('node:path').join(slot, 'VERSION.txt'), 'utf8').trim();
+    return v || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function runUpdaterCli(action, args) {
+  return new Promise((resolve, reject) => {
+    const { spawn } = require('node:child_process');
+    const pythonExe = process.env.NOVA_BACKEND_PYTHON || 'python';
+    const child = spawn(pythonExe, ['-m', 'backend.services.updater_cli', '--app-root', APP_ROOT], {
+      cwd: resolveCurrentSlot(APP_ROOT) || APP_ROOT,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (b) => { out += b.toString('utf8'); });
+    child.stderr.on('data', (b) => { err += b.toString('utf8'); });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`updater_cli exited ${code}: ${err}`));
+      try { resolve(out.trim() ? JSON.parse(out) : null); }
+      catch (e) { reject(new Error(`bad JSON from updater_cli: ${out}`)); }
+    });
+    child.stdin.end(JSON.stringify({ action, args: args || {} }), 'utf8');
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

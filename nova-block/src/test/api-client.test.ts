@@ -287,4 +287,64 @@ describe('api browser fallback', () => {
       expect.objectContaining({ headers: expect.any(Object) }),
     )
   })
+
+  it('exposes note revision history endpoints through the API client', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    ))
+
+    await api.listNoteRevisions(12)
+    await api.getNoteRevision(12, 3)
+    await api.restoreNoteRevision(12, 3)
+    await api.captureNoteSnapshot(12, 'save')
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8765/api/notes/12/revisions',
+      expect.objectContaining({ headers: expect.any(Object) }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8765/api/notes/12/revisions/3',
+      expect.objectContaining({ headers: expect.any(Object) }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:8765/api/notes/12/revisions/3/restore',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      'http://127.0.0.1:8765/api/notes/12/snapshot',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ source: 'save' }),
+      }),
+    )
+  })
+
+  it('downloads the full data export as a zip blob', async () => {
+    const zipBlob = new Blob(['zip'], { type: 'application/zip' })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(zipBlob, {
+        status: 200,
+        headers: { 'Content-Type': 'application/zip' },
+      }),
+    )
+
+    const result = await api.exportAllData({ 'nova.example': true })
+
+    expect(result).toBeInstanceOf(Blob)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8765/api/system/export-all',
+      expect.objectContaining({
+        method: 'POST',
+        cache: 'no-store',
+        body: JSON.stringify({ localstorage: { 'nova.example': true } }),
+      }),
+    )
+  })
 })

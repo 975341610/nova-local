@@ -2,9 +2,11 @@ import type {
   AskResponse, 
   ModelConfig, 
   Note, 
+  NoteRevision,
   NoteTemplate,
   Notebook, 
   NoteProperty, 
+  RevisionSettings,
   Task, 
   TrashState, 
   UserStats,
@@ -92,6 +94,28 @@ export const api = {
     invoke<Note>('folders:create', '/folders', { method: 'POST', body: JSON.stringify(payload) }),
   updateNote: (noteId: number, payload: NoteWritePayload) =>
     invoke<Note>('notes:update', `/notes/${noteId}`, { method: 'PUT', body: JSON.stringify(pickNoteWritePayload(payload as Record<string, unknown>)) }),
+  listNoteRevisions: (noteId: number) =>
+    invoke<NoteRevision[]>('notes:revisions:list', `/notes/${noteId}/revisions`),
+  getNoteRevision: (noteId: number, revisionId: number) =>
+    invoke<NoteRevision>('notes:revisions:get', `/notes/${noteId}/revisions/${revisionId}`),
+  restoreNoteRevision: (noteId: number, revisionId: number) =>
+    invoke<Note | { missing: true; detail?: string }>('notes:revisions:restore', `/notes/${noteId}/revisions/${revisionId}/restore`, { method: 'POST' }),
+  captureNoteSnapshot: (noteId: number, source: 'auto' | 'save' | 'manual' = 'auto') =>
+    invoke<{ status: string; snapshot_id: number | null; skipped?: boolean; detail?: string }>('notes:snapshot', `/notes/${noteId}/snapshot`, { method: 'POST', body: JSON.stringify({ source }) }),
+  getRevisionSettings: () => invoke<RevisionSettings>('system:revision-settings:get', '/system/revision-settings'),
+  updateRevisionSettings: (payload: Partial<RevisionSettings>) =>
+    invoke<RevisionSettings>('system:revision-settings:update', '/system/revision-settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  exportAllData: async (localstorage: Record<string, unknown> = {}) => {
+    const API_BASE = getApiBase();
+    const response = await fetch(`${API_BASE}/system/export-all`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ localstorage }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.blob();
+  },
   updateNoteTags: (noteId: number, tags: string[]) =>
     invoke<Note>('notes:update-tags', `/notes/${noteId}/tags`, { method: 'PATCH', body: JSON.stringify(tags) }),
   moveNote: (noteId: number, payload: { notebook_id?: number | null; position: number; parent_id?: number | null }) =>
@@ -132,6 +156,7 @@ export const api = {
     const API_BASE = getApiBase();
     const response = await fetch(`${API_BASE}/ai/inline`, {
       method: 'POST',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
@@ -181,6 +206,7 @@ export const api = {
     const API_BASE = getApiBase();
     const response = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
@@ -222,7 +248,7 @@ export const api = {
   // 音乐库列表必须走后端扫描（HTTP），避免 Electron IPC 缺失导致库永远为空
   listMusicLibrary: async () => {
     const API_BASE = getApiBase();
-    const response = await fetch(`${API_BASE}/media/music-library`, { headers: {} });
+    const response = await fetch(`${API_BASE}/media/music-library`, { cache: 'no-store', headers: {} });
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   },
