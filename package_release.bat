@@ -10,6 +10,7 @@ set "VERSION=%~1"
 set "MODE=%~2"
 set "INTERACTIVE=0"
 set "PUBLIC_ARG="
+set "CREATE_NOTES_ARG="
 if not "%PUBLIC_BASE_URL%"=="" set "PUBLIC_ARG=-PublicBaseUrl %PUBLIC_BASE_URL%"
 
 if "%VERSION%"=="" goto interactive
@@ -21,6 +22,7 @@ goto usage
 
 :interactive
 set "INTERACTIVE=1"
+set "CREATE_NOTES_ARG=-CreateReleaseNotesIfMissing"
 echo Nova signed update package builder
 echo.
 echo This window opened because no command-line arguments were provided.
@@ -55,12 +57,12 @@ if "%SIGNING_KEY_ID%"=="" (
   set "SIGNING_KEY_ID=%DEFAULT_SIGNING_KEY_ID%"
   echo [INFO] Using bundled local release signing key id: %DEFAULT_SIGNING_KEY_ID%
 )
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Version "%VERSION%" -SignKey "%SIGN_KEY%" -SigningKeyId "%SIGNING_KEY_ID%" %PUBLIC_ARG%
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Version "%VERSION%" -SignKey "%SIGN_KEY%" -SigningKeyId "%SIGNING_KEY_ID%" %CREATE_NOTES_ARG% %PUBLIC_ARG%
 goto finish
 
 :dev
 echo [WARN] Building an unsigned development package. Signed clients will reject it in Settings update.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Version "%VERSION%" -UnsignedDevPackage -NoVersionBump %PUBLIC_ARG%
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Version "%VERSION%" -UnsignedDevPackage -NoVersionBump %CREATE_NOTES_ARG% %PUBLIC_ARG%
 goto finish
 
 :usage

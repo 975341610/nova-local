@@ -27,6 +27,7 @@ param(
     [string]$SignKey = '',
     [string]$SigningKeyId = '',
     [switch]$UnsignedDevPackage,
+    [switch]$CreateReleaseNotesIfMissing,
     [switch]$NoVersionBump,
     [switch]$SkipTests,
     [string]$PublicBaseUrl = '',
@@ -192,6 +193,35 @@ function Assert-FileExists {
     Write-Log "Found file: $Path" 'OK'
 }
 
+function New-ReleaseNotesTemplate {
+    param(
+        [string]$Path,
+        [string]$Version,
+        [string]$Channel
+    )
+
+    $today = Get-Date -Format 'yyyy-MM-dd'
+    $content = @"
+# Nova v$Version Release Notes
+
+Release date: $today
+Channel: $Channel
+
+## Changes
+
+- Fill in the main fixes, feature changes, and upgrade notes before publishing.
+
+## Upgrade Notes
+
+- Install this update package from Settings -> Update.
+- Restart the app after installation.
+
+Signing key: $SigningKeyId
+"@
+    Write-Utf8NoBom -Path $Path -Content ($content + [Environment]::NewLine)
+    Write-Log "Created release notes template: $Path" 'WARN'
+}
+
 function Assert-DirectoryExists {
     param(
         [string]$StageName,
@@ -319,6 +349,9 @@ try {
 
     if (-not $ReleaseNotes) {
         $ReleaseNotes = Join-Path $ScriptDir "RELEASE_NOTES_v$Version.md"
+    }
+    if ($CreateReleaseNotesIfMissing -and -not (Test-Path -LiteralPath $ReleaseNotes -PathType Leaf)) {
+        New-ReleaseNotesTemplate -Path $ReleaseNotes -Version $Version -Channel $Channel
     }
     Assert-FileExists -StageName 'Release notes' -Path $ReleaseNotes -Fix 'Create release notes or pass -ReleaseNotes <path>.'
 

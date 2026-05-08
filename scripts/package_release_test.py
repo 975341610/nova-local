@@ -16,6 +16,7 @@ def test_package_release_has_diagnostic_failure_helpers():
 
     assert "function Fail-Stage" in text
     assert "function Invoke-LoggedCommand" in text
+    assert "function New-ReleaseNotesTemplate" in text
     assert "function Test-ForbiddenPayloadContent" in text
     assert "function Copy-ElectronProductionDeps" in text
     assert "logs\\package-release" in text
@@ -79,6 +80,7 @@ def test_batch_wrapper_supports_double_click_interactive_mode():
     assert "INTERACTIVE=1" in text
     assert "set /p VERSION=" in text
     assert "set /p MODE=" in text
+    assert "-CreateReleaseNotesIfMissing" in text
     assert "pause >nul" in text
 
 
