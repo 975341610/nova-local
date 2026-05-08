@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import subprocess
+import traceback
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -117,6 +118,12 @@ def _atomic_write_json(path: Path, data: dict) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _append_jsonl(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(data, ensure_ascii=False) + "\n")
 
 
 def _is_windows() -> bool:
@@ -311,82 +318,152 @@ class UpdaterService:
         backup_data: bool = True,
     ) -> InstallResult:
         """Extract the imported package into versions/<target>/ and swap current."""
-        cached = self._find_cached_package(package_id)
-        manifest = validate_package(cached)  # defence-in-depth
-
-        current_version = self.get_current_version()
-
-        # min_base_version gate
-        if current_version is not None:
-            if _semver_cmp(current_version, manifest.min_base_version) < 0:
-                raise UpdaterError(
-                    f"current version {current_version} is below "
-                    f"min_base_version {manifest.min_base_version}"
-                )
-
-        target = manifest.target_version
-        slot = self.versions_dir / target
-
-        # 0. Pre-install backup of data/ — never blocks install if data/ doesn't exist
-        if backup_data and (self.app_root / "data").is_dir():
-            self.backup_data_dir(label=f"pre-install-{target}-{_now_iso_utc().replace(':', '')}")
-
-        # 1. pre-install hook (M2 stub: just a no-op reservation)
-        if pre_hooks:
-            self._run_migration_stub("pre-install", manifest=manifest, slot=slot)
-
-        # 2. Extract into a scratch slot, then rename (atomic-ish on same FS)
-        scratch = self.versions_dir / f".{target}.scratch"
-        if scratch.exists():
-            shutil.rmtree(scratch)
-        scratch.mkdir(parents=True)
+        stage = "start"
+        cached: Path | None = None
+        current_version: str | None = None
+        target = package_id
+        switched_current = False
         try:
-            with zipfile.ZipFile(cached, "r") as zf:
-                for name in zf.namelist():
-                    if not name.startswith("payload/"):
-                        continue
-                    if name.endswith("/"):
-                        continue
-                    rel = name[len("payload/"):]
-                    # refuse any traversal-looking entry (validator already
-                    # rejected this but be defensive during extraction too)
-                    if rel.startswith("/") or ".." in rel.split("/"):
-                        raise UpdaterError(f"unsafe zip entry during install: {name}")
-                    dest = scratch / rel
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    with zf.open(name) as src, open(dest, "wb") as out:
-                        shutil.copyfileobj(src, out)
+            stage = "find cached package"
+            cached = self._find_cached_package(package_id)
 
-            # Replace target slot with scratch
-            if slot.exists():
-                shutil.rmtree(slot)
-            os.replace(scratch, slot)
-        except Exception:
-            # never leave scratch behind
+            stage = "validate package"
+            manifest = validate_package(cached)  # defence-in-depth
+
+            current_version = self.get_current_version()
+
+            stage = "min_base_version check"
+            if current_version is not None:
+                if _semver_cmp(current_version, manifest.min_base_version) < 0:
+                    raise UpdaterError(
+                        f"current version {current_version} is below "
+                        f"min_base_version {manifest.min_base_version}"
+                    )
+
+            target = manifest.target_version
+            slot = self.versions_dir / target
+
+            stage = "backup data"
+            if backup_data and (self.app_root / "data").is_dir():
+                self.backup_data_dir(label=f"pre-install-{target}-{_now_iso_utc().replace(':', '')}")
+
+            stage = "pre-install"
+            if pre_hooks:
+                self._run_migration_stub("pre-install", manifest=manifest, slot=slot)
+
+            stage = "extract payload"
+            scratch = self.versions_dir / f".{target}.scratch"
             if scratch.exists():
-                shutil.rmtree(scratch, ignore_errors=True)
-            raise
+                shutil.rmtree(scratch)
+            scratch.mkdir(parents=True)
+            try:
+                with zipfile.ZipFile(cached, "r") as zf:
+                    for name in zf.namelist():
+                        if not name.startswith("payload/"):
+                            continue
+                        if name.endswith("/"):
+                            continue
+                        rel = name[len("payload/"):]
+                        if rel.startswith("/") or ".." in rel.split("/"):
+                            raise UpdaterError(f"unsafe zip entry during install: {name}")
+                        dest = scratch / rel
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        with zf.open(name) as src, open(dest, "wb") as out:
+                            shutil.copyfileobj(src, out)
 
-        # 3. Update index
-        self._upsert_index_entry(target, healthy=True, disabled=False)
+                stage = "replace target slot"
+                if slot.exists():
+                    shutil.rmtree(slot)
+                os.replace(scratch, slot)
+            except Exception:
+                if scratch.exists():
+                    shutil.rmtree(scratch, ignore_errors=True)
+                raise
 
-        # 4. Record rollback pointer (previous current, if any and different)
-        if current_version is not None and current_version != target:
-            self._set_rollback_target(current_version)
+            stage = "update index"
+            self._upsert_index_entry(target, healthy=True, disabled=False)
 
-        # 5. Swap the current symlink
-        self._atomic_switch_current(slot)
+            stage = "record rollback pointer"
+            if current_version is not None and current_version != target:
+                self._set_rollback_target(current_version)
 
-        # 6. post-install hook
-        if post_hooks:
-            self._run_migration_stub("post-install", manifest=manifest, slot=slot)
+            stage = "switch current"
+            self._atomic_switch_current(slot)
+            switched_current = True
 
-        # 7. Retention
-        self._prune_old_versions()
+            stage = "post-install"
+            if post_hooks:
+                self._run_migration_stub("post-install", manifest=manifest, slot=slot)
 
-        return InstallResult(
-            success=True, target_version=target, previous_version=current_version
-        )
+            stage = "retention prune"
+            self._prune_old_versions()
+
+            return InstallResult(
+                success=True, target_version=target, previous_version=current_version
+            )
+        except Exception as exc:
+            rollback_detail = self._recover_failed_install(
+                target=target,
+                previous_version=current_version,
+                switched_current=switched_current,
+                stage=stage,
+                error=exc,
+                package_id=package_id,
+                cached=cached,
+            )
+            detail = (
+                f"Install failed: stage={stage}; package_id={package_id}; "
+                f"target_version={target}; previous_version={current_version}; "
+                f"error={type(exc).__name__}: {exc}; rollback={rollback_detail}; "
+                f"log={self.app_root / 'data' / 'logs' / 'updater-install-failures.log'}"
+            )
+            raise UpdaterError(detail) from exc
+
+    def _recover_failed_install(
+        self,
+        *,
+        target: str,
+        previous_version: str | None,
+        switched_current: bool,
+        stage: str,
+        error: Exception,
+        package_id: str,
+        cached: Path | None,
+    ) -> str:
+        rollback_detail = "not needed"
+        if switched_current and previous_version:
+            previous_slot = self.versions_dir / previous_version
+            if previous_slot.is_dir() and (previous_slot / "VERSION.txt").is_file():
+                try:
+                    self._atomic_switch_current(previous_slot)
+                    rollback_detail = f"rolled back to {previous_version}"
+                except Exception as rollback_error:  # noqa: BLE001
+                    rollback_detail = (
+                        f"rollback to {previous_version} failed: "
+                        f"{type(rollback_error).__name__}: {rollback_error}"
+                    )
+            else:
+                rollback_detail = f"rollback target missing: {previous_slot}"
+
+        try:
+            self.mark_failed(target, reason=f"install failed at {stage}: {error}")
+        except Exception:
+            pass
+
+        log_entry = {
+            "timestamp": _now_iso_utc(),
+            "package_id": package_id,
+            "target_version": target,
+            "previous_version": previous_version,
+            "stage": stage,
+            "error_type": type(error).__name__,
+            "error": str(error),
+            "rollback": rollback_detail,
+            "cached_package": str(cached) if cached else None,
+            "traceback": "".join(traceback.format_exception(type(error), error, error.__traceback__)),
+        }
+        _append_jsonl(self.app_root / "data" / "logs" / "updater-install-failures.log", log_entry)
+        return rollback_detail
 
     def _run_migration_stub(
         self, phase: str, *, manifest: Manifest, slot: Path

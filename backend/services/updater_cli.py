@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     ns = parser.parse_args(argv)
 
     try:
-        payload_raw = sys.stdin.read()
+        payload_raw = sys.stdin.read().lstrip("\ufeff")
         payload = json.loads(payload_raw) if payload_raw.strip() else {}
         action = payload.get("action")
         args = payload.get("args") or {}
@@ -116,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (UpdaterError, ValidationError, PackageError) as exc:
         sys.stderr.write(f"{type(exc).__name__}: {exc}\n")
+        sys.stderr.write(traceback.format_exc())
         return 1
     except Exception as exc:  # noqa: BLE001
         sys.stderr.write(f"unexpected error: {exc}\n{traceback.format_exc()}")

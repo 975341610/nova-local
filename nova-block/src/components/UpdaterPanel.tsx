@@ -157,7 +157,10 @@ const CheckUpdatesTab: React.FC<{ onInstalled: () => Promise<void> }> = ({
     setError(null)
     setInstallMsg(null)
     try {
-      const r = await updaterApi.downloadAndInstall(remote.package_url)
+      const r = await updaterApi.downloadAndInstall(remote.package_url, {
+        sha256: remote.package_sha256,
+        size: remote.package_size_bytes,
+      })
       setInstallMsg(
         r.success
           ? `安装成功 ${r.target_version}(请重启应用生效)`

@@ -43,6 +43,8 @@ test('updaterBridge source exports the required primitives', () => {
   assert.match(src, /resolveCurrentSlot/);
   assert.match(src, /atomicSwitchCurrent/);
   assert.match(src, /bootstrapVersionedLayout/);
+  assert.match(src, /resolveFeedPackageUrl/);
+  assert.match(src, /assertDownloadedPackage/);
   assert.match(src, /registerIpc/);
 });
 
@@ -245,5 +247,51 @@ test('updaterBridge registers the documented IPC channels', () => {
   ];
   for (const ch of expected) {
     assert.match(src, new RegExp(ch), `missing IPC channel: ${ch}`);
+  }
+  assert.match(src, /updater-install-failures\.log/);
+});
+
+test('resolveFeedPackageUrl resolves package files relative to latest feed url', () => {
+  const { resolveFeedPackageUrl } = require('..' + '/updaterBridge.js');
+
+  assert.equal(
+    resolveFeedPackageUrl(
+      'https://updates.example.com/nova/latest.json',
+      'nova-v0.24.0-full.nova-update'
+    ),
+    'https://updates.example.com/nova/nova-v0.24.0-full.nova-update'
+  );
+  assert.equal(
+    resolveFeedPackageUrl(
+      'https://updates.example.com/nova/latest.json',
+      'https://cdn.example.com/nova-v0.24.0-full.nova-update'
+    ),
+    'https://cdn.example.com/nova-v0.24.0-full.nova-update'
+  );
+});
+
+test('assertDownloadedPackage validates downloaded package size and sha256', () => {
+  const { assertDownloadedPackage } = require('..' + '/updaterBridge.js');
+  const root = mkAppRoot();
+  try {
+    const file = path.join(root, 'pkg.nova-update');
+    fs.writeFileSync(file, 'nova package bytes');
+
+    assert.doesNotThrow(() =>
+      assertDownloadedPackage(file, {
+        size: 18,
+        sha256: '9483df31317949bef5ec3f96a972e892003a3209d4ab34f341f3c519ad61e683',
+      })
+    );
+    assert.throws(
+      () => assertDownloadedPackage(file, { size: 17 }),
+      /size mismatch/i
+    );
+    assert.throws(
+      () => assertDownloadedPackage(file, { sha256: '00' }),
+      /sha256 mismatch/i
+    );
+  } finally {
+    rmrf(root);
   }
 });

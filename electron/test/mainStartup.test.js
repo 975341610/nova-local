@@ -6,8 +6,17 @@ const path = require('node:path');
 const mainSource = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 
 test('main process handles backend startup failures explicitly', () => {
-  assert.match(mainSource, /app\.whenReady\(\)\.then\(bootstrapApp\)\.catch/);
+  assert.match(mainSource, /app\.whenReady\(\)\.then\(async \(\) =>/);
+  assert.match(mainSource, /try\s*{\s*await bootstrapApp\(\)/);
+  assert.match(mainSource, /catch \(error\)/);
   assert.match(mainSource, /async function bootstrapApp\(\)/);
+});
+
+test('startup failure records failed version and attempts auto rollback', () => {
+  assert.match(mainSource, /runUpdaterCli\('mark_failed'/);
+  assert.match(mainSource, /runUpdaterCli\('auto_rollback_if_needed'/);
+  assert.match(mainSource, /auto-rolled back/);
+  assert.match(mainSource, /Version \$\{rb\.from_version\} crashed twice; rolled back to \$\{rb\.to_version\}/);
 });
 
 test('backend child process output is piped for diagnostics', () => {

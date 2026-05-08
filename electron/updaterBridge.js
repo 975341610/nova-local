@@ -26,6 +26,7 @@ const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
 const https = require('node:https');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 
 const LINK_TYPE = process.platform === 'win32' ? 'junction' : 'dir';
@@ -477,23 +478,18 @@ function registerIpc(ipcMain, options) {
   // M4 — crash.log reader (writer lands in M5)
   ipcMain.handle('updater:read-crash-log', async () => {
     const crashPath = path.join(appRoot, 'data', 'logs', 'crash.log');
-    try {
-      const raw = fs.readFileSync(crashPath, 'utf8');
-      return raw
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map((line) => {
-          try {
-            return JSON.parse(line);
-          } catch (_) {
-            return null;
-          }
-        })
-        .filter(Boolean);
-    } catch (e) {
-      if (e.code === 'ENOENT') return [];
-      throw e;
-    }
+    const installFailurePath = path.join(appRoot, 'data', 'logs', 'updater-install-failures.log');
+    const crashes = readJsonLinesIfExists(crashPath);
+    const installFailures = readJsonLinesIfExists(installFailurePath, (entry) => ({
+      timestamp: entry.timestamp,
+      version: entry.target_version || entry.package_id || 'unknown',
+      reason:
+        `安装失败 stage=${entry.stage}; error=${entry.error_type}: ${entry.error}; ` +
+        `rollback=${entry.rollback}; log=${installFailurePath}`,
+    }));
+    return [...crashes, ...installFailures].sort((a, b) =>
+      String(b.timestamp || '').localeCompare(String(a.timestamp || ''))
+    );
   });
 
   // ------------------------------------------------------------------
@@ -517,12 +513,13 @@ function registerIpc(ipcMain, options) {
     return checkRemote(appRoot);
   });
 
-  ipcMain.handle('updater:download-and-install', async (_evt, { url } = {}) => {
+  ipcMain.handle('updater:download-and-install', async (_evt, { url, sha256, size } = {}) => {
     if (!url) throw new Error('download-and-install: missing url');
     const cacheDir = path.join(appRoot, 'cache', 'updates');
     fs.mkdirSync(cacheDir, { recursive: true });
     const dest = path.join(cacheDir, `download-${Date.now()}.nova-update`);
     await downloadFile(url, dest);
+    assertDownloadedPackage(dest, { sha256, size });
     // Reuse existing pipeline for verify -> import -> install.
     const manifest = await callPyUpdater(appRoot, pythonExe, 'verify', { path: dest });
     const imported = await callPyUpdater(appRoot, pythonExe, 'import', { path: dest });
@@ -622,6 +619,57 @@ function downloadFile(url, dest) {
   });
 }
 
+function readJsonLinesIfExists(filePath, normalize) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return raw
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          const parsed = JSON.parse(line);
+          return normalize ? normalize(parsed) : parsed;
+        } catch (_) {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch (e) {
+    if (e.code === 'ENOENT') return [];
+    throw e;
+  }
+}
+
+function hashFileSha256(filePath) {
+  const hash = crypto.createHash('sha256');
+  const data = fs.readFileSync(filePath);
+  hash.update(data);
+  return hash.digest('hex');
+}
+
+function assertDownloadedPackage(filePath, expected = {}) {
+  const expectedSize = expected.size ?? expected.package_size_bytes;
+  if (expectedSize !== undefined && expectedSize !== null) {
+    const actualSize = fs.statSync(filePath).size;
+    const normalizedExpectedSize = Number(expectedSize);
+    if (Number.isFinite(normalizedExpectedSize) && actualSize !== normalizedExpectedSize) {
+      throw new Error(
+        `downloaded package size mismatch: expected ${normalizedExpectedSize}, got ${actualSize}`
+      );
+    }
+  }
+
+  const expectedSha = expected.sha256 ?? expected.package_sha256;
+  if (expectedSha) {
+    const actualSha = hashFileSha256(filePath);
+    if (actualSha.toLowerCase() !== String(expectedSha).toLowerCase()) {
+      throw new Error(
+        `downloaded package sha256 mismatch: expected ${expectedSha}, got ${actualSha}`
+      );
+    }
+  }
+}
+
 function compareSemver(a, b) {
   const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
   const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
@@ -631,6 +679,16 @@ function compareSemver(a, b) {
     if (x !== y) return x < y ? -1 : 1;
   }
   return 0;
+}
+
+function resolveFeedPackageUrl(feedUrl, packageUrl) {
+  if (!packageUrl || typeof packageUrl !== 'string') return null;
+  if (/^https?:\/\//i.test(packageUrl)) return packageUrl;
+  try {
+    return new URL(packageUrl, feedUrl).toString();
+  } catch (_) {
+    return packageUrl;
+  }
 }
 
 async function checkRemote(appRoot) {
@@ -661,7 +719,11 @@ async function checkRemote(appRoot) {
     current,
     latest,
     channel,
-    package_url: feed.package_url || null,
+    package_url: resolveFeedPackageUrl(cfg.feed_url, feed.package_url),
+    package_sha256: feed.package_sha256 || null,
+    package_size_bytes: Number.isFinite(Number(feed.package_size_bytes))
+      ? Number(feed.package_size_bytes)
+      : null,
     release_notes_md: feed.release_notes_md || '',
     released_at: feed.released_at || null,
   };
@@ -674,5 +736,7 @@ module.exports = {
   readVersionTxt,
   atomicSwitchCurrent,
   bootstrapVersionedLayout,
+  resolveFeedPackageUrl,
+  assertDownloadedPackage,
   registerIpc,
 };

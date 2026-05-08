@@ -63,6 +63,8 @@ export interface RemoteCheckResult {
   latest?: string | null
   channel?: string
   package_url?: string | null
+  package_sha256?: string | null
+  package_size_bytes?: number | null
   release_notes_md?: string
   released_at?: string | null
   reason?: string
@@ -155,8 +157,15 @@ export const updaterApi = {
   checkRemote: async (): Promise<RemoteCheckResult> => {
     return (await bridge().ipcInvoke('updater:check-remote')) as RemoteCheckResult
   },
-  downloadAndInstall: async (url: string): Promise<InstallResult & { manifest?: PackageManifest }> => {
-    const result = (await bridge().ipcInvoke('updater:download-and-install', { url })) as InstallResult & {
+  downloadAndInstall: async (
+    url: string,
+    expected?: { sha256?: string | null; size?: number | null },
+  ): Promise<InstallResult & { manifest?: PackageManifest }> => {
+    const result = (await bridge().ipcInvoke('updater:download-and-install', {
+      url,
+      sha256: expected?.sha256 ?? undefined,
+      size: expected?.size ?? undefined,
+    })) as InstallResult & {
       manifest?: PackageManifest
     }
     return result.manifest
