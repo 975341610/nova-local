@@ -61,7 +61,7 @@ export type NoteRevision = {
   content_hash: string;
   title_snapshot: string;
   byte_size: number;
-  source: 'auto' | 'save' | 'restore' | 'restore-point' | 'missing' | string;
+  source: 'auto' | 'save' | 'pre-save' | 'stable' | 'restore' | 'restore-point' | 'missing' | string;
   content?: string;
   missing?: boolean;
 };

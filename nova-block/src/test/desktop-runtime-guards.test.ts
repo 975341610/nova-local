@@ -273,9 +273,27 @@ describe('desktop runtime guards', () => {
     const updateHandler = mainSource.slice(updateHandlerStart, updateHandlerEnd)
 
     expect(mainSource).toContain('async function captureRevisionSnapshotBeforeLocalUpdate')
+    expect(mainSource).toContain('function scheduleRevisionSnapshotAfterLocalUpdate')
+    expect(mainSource).toContain('async function flushPendingRevisionSnapshotTimers')
+    expect(mainSource).toContain("body: JSON.stringify({ source: 'pre-save' })")
+    expect(mainSource).toContain("body: JSON.stringify({ source: 'stable' })")
+    expect(mainSource).toContain('const REVISION_FINAL_SNAPSHOT_DELAY_MS = 3_000')
     expect(updateHandler.indexOf('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input)')).toBeGreaterThan(-1)
     expect(updateHandler.indexOf('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input)')).toBeLessThan(
       updateHandler.indexOf('fsBridge.updateNote(noteId, input)'),
+    )
+    expect(updateHandler.indexOf('scheduleRevisionSnapshotAfterLocalUpdate(noteId)')).toBeGreaterThan(
+      updateHandler.indexOf('fsBridge.updateNote(noteId, input)'),
+    )
+    expect(updateHandler).not.toContain("path: '/notes/' + noteId + '/snapshot'")
+    expect(updateHandler).not.toContain('[notes:update] auto-snapshot')
+
+    const closeHandlerStart = mainSource.indexOf("mainWindow.on('close'")
+    const closeHandlerEnd = mainSource.indexOf("mainWindow.on('closed'", closeHandlerStart)
+    const closeHandler = mainSource.slice(closeHandlerStart, closeHandlerEnd)
+    expect(closeHandler).toContain('await flushPendingRevisionSnapshotTimers()')
+    expect(closeHandler.indexOf('await flushPendingRevisionSnapshotTimers()')).toBeLessThan(
+      closeHandler.indexOf('finalizeClose()'),
     )
   })
 })

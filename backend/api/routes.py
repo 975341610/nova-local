@@ -1407,6 +1407,7 @@ def restore_note_revision_api(note_id: int, revision_id: int, db: Session = Depe
             title=note.title or "",
             content=note.content or "",
             source="restore",
+            protected_revision_ids={_rev.id},
         )
     except Exception as err:
         print(f"[revision] post-restore snapshot failed for note {note_id}: {err}")
@@ -1436,7 +1437,7 @@ def capture_note_snapshot_api(
     source = "auto"
     if isinstance(payload, dict):
         raw_source = payload.get("source")
-        if raw_source in ("auto", "save", "manual"):
+        if raw_source in ("auto", "save", "manual", "pre-save", "stable"):
             source = "save" if raw_source == "manual" else raw_source
 
     try:

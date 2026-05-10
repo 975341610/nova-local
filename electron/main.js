@@ -92,6 +92,8 @@ let backendRestartTimer = null;
 let backendRestartAttempts = 0;
 let backendLastError = null;
 const recentLocalVaultChanges = new Map();
+const revisionSnapshotTimers = new Map();
+const REVISION_FINAL_SNAPSHOT_DELAY_MS = 3_000;
 
 const fsBridge = createFsBridge({ vaultRoot: VAULT_ROOT });
 
@@ -421,8 +423,9 @@ function createMainWindow() {
       ipcMain.removeListener('app:before-close-complete', handleRendererReady);
     };
 
-    const handleRendererReady = () => {
+    const handleRendererReady = async () => {
       cleanup();
+      await flushPendingRevisionSnapshotTimers();
       finalizeClose();
     };
 
@@ -831,12 +834,52 @@ async function captureRevisionSnapshotBeforeLocalUpdate(noteId, input) {
       path: '/notes/' + noteId + '/snapshot',
       options: {
         method: 'POST',
-        body: JSON.stringify({ source: 'auto' }),
+        body: JSON.stringify({ source: 'pre-save' }),
       },
     });
   } catch (error) {
     console.warn('[revision] failed to capture desktop snapshot for note ' + noteId + ':', error && error.message ? error.message : error);
   }
+}
+
+function scheduleRevisionSnapshotAfterLocalUpdate(noteId) {
+  const existingTimer = revisionSnapshotTimers.get(noteId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+
+  const timer = setTimeout(() => {
+    revisionSnapshotTimers.delete(noteId);
+    captureStableRevisionSnapshot(noteId).catch((error) => {
+      console.warn('[revision] failed to capture final desktop snapshot for note ' + noteId + ':', error && error.message ? error.message : error);
+    });
+  }, REVISION_FINAL_SNAPSHOT_DELAY_MS);
+
+  revisionSnapshotTimers.set(noteId, timer);
+}
+
+function captureStableRevisionSnapshot(noteId) {
+  return requestBackendApi({
+    channel: 'notes:snapshot',
+    path: '/notes/' + noteId + '/snapshot',
+    options: {
+      method: 'POST',
+      body: JSON.stringify({ source: 'stable' }),
+    },
+  });
+}
+
+async function flushPendingRevisionSnapshotTimers() {
+  const noteIds = Array.from(revisionSnapshotTimers.keys());
+  for (const timer of revisionSnapshotTimers.values()) {
+    clearTimeout(timer);
+  }
+  revisionSnapshotTimers.clear();
+  await Promise.all(noteIds.map((noteId) => (
+    captureStableRevisionSnapshot(noteId).catch((error) => {
+      console.warn('[revision] failed to flush final desktop snapshot for note ' + noteId + ':', error && error.message ? error.message : error);
+    })
+  )));
 }
 
 function pickNoteWritePayload(payload) {
@@ -937,20 +980,8 @@ function registerIpcHandlers() {
     await captureRevisionSnapshotBeforeLocalUpdate(noteId, input);
     const updated = await fsBridge.updateNote(noteId, input);
     markLocalVaultChange(updated.file_path);
-    // v0.23.4 hotfix: auto-snapshot after save (front-end bundle misses the call)
-    try {
-      requestBackendApi({
-        channel: 'notes:snapshot',
-        path: '/notes/' + noteId + '/snapshot',
-        options: {
-          method: 'POST',
-          body: JSON.stringify({ source: 'auto' }),
-        },
-      }).catch((err) => {
-        console.warn('[notes:update] auto-snapshot failed:', err && err.message ? err.message : err);
-      });
-    } catch (err) {
-      console.warn('[notes:update] auto-snapshot dispatch error:', err && err.message ? err.message : err);
+    if (Object.prototype.hasOwnProperty.call(input, 'content')) {
+      scheduleRevisionSnapshotAfterLocalUpdate(noteId);
     }
     return updated;
   });
@@ -1061,6 +1092,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isAppQuitting = true;
+  void flushPendingRevisionSnapshotTimers();
   if (backendRestartTimer) {
     clearTimeout(backendRestartTimer);
     backendRestartTimer = null;

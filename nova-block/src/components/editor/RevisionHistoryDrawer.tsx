@@ -53,6 +53,8 @@ function formatSize(bytes: number): string {
 const SOURCE_LABEL: Record<string, { text: string; color: string }> = {
   auto: { text: '自动', color: 'bg-slate-500/10 text-slate-500' },
   save: { text: '手动', color: 'bg-indigo-500/10 text-indigo-500' },
+  'pre-save': { text: '保存前', color: 'bg-violet-500/10 text-violet-600' },
+  stable: { text: '完成版', color: 'bg-sky-500/10 text-sky-600' },
   restore: { text: '回滚后', color: 'bg-emerald-500/10 text-emerald-500' },
   'restore-point': { text: '回滚兜底', color: 'bg-amber-500/10 text-amber-600' },
 }

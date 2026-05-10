@@ -1,21 +1,17 @@
-"""v0.22.0 · 笔记版本快照服务 (v0.23.4 hotfix: idle-collapse)
+"""v0.22.0 · 笔记版本快照服务
 
-策略 (v0.23.4-idle-collapse):
+策略:
   - 每次 update_note 落盘时旁路调一次 maybe_snapshot()
   - 去重: content 的 sha1 与最新一条相同则跳过
-  - 空闲合并 (idle-collapse):
-      * 若 hash 变化, 但距离最新一条 auto 快照不足 debounce_seconds
-        (用户没"停手"超过 N 秒), 则直接 **原地覆写** 最新那条 auto 快照,
-        把它的内容、hash、byte_size、created_at 刷新成本次内容.
-        —— 既保证崩溃不丢最新输入, 又不会让历史表刷屏
-      * 距离 >= debounce_seconds, 新开一条快照.
-        这就是用户"停手 N 秒"后的稳态版本
+  - 去抖: 若 hash 变化, 但距离最新一条 auto 快照不足 debounce_seconds,
+    则跳过本次 auto 快照, 不覆盖旧版本; 用户停手并超过 debounce_seconds 后,
+    下一次内容变化保存会新增一条快照
   - 保留: 同一 note_id 保留 MAX_KEEP 条 + 首版 1 条
   - restore 时先为当前版打一个 source="restore-point" 的兜底快照 (绕过去抖)
 
 策略可经 get_settings()/update_settings() 在运行时调整, 持久化到
-data_root/revision_settings.json. debounce_seconds 的语义在本版改为
-"停手 N 秒后固化为新历史"
+data_root/revision_settings.json. debounce_seconds 的语义为
+"距离上一条 auto 快照不足 N 秒时跳过本次 auto 快照"。
 
 接口:
   - maybe_snapshot(db, note_id, title, content, source="auto") -> NoteRevision | None
@@ -41,11 +37,11 @@ from sqlalchemy.orm import Session
 from backend.models.db_models import NoteRevision
 
 # 默认策略
-# v0.23.4 hotfix (idle-collapse):
-#   - debounce 语义改为 "用户停手超过 N 秒后固化新历史"
+#   - debounce 语义为 "距离上一条 auto 快照不足 N 秒时跳过本次 auto 快照"
 #   - 默认 10s, 合法范围 [1, 24h], 可以通过 /system/revision-settings 在线修改
 DEFAULT_DEBOUNCE_SECONDS = 10
 DEFAULT_MAX_KEEP = 50  # 外加首版 1 条
+INTERNAL_REVISION_SOURCES = {"pre-save"}
 
 # 合法范围
 _MIN_DEBOUNCE = 1
@@ -161,15 +157,16 @@ def maybe_snapshot(
     title: str,
     content: str,
     source: str = "auto",
+    protected_revision_ids: set[int] | None = None,
 ) -> Optional[NoteRevision]:
     """判断是否需要打一条快照,并写入.
 
-    v0.23.4 idle-collapse 策略:
+    策略:
       * 相同 hash       -> 跳过(纯去重)
       * hash 变但距上次 auto 快照 < debounce_seconds 且 source=="auto"
-                        -> 原地覆写最新 auto 快照(collapse),不新增行
+                        -> 跳过本次快照, 不覆盖旧快照
       * 否则            -> 新增一条
-    非 auto 来源(restore/save 等)永远新增,不受 collapse 影响.
+    非 auto 来源(pre-save/restore/save 等)永远新增,不受 debounce 影响.
     """
     if content is None:
         return None
@@ -191,26 +188,33 @@ def maybe_snapshot(
     content_bytes = content.encode("utf-8", errors="replace")
     content_gz = gzip.compress(content_bytes, compresslevel=6)
 
+    if latest is not None and source == "pre-save":
+        # 保存前保护点不受 auto 快照去抖影响,但连续保护点需要合并,避免桌面端
+        # 高频自动保存把历史列表刷屏.
+        if latest.content_hash == content_hash:
+            return None
+        if (
+            latest.source == "pre-save"
+            and latest.created_at is not None
+            and now - latest.created_at < timedelta(seconds=debounce_seconds)
+        ):
+            return None
+
+    if latest is not None and source == "stable":
+        if latest.content_hash == content_hash:
+            return None
+
     if latest is not None and source == "auto":
         # 去重
         if latest.content_hash == content_hash:
             return None
-        # 空闲合并 (idle-collapse)
+        # 去抖: 用户连续输入期间不刷屏, 也不覆盖上一条历史版本
         if (
             latest.source == "auto"
             and latest.created_at is not None
             and now - latest.created_at < timedelta(seconds=debounce_seconds)
         ):
-            # 用户还在连续输入, 原地刷新最新那条 auto 快照
-            latest.content_gz = content_gz
-            latest.content_hash = content_hash
-            latest.title_snapshot = (title or "")[:255]
-            latest.byte_size = len(content_bytes)
-            latest.created_at = now  # 推迟稳态固化时刻
-            db.flush()
-            db.commit()
-            db.refresh(latest)
-            return latest
+            return None
 
     revision = NoteRevision(
         note_id=note_id,
@@ -224,14 +228,14 @@ def maybe_snapshot(
     db.add(revision)
     db.flush()  # 拿到 id, 便于后续剪枝
 
-    prune_revisions(db, note_id)
+    prune_revisions(db, note_id, protected_ids=protected_revision_ids)
 
     db.commit()
     db.refresh(revision)
     return revision
 
 
-def prune_revisions(db: Session, note_id: int) -> int:
+def prune_revisions(db: Session, note_id: int, protected_ids: set[int] | None = None) -> int:
     """保留最早 1 条 + 最近 MAX_KEEP 条,返回删除行数."""
     cfg = _load_settings()
     max_keep = cfg["max_keep"]
@@ -245,9 +249,12 @@ def prune_revisions(db: Session, note_id: int) -> int:
     if len(rows) <= max_keep + 1:
         return 0
 
-    # 第 0 条保留(首版); 末尾 max_keep 条保留; 其余删除
+    # 第 0 条保留(首版); 末尾 max_keep 条保留; protected_ids 额外保留.
+    # 恢复旧版本时,目标版本和恢复兜底点不能被同一次剪枝删掉.
     # v0.22.0-a hotfix7 · 防御 max_keep==0 时 rows[-0:] 返回全列表的陷阱
     keep_ids = {rows[0].id}
+    if protected_ids:
+        keep_ids.update(int(rid) for rid in protected_ids if rid is not None)
     if max_keep > 0:
         for r in rows[-max_keep:]:
             keep_ids.add(r.id)
@@ -259,13 +266,19 @@ def prune_revisions(db: Session, note_id: int) -> int:
     return len(to_delete)
 
 
-def list_revisions(db: Session, note_id: int) -> list[NoteRevision]:
-    return (
+def list_revisions(db: Session, note_id: int, include_internal: bool = False) -> list[NoteRevision]:
+    rows = (
         db.query(NoteRevision)
         .filter(NoteRevision.note_id == note_id)
         .order_by(desc(NoteRevision.created_at))
         .all()
     )
+    if include_internal:
+        return rows
+    visible_rows = [row for row in rows if row.source not in INTERNAL_REVISION_SOURCES]
+    if visible_rows or not rows:
+        return visible_rows
+    return rows[:1]
 
 
 def get_revision(
@@ -324,7 +337,10 @@ def restore_revision(
         )
         db.add(safety)
         db.flush()
-        prune_revisions(db, note_id)
+        protected_ids = {revision_id}
+        if safety.id is not None:
+            protected_ids.add(safety.id)
+        prune_revisions(db, note_id, protected_ids=protected_ids)
         db.commit()
     except Exception:
         db.rollback()

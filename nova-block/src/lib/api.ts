@@ -100,7 +100,7 @@ export const api = {
     invoke<NoteRevision>('notes:revisions:get', `/notes/${noteId}/revisions/${revisionId}`),
   restoreNoteRevision: (noteId: number, revisionId: number) =>
     invoke<Note | { missing: true; detail?: string }>('notes:revisions:restore', `/notes/${noteId}/revisions/${revisionId}/restore`, { method: 'POST' }),
-  captureNoteSnapshot: (noteId: number, source: 'auto' | 'save' | 'manual' = 'auto') =>
+  captureNoteSnapshot: (noteId: number, source: 'auto' | 'save' | 'manual' | 'pre-save' | 'stable' = 'auto') =>
     invoke<{ status: string; snapshot_id: number | null; skipped?: boolean; detail?: string }>('notes:snapshot', `/notes/${noteId}/snapshot`, { method: 'POST', body: JSON.stringify({ source }) }),
   getRevisionSettings: () => invoke<RevisionSettings>('system:revision-settings:get', '/system/revision-settings'),
   updateRevisionSettings: (payload: Partial<RevisionSettings>) =>
