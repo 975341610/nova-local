@@ -23,7 +23,7 @@ export const EmoticonPanel: React.FC<EmoticonPanelProps> = ({ onSelect, classNam
   const fetchEmoticons = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${getApiBase()}/emoticons/list`);
+      const res = await fetch(`${getApiBase()}/emoticons/list`, { cache: 'no-store' });
       const data = await res.json();
       setEmoticons(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -49,6 +49,7 @@ export const EmoticonPanel: React.FC<EmoticonPanelProps> = ({ onSelect, classNam
       
       const res = await fetch(`${getApiBase()}/emoticons/upload`, {
         method: 'POST',
+        cache: 'no-store',
         body: formData,
       });
       
@@ -69,6 +70,7 @@ export const EmoticonPanel: React.FC<EmoticonPanelProps> = ({ onSelect, classNam
     try {
       const res = await fetch(`${getApiBase()}/emoticons/files/${filename}`, {
         method: 'DELETE',
+        cache: 'no-store',
       });
       if (res.ok) {
         setEmoticons(prev => (Array.isArray(prev) ? prev : []).filter(s => s.name !== filename));

@@ -20,16 +20,51 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# v0.22.0-a hotfix10 · 幂等剥离 body 内部嵌套的 YAML frontmatter.
+# 历史上的坏数据/版本快照可能已把整份 Markdown (含 frontmatter) 写到 body 里.
+# hotfix9 的旧实现只认 "---\n<yaml>\n---\n", 但实际污染可能是:
+#   - Windows 换行 (\r\n) 导致 startswith("---\n") 直接 false
+#   - YAML parser 把 list 重新序列化时把 frontmatter 压成单行/无空行
+#   - 尾部 --- 后没有换行, 后面直接接正文
+# 所以这里:
+#   1. 先规范化 CRLF -> LF 再扫描
+#   2. 用宽松正则匹配开头的 ^---[\r\n]+ ... [\r\n]+---(\r\n|\n|$) 块
+#   3. 最多剥 5 次 (防嵌套), 彻底剥完 + 再把开头残留的空行/连字符去掉
+def strip_embedded_frontmatter(content: str | None) -> str:
+    import re
+    if not content:
+        return content or ""
+    body = content
+    # 统一换行, 只在扫描时使用; 最终返回同样是 LF (Electron 端也统一 LF)
+    if "\r\n" in body:
+        body = body.replace("\r\n", "\n")
+    if "\r" in body:
+        body = body.replace("\r", "\n")
+    pattern = re.compile(r"^---[ \t]*\n.*?\n---[ \t]*(?:\n|$)", re.DOTALL)
+    for _ in range(5):
+        stripped = body.lstrip()
+        if not stripped.startswith("---"):
+            break
+        m = pattern.match(stripped)
+        if not m:
+            # 兜底: 只有开头的 "---" 而找不到闭合的情况 -> 不剥离, 跳出
+            break
+        body = stripped[m.end():]
+    return body.lstrip("\n")
+
+
 def iso_now() -> str:
     return utc_now().isoformat()
 
 
-def parse_datetime(value: str | None) -> datetime | None:
+def parse_datetime(value: str | datetime | None) -> datetime | None:
     if not value:
         return None
+    if isinstance(value, datetime):
+        return value
     try:
         return datetime.fromisoformat(value)
-    except ValueError:
+    except (TypeError, ValueError):
         return None
 
 
@@ -281,8 +316,11 @@ class VaultStore:
     def _write_note_file(self, note: VaultNote) -> None:
         if note.path is None:
             raise ValueError("Note path is required")
+        # hotfix9: 再落盘前清掉 body 内嵌 frontmatter, 这是最后一道兜底
+        clean_body = strip_embedded_frontmatter(note.content or "")
+        note.content = clean_body
         frontmatter = yaml.safe_dump(self._note_frontmatter(note), allow_unicode=True, sort_keys=False)
-        body = f"---\n{frontmatter}---\n\n{note.content or ''}"
+        body = f"---\n{frontmatter}---\n\n{clean_body}"
         note.path.write_text(body, encoding="utf-8")
 
     def _parse_note_file(self, note_path: Path, notebook: VaultNotebook, parent_id: int | None, deleted: bool = False) -> VaultNote:
@@ -311,7 +349,8 @@ class VaultStore:
             id=note_id,
             title=str(frontmatter.get("title", note_path.stem)),
             icon=str(frontmatter.get("icon", "📝")),
-            content=body.lstrip("\n"),
+            # hotfix9: 防御性剥掉 body 内部的嵌套 frontmatter
+            content=strip_embedded_frontmatter(body.lstrip("\n")),
             summary=str(frontmatter.get("summary", "")),
             tags=tags,
             type=str(frontmatter.get("type", "note")),
@@ -590,7 +629,8 @@ class VaultStore:
             note.file_path = str(target)
             note.title = title
         if content is not None:
-            note.content = content
+            # hotfix9: 防御性剥离嵌套 frontmatter, 防止历史坏数据/恢复链路污染
+            note.content = strip_embedded_frontmatter(content)
         if summary is not None:
             note.summary = summary
         if tags is not None:
@@ -629,10 +669,20 @@ class VaultStore:
         note = self.get_note(note_id)
         if note is None or note.path is None:
             return None
+        # v0.22.0-a hotfix11 · 硬防护: 禁止把节点移动到自身或自身的子孙
         if parent_id is not None:
+            if int(parent_id) == int(note.id):
+                raise ValueError("Cannot move a note into itself")
             parent = self.get_note(parent_id)
             if parent is None or parent.path is None or not parent.is_folder:
                 return None
+            try:
+                parent.path.resolve().relative_to(note.path.resolve())
+                raise ValueError("Cannot move a folder into itself or its descendant")
+            except ValueError as exc:
+                if "Cannot move" in str(exc):
+                    raise
+                # parent.path is NOT relative to note.path -> 合法
             destination_dir = parent.path
             note.parent_id = parent_id
             note.notebook_id = parent.notebook_id

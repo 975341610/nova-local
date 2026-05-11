@@ -1,4 +1,4 @@
-import json
+﻿import json
 from functools import lru_cache
 from pathlib import Path
 import sys
@@ -12,20 +12,20 @@ PROJECT_DIR = BASE_DIR.parent
 
 
 def resource_root() -> Path:
-    """获取程序资源根目录（用于前端静态文件、内置资源）"""
+    """Return the application resource root for static frontend and bundled assets."""
     if getattr(sys, "frozen", False):
-        # PyInstaller 打包后的临时解压目录
+        # PyInstaller extraction directory in packaged builds.
         import sys as _sys
         return Path(getattr(_sys, "_MEIPASS", _sys.executable))
     return PROJECT_DIR
 
 
 def runtime_root() -> Path:
-    """获取程序运行时根目录（用于数据库、上传文件等需要持久化的数据）"""
+    """Return the runtime root for persistent data such as DBs and uploads."""
     if getattr(sys, "frozen", False):
-        # exe 所在目录
+        # Directory containing the packaged executable.
         return Path(sys.executable).resolve().parent
-    # 开发环境下，优先检查工作目录下的 data 是否存在
+    # In development, prefer the current workspace when it already owns data/.
     if (Path.cwd() / "data").exists():
         return Path.cwd()
     return PROJECT_DIR
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     app_name: str = "Second Brain AI"
     api_prefix: str = "/api"
     
-    # 基础路径，默认指向 runtime_root() / 'data'
+    # Base data path. Defaults to runtime_root() / "data".
     data_root: Path = Field(default_factory=lambda: Path(load_custom_data_path() or (runtime_root() / "data")))
 
     @property
@@ -94,16 +94,26 @@ class Settings(BaseSettings):
     chunk_size_words: int = 650
     chunk_overlap_words: int = 80
     top_k: int = 5
-    cors_origins: list[str] = ["*"]
-    access_token: str = ""  # 访问密钥，为空则不开启认证
-
+    cors_origins: list[str] = [
+        "http://127.0.0.1",
+        "http://localhost",
+        "http://127.0.0.1:4173",
+        "http://localhost:4173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ]
+    desktop_local_token: str = Field(default="", validation_alias="NOVA_DESKTOP_TOKEN")
+    # Legacy escape hatch for desktop-only operations that have moved to Electron IPC.
+    enable_legacy_system_http: bool = Field(default=False, validation_alias="NOVA_ENABLE_LEGACY_SYSTEM_HTTP")
+    access_token: str = ""  # Optional bearer token. Empty disables auth in desktop mode.
+    run_mode: str = Field(default="desktop_local", validation_alias="RUN_MODE")
     model_config = SettingsConfigDict(env_file=str(runtime_root() / ".env"), extra="ignore")
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     settings = Settings()
-    # 确保目录存在
+    # Ensure runtime directories exist before services start.
     settings.data_root.mkdir(parents=True, exist_ok=True)
     Path(settings.vault_path).mkdir(parents=True, exist_ok=True)
     Path(settings.sqlite_url.replace("sqlite:///", "")).parent.mkdir(parents=True, exist_ok=True)
@@ -112,3 +122,4 @@ def get_settings() -> Settings:
     Path(settings.music_path).mkdir(parents=True, exist_ok=True)
     Path(settings.stickers_path).mkdir(parents=True, exist_ok=True)
     return settings
+

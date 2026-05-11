@@ -1,4 +1,5 @@
 import { Node, mergeAttributes } from '@tiptap/core';
+import { formatUrl } from '../../../lib/api';
 
 export interface EmoticonOptions {
   HTMLAttributes: Record<string, any>;
@@ -64,6 +65,7 @@ export const Emoticon = Node.create<EmoticonOptions>({
     return [
       'img',
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+        src: formatUrl(HTMLAttributes.src),
         style: 'width: 1.5em; height: 1.5em; vertical-align: middle; display: inline-block; margin: 0 0.1em;',
       }),
     ];

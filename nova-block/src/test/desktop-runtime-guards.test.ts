@@ -38,8 +38,43 @@ describe('desktop runtime guards', () => {
     const editorSource = fs.readFileSync(editorPath, 'utf8')
     const canvasSource = fs.readFileSync(canvasPath, 'utf8')
 
-    expect(editorSource).toContain("const autosaveDelayMs = window.electron?.ipcInvoke ? 0 : 3000;")
+    expect(editorSource).toContain("const autosaveDelayMs = window.electron?.ipcInvoke ? 250 : 3000;")
     expect(canvasSource).toContain("}, window.electron?.ipcInvoke ? 0 : 650);")
+  })
+
+  it('keeps heavy editor HTML serialization out of the synchronous onUpdate typing path', () => {
+    const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
+    const editorSource = fs.readFileSync(editorPath, 'utf8')
+    const onUpdateStart = editorSource.indexOf('onUpdate: ({ editor }) => {')
+    const onCreateStart = editorSource.indexOf('onCreate: ({ editor }) => {')
+    const onUpdateBody = editorSource.slice(onUpdateStart, onCreateStart)
+
+    expect(onUpdateBody).not.toContain('const html = editor.getHTML();')
+    expect(onUpdateBody).toContain('liveContentTimerRef.current = window.setTimeout')
+  })
+
+  it('keeps sidebar titles in sync with the first text block during live content updates', () => {
+    const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
+    const editorSource = fs.readFileSync(editorPath, 'utf8')
+    const onUpdateStart = editorSource.indexOf('onUpdate: ({ editor }) => {')
+    const onCreateStart = editorSource.indexOf('onCreate: ({ editor }) => {')
+    const onUpdateBody = editorSource.slice(onUpdateStart, onCreateStart)
+
+    expect(onUpdateBody).toContain('const nextAutoTitle = extractLeadingNoteTitle(editor.state.doc);')
+    expect(onUpdateBody).toContain('nextAutoTitle &&')
+    expect(onUpdateBody).toContain('!currentLatestNote?.is_title_manually_edited &&')
+    expect(onUpdateBody).toContain('nextAutoTitle !== currentLatestNote?.title')
+    expect(onUpdateBody).toContain('payload.is_title_manually_edited = false;')
+    expect(onUpdateBody).toContain('title: latestNoteRef.current?.title,')
+  })
+
+  it('protects optimistic sidebar titles from stale vault refreshes while a save is pending', () => {
+    const appPath = path.resolve(__dirname, '../App.tsx')
+    const appSource = fs.readFileSync(appPath, 'utf8')
+
+    expect(appSource).toContain('if (previous && hasPendingNoteSave(note.id))')
+    expect(appSource).toContain('title: previous.title,')
+    expect(appSource).toContain('is_title_manually_edited: previous.is_title_manually_edited,')
   })
 
   it('guards editor view access behind a safe helper so startup does not white-screen before mount', () => {
@@ -57,7 +92,7 @@ describe('desktop runtime guards', () => {
     expect(spellcheckSource).not.toContain('void api.spellcheck(paragraphText)')
   })
 
-  it('routes spellcheck popup opening through a capture-phase editor mousedown listener that rebinds when the editor instance changes', () => {
+  it('routes spellcheck popup opening through ProseMirror document positions instead of capture-phase DOM listeners', () => {
     const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
     const spellcheckPath = path.resolve(__dirname, '../components/novablock/extensions/AISpellcheck.ts')
     const editorSource = fs.readFileSync(editorPath, 'utf8')
@@ -65,13 +100,12 @@ describe('desktop runtime guards', () => {
 
     expect(editorSource).toContain('const [editorViewReadyToken, setEditorViewReadyToken] = useState(0);')
     expect(editorSource).toContain('setEditorViewReadyToken((value) => value + 1);')
-    expect(editorSource).toContain("editorDom.addEventListener('mousedown', handleSpellcheckMarkerMouseDown, true)")
-    expect(editorSource).toContain("editorDom.removeEventListener('mousedown', handleSpellcheckMarkerMouseDown, true)")
-    expect(editorSource).toContain('}, [getEditorViewDom, note?.id, editor, editorViewReadyToken]);')
-    expect(editorSource).toContain('parseSpellcheckErrorFromTarget')
-    expect(editorSource).toContain('findSpellcheckMarkerFromTarget')
+    expect(editorSource).toContain('SPELLCHECK_SUGGESTION_REQUEST_EVENT')
+    expect(editorSource).not.toContain('handleSpellcheckMarkerMouseDown')
+    expect(editorSource).not.toContain("editorDom.addEventListener('mousedown'")
+    expect(spellcheckSource).toContain('handleClick(view, pos)')
+    expect(spellcheckSource).toContain('resolveSpellcheckPopupRequest(storage.errors, pos')
     expect(spellcheckSource).not.toContain('pointerdown: (view, event) => {')
-    expect(spellcheckSource).not.toContain('handleClick: (view, pos, _event) => {')
     expect(spellcheckSource).not.toContain('click: (view, event) => {')
   })
 
@@ -85,5 +119,181 @@ describe('desktop runtime guards', () => {
     expect(editorSource).toContain("spellcheck: 'false'")
     expect(editorSource).toContain("autocorrect: 'off'")
     expect(editorSource).toContain("autocapitalize: 'off'")
+  })
+
+  it('uses the in-app confirm flow for clearing stickers instead of native window.confirm', () => {
+    const editorHeaderPath = path.resolve(__dirname, '../components/editor/EditorHeader.tsx')
+    const confirmCompatPath = path.resolve(__dirname, '../lib/confirmCompat.ts')
+    const editorHeaderSource = fs.readFileSync(editorHeaderPath, 'utf8')
+    const confirmCompatSource = fs.readFileSync(confirmCompatPath, 'utf8')
+
+    expect(editorHeaderSource).toContain('confirmCompat({')
+    expect(editorHeaderSource).not.toContain('window.confirm(')
+    expect(confirmCompatSource).toContain('export async function confirmCompat')
+  })
+
+  it('restores editor focus after sticker mode is turned off', () => {
+    const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
+    const editorSource = fs.readFileSync(editorPath, 'utf8')
+
+    expect(editorSource).toContain('const restoreEditorFocusAfterStickerMode = useCallback(() => {')
+    expect(editorSource).toContain('if (previousStickerModeRef.current && !isStickerMode) {')
+    expect(editorSource).toContain('editor.chain().focus().run();')
+  })
+
+  it('does not attach a save-time tooltip popup to the editor status indicator', () => {
+    const editorHeaderPath = path.resolve(__dirname, '../components/editor/EditorHeader.tsx')
+    const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
+    const editorHeaderSource = fs.readFileSync(editorHeaderPath, 'utf8')
+    const editorSource = fs.readFileSync(editorPath, 'utf8')
+
+    expect(editorHeaderSource).not.toContain('title={lastSavedAt ?')
+    expect(editorSource).not.toContain('fixed bottom-12 left-1/2 -translate-x-1/2')
+  })
+
+  it('uses static tree rows and keeps the collapse button fully inside the viewport', () => {
+    const treeNodeItemPath = path.resolve(__dirname, '../components/sidebar/TreeNodeItem.tsx')
+    const sidebarTreePath = path.resolve(__dirname, '../components/sidebar/SidebarTree.tsx')
+    const treeNodeItemSource = fs.readFileSync(treeNodeItemPath, 'utf8')
+    const sidebarTreeSource = fs.readFileSync(sidebarTreePath, 'utf8')
+
+    expect(treeNodeItemSource).not.toContain('motion.div')
+    expect(treeNodeItemSource).not.toContain('transition-all duration-300')
+    expect(sidebarTreeSource).not.toContain('-right-3')
+  })
+
+  it('keeps desktop auth tokens in the main process and exposes only allowlisted IPC', () => {
+    const preloadPath = path.resolve(__dirname, '../../../electron/preload.js')
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const preloadSource = fs.readFileSync(preloadPath, 'utf8')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+
+    expect(preloadSource).toContain('const ALLOWED_IPC_CHANNELS = new Set([')
+    expect(preloadSource).toContain('if (!ALLOWED_IPC_CHANNELS.has(channel))')
+    expect(preloadSource).toContain("'system:open-file'")
+    expect(preloadSource).toContain("'system:switch-data-path'")
+    expect(preloadSource).toContain("'system:import-data'")
+    expect(preloadSource).toContain("'system:update'")
+    expect(preloadSource).toContain("'system:restart'")
+    expect(preloadSource).toContain("'ai:update-ollama'")
+    expect(preloadSource).toContain("'desktop:api-request'")
+    expect(preloadSource).not.toContain('getDesktopAuthToken')
+    expect(preloadSource).not.toContain("'desktop:get-auth-token'")
+    expect(mainSource).toContain("ipcMain.handle('system:open-file'")
+    expect(mainSource).toContain("ipcMain.handle('system:switch-data-path'")
+    expect(mainSource).toContain("ipcMain.handle('system:import-data'")
+    expect(mainSource).toContain("ipcMain.handle('system:update'")
+    expect(mainSource).toContain("ipcMain.handle('system:restart'")
+    expect(mainSource).toContain("ipcMain.handle('ai:update-ollama'")
+    expect(mainSource).toContain("ipcMain.handle('desktop:api-request'")
+    expect(mainSource).not.toContain("['system:open-file', { method: 'POST', path: '/system/open-file' }]")
+    expect(mainSource).not.toContain("['ai:update-ollama', { method: 'POST', path: '/ai/update-ollama' }]")
+    expect(mainSource).not.toContain("ipcMain.handle('desktop:get-auth-token'")
+    expect(mainSource).toContain("ipcMain.handle('desktop:get-backend-base-url'")
+  })
+
+  it('refreshes vault watcher changes incrementally before falling back to full reloads', () => {
+    const appPath = path.resolve(__dirname, '../App.tsx')
+    const preloadPath = path.resolve(__dirname, '../../../electron/preload.js')
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const fsBridgePath = path.resolve(__dirname, '../../../electron/fsBridge.js')
+    const appSource = fs.readFileSync(appPath, 'utf8')
+    const preloadSource = fs.readFileSync(preloadPath, 'utf8')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+    const fsBridgeSource = fs.readFileSync(fsBridgePath, 'utf8')
+
+    expect(appSource).toContain('const handleVaultChanged = useCallback')
+    expect(appSource).toContain('api.getChangedNotes(changedFilenames)')
+    expect(appSource).toContain('handleVaultChanged(payload)')
+    expect(preloadSource).toContain("'notes:changed'")
+    expect(mainSource).toContain("ipcMain.handle('notes:changed'")
+    expect(fsBridgeSource).toContain('async function getNotesByPaths')
+  })
+
+  it('redirects legacy file:// API media requests back to the local backend', () => {
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+
+    expect(mainSource).toContain('webRequest.onBeforeRequest')
+    expect(mainSource).toContain('legacyApiMatch')
+    expect(mainSource).toContain('redirectURL: `${BACKEND_ORIGIN}/api${legacyApiMatch[1] || \'\'}')
+  })
+
+  it('does not keep dummy note property API implementations in the frontend client', () => {
+    const apiPath = path.resolve(__dirname, '../lib/api.ts')
+    const apiSource = fs.readFileSync(apiPath, 'utf8')
+
+    expect(apiSource).not.toContain('Dummy updateNoteProperty')
+    expect(apiSource).toContain("`/notes/${noteId}/properties/${propertyId}`")
+  })
+
+  it('keeps URL normalization and HTML sanitization outside the main API client module', () => {
+    const apiPath = path.resolve(__dirname, '../lib/api.ts')
+    const apiUrlPath = path.resolve(__dirname, '../lib/apiUrl.ts')
+    const apiSource = fs.readFileSync(apiPath, 'utf8')
+    const apiUrlSource = fs.readFileSync(apiUrlPath, 'utf8')
+
+    expect(apiSource).toContain("from './apiUrl'")
+    expect(apiSource).not.toContain("import DOMPurify from 'dompurify'")
+    expect(apiUrlSource).toContain('sanitizeLegacyApiUrlsInHtml')
+    expect(apiUrlSource).toContain('normalizeLegacyApiPath')
+  })
+
+  it('keeps upload hashing and multipart upload flow outside the main API client module', () => {
+    const apiPath = path.resolve(__dirname, '../lib/api.ts')
+    const uploadPath = path.resolve(__dirname, '../lib/apiUpload.ts')
+    const apiSource = fs.readFileSync(apiPath, 'utf8')
+    const uploadSource = fs.readFileSync(uploadPath, 'utf8')
+
+    expect(apiSource).toContain("from './apiUpload'")
+    expect(apiSource).not.toContain('const digestSha256')
+    expect(apiSource).not.toContain('media/upload/chunk')
+    expect(uploadSource).toContain('export const uploadFiles')
+    expect(uploadSource).toContain('export const uploadMusicFile')
+  })
+
+  it('keeps IPC and fetch transport plumbing outside the main API client module', () => {
+    const apiPath = path.resolve(__dirname, '../lib/api.ts')
+    const transportPath = path.resolve(__dirname, '../lib/apiTransport.ts')
+    const apiSource = fs.readFileSync(apiPath, 'utf8')
+    const transportSource = fs.readFileSync(transportPath, 'utf8')
+
+    expect(apiSource).toContain("from './apiTransport'")
+    expect(apiSource).not.toContain('DESKTOP_API_CHANNELS')
+    expect(apiSource).not.toContain('async function invoke')
+    expect(transportSource).toContain('export async function invoke')
+    expect(transportSource).toContain('desktop:api-request')
+  })
+
+  it('captures a backend revision snapshot before desktop local note overwrites', () => {
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+    const updateHandlerStart = mainSource.indexOf("ipcMain.handle('notes:update'")
+    const updateHandlerEnd = mainSource.indexOf("ipcMain.handle('notes:delete'", updateHandlerStart)
+    const updateHandler = mainSource.slice(updateHandlerStart, updateHandlerEnd)
+
+    expect(mainSource).toContain('async function captureRevisionSnapshotBeforeLocalUpdate')
+    expect(mainSource).toContain('function scheduleRevisionSnapshotAfterLocalUpdate')
+    expect(mainSource).toContain('async function flushPendingRevisionSnapshotTimers')
+    expect(mainSource).toContain("body: JSON.stringify({ source: 'pre-save' })")
+    expect(mainSource).toContain("body: JSON.stringify({ source: 'stable' })")
+    expect(mainSource).toContain('const REVISION_FINAL_SNAPSHOT_DELAY_MS = 3_000')
+    expect(updateHandler.indexOf('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input)')).toBeGreaterThan(-1)
+    expect(updateHandler.indexOf('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input)')).toBeLessThan(
+      updateHandler.indexOf('fsBridge.updateNote(noteId, input)'),
+    )
+    expect(updateHandler.indexOf('scheduleRevisionSnapshotAfterLocalUpdate(noteId)')).toBeGreaterThan(
+      updateHandler.indexOf('fsBridge.updateNote(noteId, input)'),
+    )
+    expect(updateHandler).not.toContain("path: '/notes/' + noteId + '/snapshot'")
+    expect(updateHandler).not.toContain('[notes:update] auto-snapshot')
+
+    const closeHandlerStart = mainSource.indexOf("mainWindow.on('close'")
+    const closeHandlerEnd = mainSource.indexOf("mainWindow.on('closed'", closeHandlerStart)
+    const closeHandler = mainSource.slice(closeHandlerStart, closeHandlerEnd)
+    expect(closeHandler).toContain('await flushPendingRevisionSnapshotTimers()')
+    expect(closeHandler.indexOf('await flushPendingRevisionSnapshotTimers()')).toBeLessThan(
+      closeHandler.indexOf('finalizeClose()'),
+    )
   })
 })

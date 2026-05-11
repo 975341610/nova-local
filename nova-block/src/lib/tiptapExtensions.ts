@@ -12,7 +12,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import { ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
 import React from 'react';
-import { getApiBase } from './api';
+import { formatUrl, getApiBase } from './api';
 // @ts-ignore
 import container from 'markdown-it-container';
 // @ts-ignore
@@ -24,8 +24,9 @@ import { CodeBlockComponent } from '../components/editor/CodeBlockComponent';
 
 import { SliderExtension } from '../components/novablock/extensions/SliderExtension';
 import { TextEffect } from '../components/novablock/extensions/TextEffect';
+import { FreehandExtension } from '../components/novablock/extensions/FreehandExtension';
 
-export { TaskList, TaskItem, SliderExtension, TextEffect };
+export { TaskList, TaskItem, SliderExtension, TextEffect, FreehandExtension };
 
 // --- Widgets ---
 export { CountdownNode } from './novablock/extensions/CountdownNode';
@@ -34,6 +35,11 @@ export { MiniCalendarNode } from './novablock/extensions/MiniCalendarNode';
 export { KanbanNode } from './novablock/extensions/KanbanNode';
 export { HabitTrackerNode } from './novablock/extensions/HabitTrackerNode';
 export { TodoNode } from './novablock/extensions/TodoNode';
+export { TimelineBlock, TimelineItem } from './novablock/extensions/TimelineNode';
+export { TextColorMark } from './novablock/extensions/TextColorMark';
+export { MarginAnchor } from './novablock/extensions/MarginAnchor';
+export { ListStyleExtension } from './novablock/extensions/ListStyle';
+export type { BulletListStyle, OrderedListStyle, ListStyle } from './novablock/extensions/ListStyle';
 export { Emoticon } from '../components/novablock/extensions/Emoticon';
 export { NoteLink } from '../components/novablock/extensions/NoteLink';
 export { AISpellcheck, spellcheckPluginKey } from '../components/novablock/extensions/AISpellcheck';
@@ -46,6 +52,18 @@ export { AISpellcheck, spellcheckPluginKey } from '../components/novablock/exten
 export { Heading };
 
 export const Blockquote = BaseBlockquote.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      aiSourceCard: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-ai-source-card'),
+        renderHTML: (attributes) => (
+          attributes.aiSourceCard ? { 'data-ai-source-card': attributes.aiSourceCard } : {}
+        ),
+      },
+    };
+  },
   renderHTML({ HTMLAttributes }) {
     return ['blockquote', mergeAttributes(HTMLAttributes, { 
       class: 'border-l-4 border-stone-200 pl-4 py-1 my-4' 
@@ -190,7 +208,6 @@ export const MathInline = Mark.create({
           escape: false,
         },
         parse: {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
           setup: (_markdownit: any) => {
             // 依赖测试环境外部挂载插件
           }
@@ -562,6 +579,14 @@ export const ResizableImage = Image.extend({
   addNodeView() {
     return ReactNodeViewRenderer((props) => React.createElement(MediaNodeView, { ...props, kind: 'image' }));
   },
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'img',
+      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+        src: formatUrl(HTMLAttributes.src),
+      }),
+    ];
+  },
 });
 
 export const AudioNode = Node.create({
@@ -585,7 +610,7 @@ export const AudioNode = Node.create({
     return [{ tag: 'audio[src]' }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ['audio', { ...HTMLAttributes, controls: 'true', class: 'embedded-audio', style: `width:${HTMLAttributes.width || '100%'};` }];
+    return ['audio', { ...HTMLAttributes, src: formatUrl(HTMLAttributes.src), controls: 'true', class: 'embedded-audio', style: `width:${HTMLAttributes.width || '100%'};` }];
   },
   addNodeView() {
     return ReactNodeViewRenderer((props) => React.createElement(MediaNodeView, { ...props, kind: 'audio' }));
@@ -613,7 +638,7 @@ export const VideoNode = Node.create({
     return [{ tag: 'video[src]' }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ['video', { ...HTMLAttributes, controls: 'true', class: 'embedded-video', style: `width:${HTMLAttributes.width || '100%'};` }];
+    return ['video', { ...HTMLAttributes, src: formatUrl(HTMLAttributes.src), controls: 'true', class: 'embedded-video', style: `width:${HTMLAttributes.width || '100%'};` }];
   },
   addStorage() {
     return {
@@ -840,6 +865,7 @@ async function handleFilesUpload(view: any, files: File[], pos: number) {
       
       const response = await fetch(`${API_BASE}/media/upload`, {
         method: 'POST',
+        cache: 'no-store',
         body: formData,
       });
 
@@ -909,15 +935,41 @@ export const CalloutNode = Node.create({
   content: 'block+',
   defining: true,
 
+  addAttributes() {
+    return {
+      tone: {
+        default: 'note',
+        parseHTML: el => (el as HTMLElement).getAttribute('data-tone') || 'note',
+        renderHTML: attrs => ({ 'data-tone': attrs.tone }),
+      },
+    }
+  },
+
   parseHTML() {
-    return [{ tag: 'div[data-callout]' }];
+    return [{
+      tag: 'div[data-callout]',
+      // v0.21.1 · 修复切换笔记时图标 "墨/i/!/…" 被当作正文内容反复追加
+      contentElement: (node) => {
+        const el = (node as HTMLElement).querySelector('.callout-content')
+        return (el as HTMLElement) ?? (node as HTMLElement)
+      },
+    }];
   },
 
   renderHTML({ HTMLAttributes }) {
+    const tone = (HTMLAttributes as any)['data-tone'] || 'note';
+    const iconMap: Record<string, string> = {
+      note: '墨',
+      info: 'i',
+      warn: '!',
+      quote: '"',
+      tip: '思',
+    };
+    const icon = iconMap[tone] ?? '墨';
     return [
-      'div', 
-      mergeAttributes(HTMLAttributes, { 'data-callout': 'true', class: 'callout-block' }), 
-      ['span', { class: 'callout-icon', contenteditable: 'false' }, '💡'],
+      'div',
+      mergeAttributes(HTMLAttributes, { 'data-callout': 'true', class: 'callout-block' }),
+      ['span', { class: 'callout-icon', contenteditable: 'false' }, icon],
       ['div', { class: 'callout-content' }, 0]
     ];
   },

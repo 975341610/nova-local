@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Settings, BookOpen, Upload, Database, RefreshCw, Zap, Palette, Download, FileJson } from 'lucide-react';
+import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Settings, BookOpen, Upload, Database, RefreshCw, Zap, Palette, Download, FileJson, Save, Package } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAI } from '../contexts/AIContext';
 import { getThemeConfig, saveThemeConfig, exportThemeConfig, validateThemeConfig, applyThemeConfig } from '../lib/themeUtils';
-import type { ThemeConfig } from '../lib/types';
+import type { AIEngineMode, ThemeConfig, VaultHealthReport } from '../lib/types';
+import { isSpellcheckFeatureEnabled, saveSpellcheckFeatureEnabled } from '../lib/spellcheckSettings';
+import { UpdaterPanel } from './UpdaterPanel';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -12,7 +14,7 @@ interface SettingsDialogProps {
 }
 
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
-  const { isAiEnabled, setIsAiEnabled, contextLength, setContextLength, refreshAiStatus } = useAI();
+  const { isAiEnabled, setIsAiEnabled, aiMode, setAiMode, contextLength, setContextLength, refreshAiStatus } = useAI();
   const [hwStatus, setHwStatus] = useState<{ compatible: boolean; details: string } | null>(null);
   const [checking, setChecking] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -23,10 +25,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
   const [modelConfig, setModelConfig] = useState({
     provider: 'openai',
     api_key: '',
+    api_key_masked: '',
     base_url: '',
     model_name: '',
   });
-  const [activeTab, setActiveTab] = useState<'ai' | 'dictionary' | 'theme'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'dictionary' | 'theme' | 'vault' | 'updater'>('ai');
+  const [isSpellcheckEnabled, setIsSpellcheckEnabled] = useState(isSpellcheckFeatureEnabled());
   
   // Dictionary Import State
   const [dictText, setDictText] = useState('');
@@ -37,6 +41,96 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
   const [themeConfig, setThemeConfigState] = useState<ThemeConfig>(getThemeConfig());
   const [themeImportError, setThemeImportError] = useState<string | null>(null);
   const [themeImportSuccess, setThemeImportSuccess] = useState(false);
+  const [vaultHealth, setVaultHealth] = useState<VaultHealthReport | null>(null);
+  const [vaultHealthLoading, setVaultHealthLoading] = useState(false);
+  const [vaultHealthError, setVaultHealthError] = useState<string | null>(null);
+
+  // v0.22.0 · 全量导出
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+
+  // v0.22.0 · 快照策略(去抖秒数 / 最大保留条数)
+  const [revDebounce, setRevDebounce] = useState<number>(120);
+  const [revMaxKeep, setRevMaxKeep] = useState<number>(30);
+  const [revLoading, setRevLoading] = useState(false);
+  const [revSaving, setRevSaving] = useState(false);
+  const [revNotice, setRevNotice] = useState<{ success: boolean; message: string } | null>(null);
+
+  const loadRevisionSettings = async () => {
+    setRevLoading(true);
+    try {
+      const cfg = await api.getRevisionSettings();
+      setRevDebounce(cfg.debounce_seconds);
+      setRevMaxKeep(cfg.max_keep);
+    } catch (err: any) {
+      console.warn('load revision settings failed', err);
+    } finally {
+      setRevLoading(false);
+    }
+  };
+
+  const saveRevisionSettings = async () => {
+    setRevSaving(true);
+    setRevNotice(null);
+    try {
+      const cfg = await api.updateRevisionSettings({
+        debounce_seconds: revDebounce,
+        max_keep: revMaxKeep,
+      });
+      setRevDebounce(cfg.debounce_seconds);
+      setRevMaxKeep(cfg.max_keep);
+      setRevNotice({ success: true, message: `已保存 · 去抖 ${cfg.debounce_seconds}s · 保留 ${cfg.max_keep}+1 条` });
+    } catch (err: any) {
+      setRevNotice({ success: false, message: err?.message || '保存失败' });
+    } finally {
+      setRevSaving(false);
+    }
+  };
+
+  const handleExportAll = async () => {
+    setExporting(true);
+    setExportError(null);
+    setExportSuccess(null);
+    try {
+      // 采集 LocalStorage 里与 Nova 相关的键(nova_ 前缀)
+      const snapshot: Record<string, unknown> = {};
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key) continue;
+          if (!key.startsWith('nova') && !key.startsWith('nv-') && !key.startsWith('whiteboard')) continue;
+          const raw = localStorage.getItem(key);
+          if (raw == null) continue;
+          try {
+            snapshot[key] = JSON.parse(raw);
+          } catch {
+            snapshot[key] = raw;
+          }
+        }
+      } catch (err) {
+        console.warn('[export-all] dump localStorage failed', err);
+      }
+
+      const blob = await api.exportAllData(snapshot);
+      const url = URL.createObjectURL(blob);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `nova-export-${stamp}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const sizeMb = (blob.size / 1024 / 1024).toFixed(2);
+      setExportSuccess(`已生成备份包 · ${sizeMb} MB`);
+    } catch (err: any) {
+      console.error('export-all failed', err);
+      setExportError(err?.message || '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -47,8 +141,24 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       setThemeImportError(null);
       setThemeImportSuccess(false);
       setModelConfigNotice(null);
+      setIsSpellcheckEnabled(isSpellcheckFeatureEnabled());
+      void loadVaultHealth();
+      void loadRevisionSettings();
     }
   }, [isOpen, refreshAiStatus]);
+
+  const loadVaultHealth = async () => {
+    setVaultHealthLoading(true);
+    setVaultHealthError(null);
+    try {
+      setVaultHealth(await api.getVaultHealth());
+    } catch (err: any) {
+      console.error('Failed to load vault health:', err);
+      setVaultHealthError(err?.message || 'Vault 体检失败');
+    } finally {
+      setVaultHealthLoading(false);
+    }
+  };
 
   const loadModelConfig = async () => {
     setLoadingModelConfig(true);
@@ -56,7 +166,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       const next = await api.getModelConfig();
       setModelConfig({
         provider: next.provider || 'openai',
-        api_key: next.api_key || '',
+        api_key: '',
+        api_key_masked: next.api_key_masked || '',
         base_url: next.base_url || '',
         model_name: next.model_name || '',
       });
@@ -73,8 +184,22 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     try {
       const res = await api.updateAIPluginConfig({ enabled: !isAiEnabled });
       setIsAiEnabled(res.enabled);
+      setAiMode(res.ai_mode === 'local' ? 'local' : 'remote');
     } catch (err) {
       console.error('Failed to toggle AI plugin:', err);
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const handleAiModeChange = async (nextMode: AIEngineMode) => {
+    setToggling(true);
+    try {
+      const res = await api.updateAIPluginConfig({ enabled: true, ai_mode: nextMode });
+      setIsAiEnabled(res.enabled);
+      setAiMode(res.ai_mode === 'local' ? 'local' : 'remote');
+    } catch (err) {
+      console.error('Failed to switch AI mode:', err);
     } finally {
       setToggling(false);
     }
@@ -110,10 +235,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     setSavingModelConfig(true);
     setModelConfigNotice(null);
     try {
-      const saved = await api.updateModelConfig(modelConfig);
+      const { api_key_masked: _apiKeyMasked, ...payload } = modelConfig;
+      const saved = await api.updateModelConfig(payload);
       setModelConfig({
         provider: saved.provider || 'openai',
-        api_key: saved.api_key || '',
+        api_key: '',
+        api_key_masked: saved.api_key_masked || '',
         base_url: saved.base_url || '',
         model_name: saved.model_name || '',
       });
@@ -140,6 +267,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     } finally {
       setImporting(false);
     }
+  };
+
+  const handleToggleSpellcheck = () => {
+    const next = !isSpellcheckEnabled;
+    setIsSpellcheckEnabled(next);
+    saveSpellcheckFeatureEnabled(next);
   };
 
   const checkHardware = async () => {
@@ -187,7 +320,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
           setThemeImportError('无效的主题配置文件格式');
           setThemeImportSuccess(false);
         }
-      } catch (err) {
+      } catch {
         setThemeImportError('解析 JSON 失败');
         setThemeImportSuccess(false);
       }
@@ -342,6 +475,24 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                 <Palette size={14} />
                 主题管理
               </button>
+              <button
+                onClick={() => setActiveTab('vault')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-lg transition-all ${
+                  activeTab === 'vault' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Database size={14} />
+                Vault 体检
+              </button>
+              <button
+                onClick={() => setActiveTab('updater')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-lg transition-all ${
+                  activeTab === 'updater' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Package size={14} />
+                更新
+              </button>
             </div>
 
             <div className="p-6 h-[400px] overflow-y-auto custom-scrollbar">
@@ -354,11 +505,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                         <Cpu className="w-5 h-5 text-primary" />
                       </div>
                       <div>
-                        <h3 className="text-sm font-bold">本地 AI 引擎 (Local AI Plugin)</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">启用本地 LLM 进行隐私优先的智能处理</p>
+                        <h3 className="text-sm font-bold">AI 功能</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">默认使用远程 AI；需要隐私优先或离线处理时可切换本地 AI。</p>
                       </div>
                     </div>
                     <button
+                      data-testid="ai-enabled-toggle"
                       onClick={handleToggle}
                       disabled={toggling}
                       className="p-1 hover:scale-110 transition-transform disabled:opacity-50 relative"
@@ -373,13 +525,38 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                     </button>
                   </div>
 
+                  <div className="p-4 bg-accent/10 rounded-2xl border border-border/20 space-y-3">
+                    <div>
+                      <h3 className="text-sm font-bold">AI 引擎模式</h3>
+                      <p className="text-[10px] text-muted-foreground mt-1">远程 AI 为默认模式；本地 AI 只在显式选择后启动，避免两套引擎互相抢占。</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        data-testid="ai-mode-remote"
+                        onClick={() => handleAiModeChange('remote')}
+                        disabled={toggling}
+                        className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${aiMode === 'remote' ? 'bg-primary text-primary-foreground border-primary' : 'bg-accent/20 border-border/30 text-muted-foreground'}`}
+                      >
+                        远程 AI（默认）
+                      </button>
+                      <button
+                        data-testid="ai-mode-local"
+                        onClick={() => handleAiModeChange('local')}
+                        disabled={toggling}
+                        className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${aiMode === 'local' ? 'bg-primary text-primary-foreground border-primary' : 'bg-accent/20 border-border/30 text-muted-foreground'}`}
+                      >
+                        本地 AI
+                      </button>
+                    </div>
+                  </div>
+
                   {toggling && (
                     <motion.div
                       initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
                       className="text-[10px] text-center text-primary/60 font-medium bg-primary/5 py-2 rounded-xl border border-primary/10"
                     >
-                      {isAiEnabled ? "正在释放显存并停止 AI 服务进程..." : "正在拉起本地 AI 服务环境..."}
+                      {aiMode === 'local' ? "正在处理本地 AI 服务状态..." : "正在保存 AI 设置..."}
                     </motion.div>
                   )}
 
@@ -412,6 +589,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                           data-testid="ai-model-api-key"
                           type="password"
                           value={modelConfig.api_key}
+                          placeholder={modelConfig.api_key_masked || ''}
                           onChange={(e) => setModelConfig((prev) => ({ ...prev, api_key: e.target.value }))}
                           className="w-full bg-accent/20 border border-border/30 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
                         />
@@ -442,7 +620,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
 
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        建议填写 OpenAI 兼容的 Base URL。开启上面的 AI 开关后，编辑器中的 AI 写作会直接走这里的配置。
+                        建议填写 OpenAI 兼容的 Base URL。选择“远程 AI”后，编辑器中的 AI 写作会直接走这里的配置。
                       </p>
                       <button
                         data-testid="ai-model-save"
@@ -550,6 +728,31 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                 </div>
               ) : activeTab === 'dictionary' ? (
                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="flex items-center justify-between p-4 bg-accent/20 rounded-2xl border border-border/20">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                        <BookOpen className="w-5 h-5 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold">错别字检查</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          关闭后会立即隐藏红线并停止后台检查，编辑器输入不再受影响。
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleToggleSpellcheck}
+                      className="p-1 hover:scale-110 transition-transform"
+                      aria-label={isSpellcheckEnabled ? '关闭错别字检查' : '开启错别字检查'}
+                    >
+                      {isSpellcheckEnabled ? (
+                        <ToggleRight className="w-8 h-8 text-primary" />
+                      ) : (
+                        <ToggleLeft className="w-8 h-8 text-muted-foreground" />
+                      )}
+                    </button>
+                  </div>
+
                   <div className="flex items-center gap-3 mb-2">
                     <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
                       <Database className="w-4 h-4 text-primary" />
@@ -681,6 +884,189 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                     {renderThemeControl('文字菜单 (Text Menu)', 'textMenu')}
                     {renderThemeControl('块级菜单 (Block Menu)', 'blockMenu')}
                   </div>
+                </div>
+              ) : activeTab === 'vault' ? (
+                <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  {/* v0.22.0 · 一键导出全部数据 */}
+                  <div className="rounded-2xl border border-border/30 bg-accent/5 p-4 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <Download className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-sm font-bold">一键导出全部数据</h3>
+                        <p className="text-[10px] text-muted-foreground">
+                          打包 SQLite / vault / 多媒体 / LocalStorage 为 zip,单机备份无需云同步
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleExportAll}
+                        disabled={exporting}
+                        className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold flex items-center gap-2 disabled:opacity-50 hover:opacity-90"
+                      >
+                        {exporting ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Download className="w-3 h-3" />
+                        )}
+                        {exporting ? '打包中…' : '导出全部数据'}
+                      </button>
+                    </div>
+                    {exportError && (
+                      <div className="p-2 rounded-lg border border-rose-500/20 bg-rose-500/10 text-rose-600 text-[11px]">
+                        {exportError}
+                      </div>
+                    )}
+                    {exportSuccess && (
+                      <div className="p-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 text-[11px]">
+                        {exportSuccess}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* v0.22.0 · 快照策略设置 */}
+                  <div className="rounded-2xl border border-border/30 bg-accent/5 p-4 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <RefreshCw className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-sm font-bold">版本快照策略</h3>
+                        <p className="text-[10px] text-muted-foreground">
+                          编辑笔记时自动落一条历史版本,去抖避免过于频繁,保留最近 N 条 + 首版
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                          去抖时长 (秒)
+                        </label>
+                        <input
+                          type="number"
+                          min={10}
+                          max={86400}
+                          step={10}
+                          value={revDebounce}
+                          onChange={(e) => setRevDebounce(Number(e.target.value) || 0)}
+                          disabled={revLoading}
+                          className="w-full px-3 py-2 rounded-xl bg-background border border-border/40 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                        <p className="text-[10px] text-muted-foreground/70">
+                          两次自动快照间隔下限 · 默认 120s
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                          保留条数 (+ 首版)
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={500}
+                          step={1}
+                          value={revMaxKeep}
+                          onChange={(e) => setRevMaxKeep(Number(e.target.value) || 0)}
+                          disabled={revLoading}
+                          className="w-full px-3 py-2 rounded-xl bg-background border border-border/40 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                        <p className="text-[10px] text-muted-foreground/70">
+                          除首版外保留最近 N 条 · 默认 30
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[11px]">
+                        {revNotice && (
+                          <span className={revNotice.success ? 'text-emerald-600' : 'text-rose-500'}>
+                            {revNotice.message}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={saveRevisionSettings}
+                        disabled={revSaving || revLoading}
+                        className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold flex items-center gap-2 disabled:opacity-50 hover:opacity-90"
+                      >
+                        {revSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                        保存策略
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <Database className="w-4 h-4 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold">Vault 本地仓库体检</h3>
+                        <p className="text-[10px] text-muted-foreground">扫描缺失附件、孤儿附件、乱码风险和不安全引用</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={loadVaultHealth}
+                      disabled={vaultHealthLoading}
+                      className="px-3 py-2 rounded-xl bg-accent/20 hover:bg-accent/40 text-xs font-bold flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${vaultHealthLoading ? 'animate-spin' : ''}`} />
+                      刷新体检
+                    </button>
+                  </div>
+
+                  {vaultHealthError && (
+                    <div className="p-3 rounded-xl border border-rose-500/20 bg-rose-500/10 text-rose-600 text-xs">
+                      {vaultHealthError}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="p-4 rounded-2xl bg-accent/10 border border-border/20">
+                      <div className="text-2xl font-black">{vaultHealth?.summary.total_issues ?? 0}</div>
+                      <div className="text-[10px] text-muted-foreground mt-1">总问题</div>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-accent/10 border border-border/20">
+                      <div className="text-2xl font-black">{vaultHealth?.summary.missing_attachments ?? 0}</div>
+                      <div className="text-[10px] text-muted-foreground mt-1">缺失附件</div>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-accent/10 border border-border/20">
+                      <div className="text-2xl font-black">{vaultHealth?.summary.orphan_attachments ?? 0}</div>
+                      <div className="text-[10px] text-muted-foreground mt-1">孤儿附件</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {(vaultHealth?.issues ?? []).slice(0, 30).map((issue, index) => (
+                      <div
+                        key={`${issue.type}-${index}`}
+                        className="p-3 rounded-xl bg-background/50 border border-border/20 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-bold">{issue.type}</span>
+                          <span className={`text-[10px] uppercase ${
+                            issue.severity === 'error' ? 'text-rose-500' : issue.severity === 'warning' ? 'text-amber-500' : 'text-muted-foreground'
+                          }`}>
+                            {issue.severity}
+                          </span>
+                        </div>
+                        <p className="text-muted-foreground mt-1">{issue.message}</p>
+                        <p className="text-[10px] text-muted-foreground/70 mt-1 break-all">
+                          {issue.note_path || issue.asset_path || issue.target}
+                        </p>
+                      </div>
+                    ))}
+                    {!vaultHealthLoading && vaultHealth && vaultHealth.issues.length === 0 && (
+                      <div className="p-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 text-sm font-bold text-center">
+                        Vault 体检未发现问题
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : activeTab === 'updater' ? (
+                <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <UpdaterPanel className="space-y-4" />
                 </div>
               ) : null}
             </div>

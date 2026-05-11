@@ -1,24 +1,121 @@
-from typing import Optional
 import base64
+import ctypes
+import hashlib
+import hmac
+import os
+import secrets
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
 
 
+_DPAPI_PREFIX = "dpapi:v1:"
+_LOCAL_PREFIX = "local:v1:"
+
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [("cbData", ctypes.c_ulong), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
+
+
+def _dpapi_available() -> bool:
+    return sys.platform == "win32"
+
+
+def _dpapi_protect(data: bytes) -> bytes:
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    in_buffer = ctypes.create_string_buffer(data)
+    in_blob = _DataBlob(len(data), ctypes.cast(in_buffer, ctypes.POINTER(ctypes.c_ubyte)))
+    out_blob = _DataBlob()
+    if not crypt32.CryptProtectData(ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)):
+        raise OSError("CryptProtectData failed")
+    try:
+        return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+    finally:
+        kernel32.LocalFree(out_blob.pbData)
+
+
+def _dpapi_unprotect(data: bytes) -> bytes:
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    in_buffer = ctypes.create_string_buffer(data)
+    in_blob = _DataBlob(len(data), ctypes.cast(in_buffer, ctypes.POINTER(ctypes.c_ubyte)))
+    out_blob = _DataBlob()
+    if not crypt32.CryptUnprotectData(ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)):
+        raise OSError("CryptUnprotectData failed")
+    try:
+        return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+    finally:
+        kernel32.LocalFree(out_blob.pbData)
+
+
+def _local_secret_path() -> Path:
+    from backend.config import get_settings
+
+    secret_dir = get_settings().data_root / ".secrets"
+    secret_dir.mkdir(parents=True, exist_ok=True)
+    secret_path = secret_dir / "model_config.key"
+    if not secret_path.exists():
+        secret_path.write_bytes(secrets.token_bytes(32))
+    return secret_path
+
+
+def _local_key() -> bytes:
+    return hashlib.sha256(_local_secret_path().read_bytes()).digest()
+
+
+def _xor_stream(data: bytes, key: bytes, nonce: bytes) -> bytes:
+    output = bytearray()
+    counter = 0
+    while len(output) < len(data):
+        output.extend(hashlib.sha256(key + nonce + counter.to_bytes(4, "big")).digest())
+        counter += 1
+    return bytes(value ^ mask for value, mask in zip(data, output))
+
+
+def _local_encrypt(data: bytes) -> bytes:
+    key = _local_key()
+    nonce = secrets.token_bytes(16)
+    ciphertext = _xor_stream(data, key, nonce)
+    tag = hmac.new(key, nonce + ciphertext, hashlib.sha256).digest()
+    return nonce + tag + ciphertext
+
+
+def _local_decrypt(data: bytes) -> bytes:
+    key = _local_key()
+    nonce, tag, ciphertext = data[:16], data[16:48], data[48:]
+    expected = hmac.new(key, nonce + ciphertext, hashlib.sha256).digest()
+    if not hmac.compare_digest(tag, expected):
+        raise ValueError("model config secret integrity check failed")
+    return _xor_stream(ciphertext, key, nonce)
+
+
 def obfuscate(text: str) -> str:
     if not text:
         return ""
-    return base64.b64encode(text.encode("utf-8")).decode("utf-8")
+    data = text.encode("utf-8")
+    if _dpapi_available():
+        return _DPAPI_PREFIX + base64.b64encode(_dpapi_protect(data)).decode("utf-8")
+    return _LOCAL_PREFIX + base64.b64encode(_local_encrypt(data)).decode("utf-8")
 
 
 def deobfuscate(text: str) -> str:
     if not text:
         return ""
     try:
-        return base64.b64decode(text.encode("utf-8")).decode("utf-8")
+        if text.startswith(_DPAPI_PREFIX):
+            payload = base64.b64decode(text[len(_DPAPI_PREFIX):].encode("utf-8"))
+            return _dpapi_unprotect(payload).decode("utf-8")
+        if text.startswith(_LOCAL_PREFIX):
+            payload = base64.b64decode(text[len(_LOCAL_PREFIX):].encode("utf-8"))
+            return _local_decrypt(payload).decode("utf-8")
+        return text
     except Exception:
         return text
 
@@ -111,7 +208,7 @@ class ModelConfig(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     provider: Mapped[str] = mapped_column(String(50), default="openclaw")
-    api_key: Mapped[str] = mapped_column(String(255), default="")
+    api_key: Mapped[str] = mapped_column(Text, default="")
     base_url: Mapped[str] = mapped_column(String(255), default="")
     model_name: Mapped[str] = mapped_column(String(255), default="glm-4.7-flash")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -161,3 +258,23 @@ class NoteTemplate(Base):
     category: Mapped[str] = mapped_column(String(50), default="general")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# v0.22.0 · 笔记版本快照
+class NoteRevision(Base):
+    __tablename__ = "note_revisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    note_id: Mapped[int] = mapped_column(
+        ForeignKey("notes.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, index=True
+    )
+    # gzip(content.encode("utf-8"))
+    content_gz: Mapped[bytes] = mapped_column(LargeBinary)
+    content_hash: Mapped[str] = mapped_column(String(40), index=True)
+    title_snapshot: Mapped[str] = mapped_column(String(255), default="")
+    byte_size: Mapped[int] = mapped_column(Integer, default=0)
+    # 手动触发("save","restore-point") vs 自动("auto")
+    source: Mapped[str] = mapped_column(String(16), default="auto")

@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, FileText, Folder, FolderOpen, MoreHorizontal } from 'lucide-react';
-import type { TreeNode } from '../../lib/novablock/treeUtils';
+import type { TreeNode, FlattenedNode } from '../../lib/novablock/treeUtils';
 
 interface TreeNodeItemProps {
-  node: TreeNode;
-  level: number;
+  node: FlattenedNode;
   onMove: (nodeId: string, targetId: string, position: 'before' | 'after' | 'into') => void;
   onSelect: (nodeId: string) => void;
+  onToggle: (nodeId: string) => void;
   selectedId?: string;
   onContextMenu?: (e: React.MouseEvent, node: TreeNode) => void;
   editingId?: string | null;
@@ -16,28 +15,22 @@ interface TreeNodeItemProps {
 
 export const TreeNodeItem = ({
   node,
-  level,
   onMove,
   onSelect,
+  onToggle,
   selectedId,
   onContextMenu,
   editingId,
   onRenameSubmit,
 }: TreeNodeItemProps) => {
-  const [isOpen, setIsOpen] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [dragOver, setDragOver] = useState<'before' | 'after' | 'into' | null>(null);
   const [editValue, setEditValue] = useState(node.title || '');
 
   const isEditing = editingId === node.id;
-
-  React.useEffect(() => {
-    if (isEditing) {
-      setEditValue(node.title || '');
-    }
-  }, [isEditing, node.title]);
-
-  const hasChildren = node.children && node.children.length > 0;
+  const isOpen = node.isExpanded;
+  const level = node.level;
+  const hasChildren = node.hasChildren;
   const isSelected = selectedId === node.id;
 
   const handleDragStart = (e: React.DragEvent | PointerEvent | TouchEvent | MouseEvent) => {
@@ -85,8 +78,7 @@ export const TreeNodeItem = ({
 
   return (
     <div className="relative select-none">
-      <motion.div
-        layout
+      <div
         draggable={!isEditing}
         onDragStart={handleDragStart as any}
         onDragOver={handleDragOver as any}
@@ -101,13 +93,13 @@ export const TreeNodeItem = ({
         onClick={() => {
           if (isEditing) return;
           if (node.isFolder) {
-            setIsOpen(!isOpen);
+            onToggle(node.id);
           } else {
             onSelect(node.id);
           }
         }}
         className={`
-          group flex items-center gap-2 py-2 px-3 rounded-xl cursor-pointer transition-all duration-300 ease-out
+          group flex items-center gap-2 py-2 px-3 rounded-xl cursor-pointer transition-colors duration-200
           ${isSelected && !node.isFolder ? 'bg-primary/15 text-primary shadow-sm shadow-primary/5' : 'hover:bg-accent/50 text-muted-foreground hover:text-foreground'}
           ${dragOver === 'into' ? 'bg-primary/20 ring-1 ring-primary/30' : ''}
         `}
@@ -116,7 +108,7 @@ export const TreeNodeItem = ({
         <div 
           onClick={(e) => {
             e.stopPropagation();
-            if (!isEditing) setIsOpen(!isOpen);
+            if (!isEditing) onToggle(node.id);
           }}
           className={`
             p-1 rounded-lg transition-colors
@@ -175,7 +167,7 @@ export const TreeNodeItem = ({
             </button>
           </div>
         )}
-      </motion.div>
+      </div>
 
       {/* Drop Indicators */}
       {dragOver === 'before' && (
@@ -184,33 +176,6 @@ export const TreeNodeItem = ({
       {dragOver === 'after' && (
         <div className="absolute bottom-0 left-3 right-3 h-0.5 bg-primary rounded-full z-10 shadow-sm shadow-primary/50" />
       )}
-
-      {/* Children */}
-      <AnimatePresence initial={false}>
-        {isOpen && hasChildren && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeInOut' }}
-            className="overflow-hidden"
-          >
-            {node.children!.map((child) => (
-              <TreeNodeItem
-                key={child.id}
-                node={child}
-                level={level + 1}
-                onMove={onMove}
-                onSelect={onSelect}
-                selectedId={selectedId}
-                onContextMenu={onContextMenu}
-                editingId={editingId}
-                onRenameSubmit={onRenameSubmit}
-              />
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

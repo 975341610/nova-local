@@ -1,4 +1,4 @@
-# Second Brain AI (NovaBlock)
+# NovaBlock
 
 现代化、本地优先的 AI 第二大脑与块级编辑器 (Block-based Editor)。
 

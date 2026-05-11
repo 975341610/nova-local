@@ -1,6 +1,10 @@
 @import "tailwindcss";
 
+@import './styles/design-tokens.css';
+@import './styles/themes.css';
 @import './styles/novablock-core.css';
+@import './styles/reader-mode.css';
+@import './styles/v019.css';
 @plugin "@tailwindcss/typography";
 
 
@@ -9,56 +13,56 @@
 
 
 :root {
-  /* 治愈系浅色模式 - 燕麦色/奶油白 */
-  --background: 45 30% 96%; /* #F5F5F0 燕麦色 */
-  --foreground: 20 10% 20%;
-  --card: 45 40% 98%;
-  --card-foreground: 20 10% 20%;
-  --popover: 45 40% 99%;
-  --popover-foreground: 20 10% 20%;
-  --primary: 35 30% 45%; /* 治愈系棕色 */
-  --primary-foreground: 45 30% 98%;
-  --secondary: 45 20% 90%;
-  --secondary-foreground: 20 10% 20%;
-  --muted: 45 15% 85%;
-  --muted-foreground: 20 10% 40%;
-  --accent: 35 40% 90%;
-  --accent-foreground: 20 10% 20%;
-  --border: 45 15% 80%;
-  --input: 45 15% 80%;
-  --ring: 35 30% 45%;
-  --radius: 1rem;
-  
-  /* 柔和弥散阴影 */
-  --shadow-color: 45 10% 20% / 0.08;
-  --soft-shadow: 0 10px 30px -10px hsla(var(--shadow-color));
+  /* Ink-on-Paper 浅色 · 象牙纸 + 朱砂 */
+  --background: 38 32% 96%; /* 象牙纸 */
+  --foreground: 222 20% 14%; /* 墨色 */
+  --card: 38 40% 99%;
+  --card-foreground: 222 20% 14%;
+  --popover: 38 40% 99%;
+  --popover-foreground: 222 20% 14%;
+  --primary: 10 68% 52%; /* 朱砂 */
+  --primary-foreground: 38 40% 99%;
+  --secondary: 38 20% 92%;
+  --secondary-foreground: 222 20% 14%;
+  --muted: 38 18% 90%;
+  --muted-foreground: 222 12% 40%;
+  --accent: 10 68% 94%; /* 朱砂高亮背景 */
+  --accent-foreground: 10 80% 28%;
+  --border: 222 18% 86%;
+  --input: 222 18% 86%;
+  --ring: 10 68% 52%;
+  --radius: 0.75rem;
+
+  /* 暖色弥散阴影 */
+  --shadow-color: 60 35 25 / 0.10;
+  --soft-shadow: 0 12px 30px -12px rgba(60, 35, 25, 0.18);
 
   /* 纸张纹理 SVG - 极轻量噪点 */
   --paper-texture: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
 }
 
 .dark {
-  /* 治愈系深色模式 - 深海蓝/莫兰迪灰 */
-  --background: 222 47% 7%; /* #0F172A 深海蓝基调 */
-  --foreground: 210 40% 98%;
-  --card: 222 47% 10%;
-  --card-foreground: 210 40% 98%;
-  --popover: 222 47% 12%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 210 40% 90%;
-  --primary-foreground: 222 47% 10%;
-  --secondary: 222 47% 15%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 222 47% 20%;
-  --muted-foreground: 217 32% 60%;
-  --accent: 222 47% 25%;
-  --accent-foreground: 210 40% 98%;
-  --border: 222 47% 15%;
-  --input: 222 47% 15%;
-  --ring: 210 40% 90%;
-  
-  --shadow-color: 0 0% 0% / 0.3;
-  --soft-shadow: 0 10px 40px -10px hsla(var(--shadow-color));
+  /* Ink Midnight 深色 · 墨夜 + 朱砂提亮 */
+  --background: 222 28% 9%;
+  --foreground: 40 20% 94%;
+  --card: 222 20% 13%;
+  --card-foreground: 40 20% 94%;
+  --popover: 222 20% 15%;
+  --popover-foreground: 40 20% 94%;
+  --primary: 14 78% 62%;
+  --primary-foreground: 222 28% 9%;
+  --secondary: 222 20% 18%;
+  --secondary-foreground: 40 20% 94%;
+  --muted: 222 18% 22%;
+  --muted-foreground: 222 14% 68%;
+  --accent: 14 30% 22%;
+  --accent-foreground: 14 90% 84%;
+  --border: 222 18% 22%;
+  --input: 222 18% 22%;
+  --ring: 14 78% 62%;
+
+  --shadow-color: 0 0% 0% / 0.45;
+  --soft-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.6);
 }
 
 @theme {
@@ -138,6 +142,72 @@
   margin-bottom: 0.25rem;
 }
 
+/* v0.21.4 · 编辑器内 list 样式显式化 + 自定义 marker 支持 */
+.novablock-editor ul:not([data-type]) {
+  list-style-type: disc;
+  padding-left: 1.6em;
+}
+.novablock-editor ul:not([data-type]) ul {
+  list-style-type: circle;
+}
+.novablock-editor ul:not([data-type]) ul ul {
+  list-style-type: square;
+}
+.novablock-editor ol {
+  list-style-type: decimal;
+  padding-left: 1.6em;
+}
+.novablock-editor ol ol { list-style-type: lower-alpha; }
+.novablock-editor ol ol ol { list-style-type: lower-roman; }
+/* data-list-style marker 系列 */
+.novablock-editor ul[data-list-style="disc"] { list-style-type: disc; }
+.novablock-editor ul[data-list-style="circle"] { list-style-type: circle; }
+.novablock-editor ul[data-list-style="square"] { list-style-type: square; }
+
+/* dash/arrow/star/flower/check：li 内含块级 <p>，::before 会独占一行。
+ * 绝对定位 marker 到 li 自身的左内边距区，避免和文字重叠。 */
+.novablock-editor ul[data-list-style="dash"],
+.novablock-editor ul[data-list-style="arrow"],
+.novablock-editor ul[data-list-style="star"],
+.novablock-editor ul[data-list-style="flower"],
+.novablock-editor ul[data-list-style="check"] {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.novablock-editor ul[data-list-style="dash"] > li,
+.novablock-editor ul[data-list-style="arrow"] > li,
+.novablock-editor ul[data-list-style="star"] > li,
+.novablock-editor ul[data-list-style="flower"] > li,
+.novablock-editor ul[data-list-style="check"] > li {
+  position: relative;
+  padding-left: 1.6em;
+  list-style: none;
+}
+.novablock-editor ul[data-list-style="dash"] > li::before,
+.novablock-editor ul[data-list-style="arrow"] > li::before,
+.novablock-editor ul[data-list-style="star"] > li::before,
+.novablock-editor ul[data-list-style="flower"] > li::before,
+.novablock-editor ul[data-list-style="check"] > li::before {
+  position: absolute;
+  left: 0;
+  top: 0;
+  line-height: inherit;
+  width: 1.4em;
+  text-align: left;
+  pointer-events: none;
+}
+.novablock-editor ul[data-list-style="dash"] > li::before { content: '—'; color: hsl(var(--primary)); }
+.novablock-editor ul[data-list-style="arrow"] > li::before { content: '→'; color: hsl(var(--primary)); }
+.novablock-editor ul[data-list-style="star"] > li::before { content: '★'; color: hsl(var(--primary)); }
+.novablock-editor ul[data-list-style="flower"] > li::before { content: '❀'; color: hsl(var(--primary)); }
+.novablock-editor ul[data-list-style="check"] > li::before { content: '✓'; color: #16a34a; }
+.novablock-editor ol[data-list-style="decimal"] { list-style-type: decimal; }
+.novablock-editor ol[data-list-style="lower-alpha"] { list-style-type: lower-alpha; }
+.novablock-editor ol[data-list-style="upper-alpha"] { list-style-type: upper-alpha; }
+.novablock-editor ol[data-list-style="lower-roman"] { list-style-type: lower-roman; }
+.novablock-editor ol[data-list-style="upper-roman"] { list-style-type: upper-roman; }
+.novablock-editor ol[data-list-style="cjk-han"] { list-style-type: cjk-ideographic; }
+
 .novablock-editor ul[data-type="taskList"] li::before,
 .novablock-editor ul[data-type="taskList"] li::marker {
   display: none !important;
@@ -172,22 +242,9 @@
   appearance: auto !important; 
 }
 
-/* Callout block styling - Dark Mode optimized */
-.novablock-editor .callout-block {
-  display: flex;
-  gap: 0.75rem;
-  padding: 1rem;
-  margin-top: 1rem;
-  margin-bottom: 1rem;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  background-color: rgba(255, 255, 255, 0.02);
-  color: #e5e7eb;
-  position: relative;
-  align-items: flex-start;
-}
-
-/* ... 保持原有逻辑，但确保颜色适配暗色 ... */
+/* Callout block styling —— v0.19 由 styles/v019.css 统一定义（绝对定位 · 朱砂印章）。
+ * 这里不要再声明 display/padding/border/background，否则会覆盖 v0.19 布局，
+ * 造成编辑模式下图标与正文重叠。 */
 
 .novablock-editor h1, .novablock-editor h2, .novablock-editor h3, .novablock-editor h4, .novablock-editor h5, .novablock-editor h6 {
   color: hsl(var(--foreground)) !important;
@@ -215,17 +272,17 @@
   color: #ffffff;
 }
 
-/* Note Link Capsule Styling - 莫兰迪色治愈系风格 */
+/* Note Link Capsule Styling · Ink-on-Paper · 朱砂墨印 */
 .note-link-capsule {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
   padding: 0.1rem 0.6rem;
   margin: 0 0.2rem;
-  background-color: #E6E2D3; /* 莫兰迪浅米色 */
-  color: #6B5B4B; /* 深咖啡灰 */
-  border: 1px solid #D4C5B9;
-  border-radius: 0.75rem;
+  background-color: hsl(10 68% 96%);
+  color: hsl(10 80% 28%);
+  border: 1px solid hsl(10 50% 86%);
+  border-radius: 0.6rem;
   font-weight: 500;
   font-size: 0.9em;
   cursor: pointer;
@@ -233,20 +290,33 @@
   user-select: none;
   vertical-align: middle;
   text-decoration: none !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 2px rgba(186, 54, 32, 0.06);
 }
 
 .note-link-capsule:hover {
-  background-color: #D4C5B9;
-  color: #4A3F35;
+  background-color: hsl(10 68% 92%);
+  color: hsl(10 80% 22%);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px -4px rgba(107, 91, 75, 0.3);
-  border-color: #B99976;
+  box-shadow: 0 4px 12px -4px rgba(186, 54, 32, 0.22);
+  border-color: hsl(10 60% 72%);
 }
 
 .note-link-capsule.selected {
-  border: 2px solid #B99976;
-  box-shadow: 0 0 0 2px rgba(185, 153, 118, 0.2);
+  border: 1.5px solid hsl(10 68% 52%);
+  box-shadow: 0 0 0 2px rgba(186, 54, 32, 0.16);
+}
+
+.dark .note-link-capsule {
+  background-color: hsl(14 30% 18%);
+  color: hsl(14 90% 84%);
+  border-color: hsl(14 30% 30%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.dark .note-link-capsule:hover {
+  background-color: hsl(14 30% 24%);
+  color: hsl(14 100% 90%);
+  border-color: hsl(14 50% 44%);
+  box-shadow: 0 4px 12px -4px rgba(240, 120, 96, 0.32);
 }
 
 .note-link-capsule::before {

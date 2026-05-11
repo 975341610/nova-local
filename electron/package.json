@@ -6,9 +6,10 @@
   "type": "commonjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/fsBridge.test.js"
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
+    "chokidar": "^3.6.0",
     "electron": "^36.2.1",
     "yaml": "^2.8.1"
   }

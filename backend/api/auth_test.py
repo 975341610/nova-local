@@ -1,7 +1,15 @@
 from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
-from backend.main import app, get_settings
+from backend.main import (
+    DESKTOP_ONLY_API_PATHS,
+    PROTECTED_API_PATHS,
+    app,
+    get_settings,
+    is_desktop_only_api_path,
+    is_protected_api_path,
+    validate_runtime_security,
+)
 
 client = TestClient(app)
 
@@ -47,10 +55,9 @@ def test_auth_middleware_enabled_correct_cookie_token():
     original_token = settings.access_token
     settings.access_token = "test-token"
     try:
-        response = client.get(
-            "/health",
-            cookies={"access_token": "test-token"}
-        )
+        with TestClient(app) as cookie_client:
+            cookie_client.cookies.set("access_token", "test-token")
+            response = cookie_client.get("/health")
         assert response.status_code == 200
     finally:
         settings.access_token = original_token
@@ -82,3 +89,40 @@ def test_auth_middleware_exempt_paths():
         assert response.status_code != 401
     finally:
         settings.access_token = original_token
+
+
+def test_server_mode_requires_access_token():
+    settings = get_settings()
+    original_mode = settings.run_mode
+    original_token = settings.access_token
+    settings.run_mode = "server_mode"
+    settings.access_token = ""
+    try:
+        with pytest.raises(RuntimeError, match="ACCESS_TOKEN"):
+            validate_runtime_security()
+    finally:
+        settings.run_mode = original_mode
+        settings.access_token = original_token
+
+
+def test_privileged_api_paths_are_explicitly_classified():
+    assert "/api/system/switch-data-path" in DESKTOP_ONLY_API_PATHS
+    assert "/api/system/update" in DESKTOP_ONLY_API_PATHS
+    assert "/api/system/restart" in DESKTOP_ONLY_API_PATHS
+    assert "/api/system/open-file" in DESKTOP_ONLY_API_PATHS
+    assert "/api/system/import-data" in DESKTOP_ONLY_API_PATHS
+    assert "/api/ai/update-ollama" in DESKTOP_ONLY_API_PATHS
+
+    assert "/api/system/version" not in PROTECTED_API_PATHS
+    assert "/api/model-config" in PROTECTED_API_PATHS
+    assert "/api/ai/toggle" in PROTECTED_API_PATHS
+    assert "/api/ai/toggle-plugin" in PROTECTED_API_PATHS
+
+
+def test_privileged_api_path_helpers_cover_prefix_groups():
+    assert is_desktop_only_api_path("/api/system/open-file")
+    assert is_desktop_only_api_path("/api/ai/update-ollama")
+    assert is_protected_api_path("/api/system/logs")
+    assert not is_protected_api_path("/api/system/vault-health")
+    assert is_protected_api_path("/api/ai/toggle-plugin")
+    assert not is_protected_api_path("/api/system/version")

@@ -1,0 +1,502 @@
+/**
+ * Nova Design Tokens — Unified Design Language v2 · Ink on Paper
+ *
+ * 美学主题：墨迹宣纸 × 朱砂印记 × 靛青墨意
+ *   Light：象牙纸 (Ivory Paper) + 墨色文字 + 朱砂重点 + 靛青次重点
+ *   Dark ：墨夜 (Ink Midnight) + 月光文字 + 朱砂（提亮）+ 群青次重点
+ *
+ * 目标：为 Nova 所有浮层、卡片、容器、菜单、Dock、Command Palette 等
+ * 提供一套统一、克制、具艺术感的 token。
+ *
+ * 命名约定：
+ *   --nv-color-*       语义颜色（前景/背景/边框/强调）
+ *   --nv-color-surface-*     不同层级的表面（玻璃态浮层需要）
+ *   --nv-radius-*      圆角标度
+ *   --nv-shadow-*      阴影/高度（暖色系）
+ *   --nv-motion-*      动效曲线与时长
+ *   --nv-spacing-*     间距标度（4pt 栅格）
+ *   --nv-font-*        字体/行高
+ */
+
+:root {
+  /* ---------- Spacing (4pt grid) ---------- */
+  --nv-space-0: 0;
+  --nv-space-1: 4px;
+  --nv-space-2: 8px;
+  --nv-space-3: 12px;
+  --nv-space-4: 16px;
+  --nv-space-5: 20px;
+  --nv-space-6: 24px;
+  --nv-space-8: 32px;
+  --nv-space-10: 40px;
+  --nv-space-12: 48px;
+  --nv-space-16: 64px;
+
+  /* ---------- Radius ---------- */
+  --nv-radius-xs: 4px;
+  --nv-radius-sm: 6px;
+  --nv-radius-md: 10px;
+  --nv-radius-lg: 14px;
+  --nv-radius-xl: 20px;
+  --nv-radius-2xl: 28px;
+  --nv-radius-full: 9999px;
+
+  /* ---------- Elevation / Shadow (warm ink tint) ---------- */
+  --nv-shadow-1: 0 1px 2px rgba(60, 35, 25, 0.04),
+                 0 0 1px rgba(60, 35, 25, 0.04);
+  --nv-shadow-2: 0 2px 6px rgba(60, 35, 25, 0.06),
+                 0 1px 2px rgba(60, 35, 25, 0.04);
+  --nv-shadow-3: 0 10px 28px -8px rgba(60, 35, 25, 0.14),
+                 0 2px 6px rgba(60, 35, 25, 0.06);
+  --nv-shadow-4: 0 24px 60px -16px rgba(60, 35, 25, 0.22),
+                 0 8px 20px -8px rgba(60, 35, 25, 0.08);
+  --nv-shadow-5: 0 40px 80px -20px rgba(60, 35, 25, 0.28),
+                 0 12px 28px -12px rgba(60, 35, 25, 0.12);
+  --nv-shadow-accent: 0 10px 28px -8px rgba(186, 54, 32, 0.24),
+                      0 2px 8px -2px rgba(186, 54, 32, 0.16);
+
+  /* ---------- Motion ---------- */
+  --nv-motion-fast: 120ms;
+  --nv-motion-base: 200ms;
+  --nv-motion-slow: 320ms;
+  --nv-motion-cinematic: 560ms;
+  --nv-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --nv-ease-emphasized: cubic-bezier(0.32, 0.72, 0, 1);
+  --nv-ease-overshoot: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ---------- Typography ---------- */
+  --nv-font-sans: "Inter", "PingFang SC", "HarmonyOS Sans", -apple-system,
+                  BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --nv-font-serif: "Source Serif 4", "Source Han Serif SC", Georgia, serif;
+  --nv-font-mono: "JetBrains Mono", "Geist Mono", "SF Mono", "Fira Code",
+                  "Cascadia Code", monospace;
+
+  --nv-text-xs: 0.75rem;
+  --nv-text-sm: 0.875rem;
+  --nv-text-base: 1rem;
+  --nv-text-lg: 1.125rem;
+  --nv-text-xl: 1.25rem;
+  --nv-text-2xl: 1.5rem;
+  --nv-text-3xl: 1.875rem;
+  --nv-text-4xl: 2.25rem;
+
+  --nv-leading-tight: 1.25;
+  --nv-leading-normal: 1.55;
+  --nv-leading-relaxed: 1.75;
+
+  /* ---------- Semantic Color (Light · Ivory Paper) ---------- */
+  /* 底色：象牙纸，不刺眼的暖白 */
+  --nv-color-bg: hsl(38 32% 96%);
+  --nv-color-bg-subtle: hsl(38 24% 92%);
+  --nv-color-bg-strong: hsl(38 20% 88%);
+
+  /* 表面：含极少量饱和度，比纯白有呼吸感 */
+  --nv-color-surface-1: hsla(38 40% 99% / 0.72);
+  --nv-color-surface-2: hsla(38 40% 99% / 0.88);
+  --nv-color-surface-3: hsla(38 40% 99% / 0.98);
+  --nv-color-surface-raised: hsl(38 38% 99%);
+  --nv-color-surface-sunken: hsl(38 20% 94%);
+
+  /* 文字：墨色，略带青灰避免纯黑的塑料感 */
+  --nv-color-fg: hsl(222 20% 14%);
+  --nv-color-fg-muted: hsl(222 12% 38%);
+  --nv-color-fg-subtle: hsl(222 10% 55%);
+
+  /* 边框：含墨色的半透明 */
+  --nv-color-border: hsla(222 18% 16% / 0.08);
+  --nv-color-border-strong: hsla(222 18% 16% / 0.18);
+
+  /* 主强调：朱砂红 —— 像印章那一点 */
+  --nv-color-accent: hsl(10 68% 52%);
+  --nv-color-accent-hover: hsl(10 70% 46%);
+  --nv-color-accent-muted: hsla(10 68% 52% / 0.12);
+  --nv-color-accent-fg: hsl(10 80% 28%);
+
+  /* 次强调：靛青墨 —— 与朱砂互补 */
+  --nv-color-indigo: hsl(222 55% 48%);
+  --nv-color-indigo-muted: hsla(222 55% 48% / 0.12);
+  --nv-color-indigo-fg: hsl(222 70% 28%);
+
+  --nv-color-success: hsl(152 48% 38%);
+  --nv-color-warning: hsl(32 88% 44%);
+  --nv-color-danger: hsl(356 66% 48%);
+
+  /* ---------- Glass / Acrylic (Light) ---------- */
+  --nv-glass-bg: hsla(38 40% 99% / 0.62);
+  --nv-glass-border: hsla(222 18% 16% / 0.09);
+  --nv-glass-blur: 22px;
+  --nv-glass-saturation: 180%;
+  --nv-glass-noise-opacity: 0.025;
+
+  /* ---------- Reader Mode (Serif column) ---------- */
+  --nv-reader-bg: hsl(38 36% 95%);
+  --nv-reader-fg: hsl(24 14% 16%);
+  --nv-reader-measure: 72ch;
+  --nv-reader-leading: 1.85;
+}
+
+html[data-theme="dark"],
+.dark {
+  /* 底色：墨夜，不是纯黑，带一点靛蓝 */
+  --nv-color-bg: hsl(222 28% 9%);
+  --nv-color-bg-subtle: hsl(222 24% 12%);
+  --nv-color-bg-strong: hsl(222 22% 16%);
+
+  --nv-color-surface-1: hsla(222 20% 17% / 0.72);
+  --nv-color-surface-2: hsla(222 20% 19% / 0.86);
+  --nv-color-surface-3: hsla(222 20% 21% / 0.96);
+  --nv-color-surface-raised: hsl(222 20% 16%);
+  --nv-color-surface-sunken: hsl(222 28% 7%);
+
+  /* 文字：月光白，略偏暖 */
+  --nv-color-fg: hsl(40 20% 94%);
+  --nv-color-fg-muted: hsl(222 14% 68%);
+  --nv-color-fg-subtle: hsl(222 10% 50%);
+
+  --nv-color-border: hsla(40 20% 94% / 0.08);
+  --nv-color-border-strong: hsla(40 20% 94% / 0.18);
+
+  /* 朱砂提亮，不过曝 */
+  --nv-color-accent: hsl(14 78% 62%);
+  --nv-color-accent-hover: hsl(14 82% 68%);
+  --nv-color-accent-muted: hsla(14 78% 62% / 0.18);
+  --nv-color-accent-fg: hsl(14 90% 84%);
+
+  --nv-color-indigo: hsl(222 70% 68%);
+  --nv-color-indigo-muted: hsla(222 70% 68% / 0.18);
+  --nv-color-indigo-fg: hsl(222 80% 86%);
+
+  --nv-glass-bg: hsla(222 22% 14% / 0.62);
+  --nv-glass-border: hsla(40 20% 94% / 0.08);
+  --nv-glass-noise-opacity: 0.05;
+
+  --nv-reader-bg: hsl(222 24% 10%);
+  --nv-reader-fg: hsl(40 18% 90%);
+
+  --nv-shadow-3: 0 10px 28px -8px rgba(0, 0, 0, 0.55),
+                 0 2px 8px rgba(0, 0, 0, 0.4);
+  --nv-shadow-4: 0 24px 60px -16px rgba(0, 0, 0, 0.6),
+                 0 8px 20px -8px rgba(0, 0, 0, 0.4);
+  --nv-shadow-5: 0 40px 80px -20px rgba(0, 0, 0, 0.7),
+                 0 12px 28px -12px rgba(0, 0, 0, 0.45);
+  --nv-shadow-accent: 0 10px 28px -8px rgba(240, 120, 96, 0.32),
+                      0 2px 8px -2px rgba(240, 120, 96, 0.22);
+}
+
+/* ---------- Selection ---------- */
+::selection {
+  background: var(--nv-color-accent-muted);
+  color: var(--nv-color-accent-fg);
+}
+
+/* ---------- Custom Scrollbar ---------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--nv-color-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--nv-color-border-strong);
+  border-radius: var(--nv-radius-full);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--nv-color-fg-subtle);
+}
+
+/* ---------- Utility Classes ---------- */
+
+/* 统一玻璃态浮层 —— 所有菜单/弹窗/命令面板必须使用 */
+.nv-glass {
+  background: var(--nv-glass-bg);
+  border: 1px solid var(--nv-glass-border);
+  backdrop-filter: blur(var(--nv-glass-blur)) saturate(var(--nv-glass-saturation));
+  -webkit-backdrop-filter: blur(var(--nv-glass-blur)) saturate(var(--nv-glass-saturation));
+  box-shadow: var(--nv-shadow-4);
+  border-radius: var(--nv-radius-xl);
+}
+
+.nv-glass-sm {
+  background: var(--nv-glass-bg);
+  border: 1px solid var(--nv-glass-border);
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+  box-shadow: var(--nv-shadow-3);
+  border-radius: var(--nv-radius-lg);
+}
+
+/* 卡片 */
+.nv-card {
+  background: var(--nv-color-surface-2);
+  border: 1px solid var(--nv-color-border);
+  border-radius: var(--nv-radius-lg);
+  box-shadow: var(--nv-shadow-2);
+}
+
+/* 凹陷表面 —— 输入框、Tag 背景等 */
+.nv-sunken {
+  background: var(--nv-color-surface-sunken);
+  border: 1px solid var(--nv-color-border);
+  border-radius: var(--nv-radius-md);
+}
+
+/* 分隔线 */
+.nv-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--nv-color-border-strong) 20%,
+    var(--nv-color-border-strong) 80%,
+    transparent
+  );
+  border: none;
+}
+
+/* Chip / Tag */
+.nv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--nv-color-fg-muted);
+  background: var(--nv-color-surface-sunken);
+  border: 1px solid var(--nv-color-border);
+  border-radius: var(--nv-radius-full);
+  white-space: nowrap;
+}
+.nv-chip-accent {
+  color: var(--nv-color-accent-fg);
+  background: var(--nv-color-accent-muted);
+  border-color: transparent;
+}
+.nv-chip-indigo {
+  color: var(--nv-color-indigo-fg);
+  background: var(--nv-color-indigo-muted);
+  border-color: transparent;
+}
+
+/* 焦点环 */
+.nv-focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--nv-color-bg),
+              0 0 0 4px var(--nv-color-accent);
+}
+
+/* 键盘按键标签 <kbd> */
+.nv-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5em;
+  padding: 0 6px;
+  height: 20px;
+  font-family: var(--nv-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--nv-color-fg-muted);
+  background: var(--nv-color-surface-3);
+  border: 1px solid var(--nv-color-border);
+  border-bottom-width: 2px;
+  border-radius: var(--nv-radius-xs);
+  box-shadow: inset 0 -1px 0 var(--nv-color-border);
+}
+
+/* 过渡工具 */
+.nv-transition {
+  transition-duration: var(--nv-motion-base);
+  transition-timing-function: var(--nv-ease-standard);
+  transition-property: background-color, border-color, color, opacity, transform,
+                       box-shadow, filter;
+}
+
+.nv-transition-slow {
+  transition-duration: var(--nv-motion-slow);
+  transition-timing-function: var(--nv-ease-emphasized);
+  transition-property: background-color, border-color, color, opacity, transform,
+                       box-shadow, filter;
+}
+
+/* 可访问减少动效 */
+@media (prefers-reduced-motion: reduce) {
+  .nv-transition,
+  .nv-transition-slow {
+    transition-duration: 1ms;
+  }
+}
+
+/* 统一的图标按钮 */
+.nv-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--nv-text-xs);
+  color: var(--nv-color-fg-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--nv-radius-md);
+  cursor: pointer;
+  transition: background-color var(--nv-motion-fast) var(--nv-ease-standard),
+              color var(--nv-motion-fast) var(--nv-ease-standard),
+              transform var(--nv-motion-fast) var(--nv-ease-standard);
+}
+
+.nv-icon-btn:hover {
+  background: var(--nv-color-accent-muted);
+  color: var(--nv-color-accent-fg);
+}
+.nv-icon-btn:active {
+  transform: translateY(1px) scale(0.97);
+}
+
+.nv-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- Dock（底部浮动胶囊） ---------- */
+.nv-dock {
+  box-shadow: var(--nv-shadow-4),
+              inset 0 1px 0 hsla(0 0% 100% / 0.4);
+  opacity: 0.55;
+  transition: opacity 260ms cubic-bezier(0.2, 0, 0, 1),
+              transform 260ms cubic-bezier(0.2, 0, 0, 1);
+}
+.nv-dock:hover,
+.nv-dock:focus-within {
+  opacity: 1;
+}
+html[data-theme="dark"] .nv-dock,
+.dark .nv-dock {
+  box-shadow: var(--nv-shadow-4),
+              inset 0 1px 0 hsla(0 0% 100% / 0.06);
+}
+
+/* 氛围声 chip（dock popover 内用） */
+.nv-ambient-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  background: var(--nv-color-surface-2);
+  color: var(--nv-color-fg-muted);
+  border: 1px solid var(--nv-color-border);
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.nv-ambient-chip:hover {
+  background: var(--nv-color-accent-muted);
+  color: var(--nv-color-accent-fg);
+}
+.nv-ambient-chip[data-active="true"] {
+  background: var(--nv-color-accent);
+  color: #fff;
+  border-color: var(--nv-color-accent);
+}
+
+.nv-dock-btn {
+  position: relative;
+}
+.nv-dock-btn::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--nv-color-accent);
+  transform: translateX(-50%) scale(0);
+  opacity: 0;
+  transition: transform var(--nv-motion-base) var(--nv-ease-overshoot),
+              opacity var(--nv-motion-base) var(--nv-ease-standard);
+}
+.nv-dock-btn[data-active="true"]::after {
+  transform: translateX(-50%) scale(1);
+  opacity: 1;
+}
+
+/* 主题平滑过渡 */
+html,
+body {
+  transition: background-color var(--nv-motion-slow) var(--nv-ease-emphasized),
+              color var(--nv-motion-slow) var(--nv-ease-emphasized);
+}
+
+/* Reader 模式下，隐藏带 .nv-hide-in-reader 的元素 */
+body[data-reader="true"] .nv-hide-in-reader {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- Typewriter Mode (v0.18 · 打字机模式 · v0.21.3 重构) ---------- */
+/* 光标居中依靠 JS 的 scrollIntoView(block: 'center')，
+   这里不再给编辑器加 42vh 的 padding-top（会在第一行留出大块空隙）；
+   只保留 padding-bottom，让文档末尾也能滚到视口中央。 */
+body[data-typewriter="true"] .novablock-editor {
+  padding-bottom: 55vh !important;
+  caret-color: var(--nv-color-accent);
+}
+body[data-typewriter="true"] .novablock-editor.ProseMirror,
+body[data-typewriter="true"] .ProseMirror.novablock-editor {
+  padding-bottom: 55vh !important;
+}
+
+/* 当前段落高亮 —— 模糊其它段落让注意力聚焦
+   依赖 Tiptap Focus 扩展（mode: shallowest），它会给光标所在的"最外层块"
+   添加 class="has-focus"。非 has-focus 的直接子块则衰减。 */
+body[data-typewriter="true"] .ProseMirror > *,
+body[data-typewriter="true"] .novablock-editor > * {
+  transition: opacity 220ms cubic-bezier(0.2, 0, 0, 1),
+              filter 220ms cubic-bezier(0.2, 0, 0, 1);
+  opacity: 0.38;
+  filter: blur(0.4px);
+}
+/* focused 块恢复清晰 */
+body[data-typewriter="true"] .ProseMirror > .has-focus,
+body[data-typewriter="true"] .novablock-editor > .has-focus,
+body[data-typewriter="true"] .ProseMirror > *:has(.has-focus),
+body[data-typewriter="true"] .novablock-editor > *:has(.has-focus) {
+  opacity: 1;
+  filter: none;
+}
+/* 当编辑器失焦时(blur)或未聚焦时，不衰减任何段落，避免全部段落一起变暗 */
+body[data-typewriter="true"] .ProseMirror:not(.ProseMirror-focused) > *,
+body[data-typewriter="true"] .novablock-editor:not(.ProseMirror-focused) > * {
+  opacity: 1;
+  filter: none;
+}
+
+/* 打字机模式指示胶囊 */
+.nv-typewriter-indicator {
+  position: fixed;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 5px 12px;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--nv-color-accent-fg);
+  background: var(--nv-color-accent-muted);
+  border: 1px solid var(--nv-color-accent);
+  border-radius: var(--nv-radius-full);
+  box-shadow: var(--nv-shadow-accent);
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

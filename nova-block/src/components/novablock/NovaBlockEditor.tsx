@@ -1,5 +1,6 @@
-﻿import { formatUrl } from "../../lib/api";
+﻿import { formatUrl, api } from "../../lib/api";
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
+import { sanitizeLegacyApiUrlsInHtml } from "../../lib/api";
 import { EditorContent, useEditor, Editor } from '@tiptap/react';
 import { NodeSelection } from '@tiptap/pm/state';
 import type { ChainedCommands } from '@tiptap/core';
@@ -8,6 +9,7 @@ import { BubbleMenu } from '@tiptap/react/menus';
 import DragHandle from '@tiptap/extension-drag-handle-react';
 import StarterKit from '@tiptap/starter-kit';
 import Dropcursor from '@tiptap/extension-dropcursor';
+import { Focus } from '@tiptap/extensions';
 import Highlight from '@tiptap/extension-highlight';
 import Link from '@tiptap/extension-link';
 import UnderlineExtension from '@tiptap/extension-underline';
@@ -27,19 +29,21 @@ import {
     Link as LinkIcon, Highlighter, Trash2, Copy, Replace, ListPlus, Minus,
     Trash, Columns, Rows, Film, Music, FileText, MonitorPlay, StickyNote as StickyNoteIcon,
     List, ListOrdered, ArrowUpToLine, ArrowDownToLine, CopyPlus, StickyNote, Smile, X,
-    Layout, Bot
+    Layout, Bot, Pencil, MessageSquare, Palette
 } from 'lucide-react';
 
 import pixelMaidUrl from '../../assets/pixel-maid.webp';
 
-import { 
-    AudioNode, CalloutNode, DatabaseTableCell, DatabaseTableHeader, 
+import {
+    AudioNode, CalloutNode, DatabaseTableCell, DatabaseTableHeader,
     EmbedNode, ResizableImage, TaskItem, TaskList, VideoNode, WikiLink,
-    SlashCommands, FileNode, Heading, MathInline, MathBlock, Footnote, 
+    SlashCommands, FileNode, Heading, MathInline, MathBlock, Footnote,
     ColumnGroup, Column, HighlightBlock,
     WashiTape, JournalStamp, Blockquote, CodeBlock, FilePlaceholder, FileUpload,
     CountdownNode, MusicPlayerNode, MiniCalendarNode, KanbanNode, HabitTrackerNode, TodoNode,
-    Emoticon, SliderExtension, NoteLink, TextEffect, AISpellcheck, spellcheckPluginKey
+    TimelineBlock, TimelineItem,
+    Emoticon, SliderExtension, NoteLink, TextEffect, AISpellcheck, FreehandExtension,
+    TextColorMark, MarginAnchor, ListStyleExtension
    } from '../../lib/tiptapExtensions';
 const AILoadingNode = Node.create({
   name: "aiLoadingPlaceholder",
@@ -56,16 +60,28 @@ import type { Note } from '../../lib/types';
 
 import { EditorHeader } from '../editor/EditorHeader';
 import { PropertyPanel } from '../editor/PropertyPanel';
+import { RevisionHistoryDrawer } from '../editor/RevisionHistoryDrawer';
 import { getSuggestionConfig } from '../notion/SlashMenuConfig';
 import { getNoteLinkSuggestionConfig } from './extensions/NoteLinkConfig';
 import { buildPendingSwitchSavePayload, shouldApplySavedDraftToCurrentNote, syncLatestDraftWithIncomingNote } from '../../lib/editorDraftSync';
+import { extractLeadingNoteTitle } from '../../lib/noteTitle';
+import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
+import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
+import {
+  AIStreamingPreviewNode,
+  findAIStreamingPreview,
+  insertAIStreamingPreview,
+  removeAIStreamingPreview,
+  replaceAIStreamingPreviewWithContent,
+  updateAIStreamingPreview,
+} from '../../lib/aiStreamingPreview';
 import { promptCompat } from '../../lib/promptCompat';
 import { useAI } from '../../contexts/AIContext';
 import { TableOfContents } from './components/TableOfContents';
 import { EmoticonPanel } from '../editor/EmoticonPanel';
 import { SpellcheckSuggestionCard } from './components/SpellcheckSuggestionCard';
-import { buildSpellcheckSuggestionDetail, findSpellcheckErrorAtPos } from './extensions/spellcheckHelpers';
-import { collectSpellcheckTextblocks, findClosestSpellcheckErrorByPoint, findSpellcheckErrorFromCaretPoint, findSpellcheckErrorFromCoords, findSpellcheckErrorFromPointProbes, findSpellcheckErrorFromRenderedRects, findSpellcheckErrorFromTarget, findSpellcheckErrorsInRange, findSpellcheckErrorsMatchingBlockText, findSpellcheckMarkerFromTarget, getSpellcheckTextblockAtPos, parseSpellcheckErrorFromTarget } from './extensions/AISpellcheck';
+import { buildSpellcheckSuggestionDetail } from './extensions/spellcheckHelpers';
+import { collectSpellcheckTextblocks, getSpellcheckTextblockAtPos, SPELLCHECK_SUGGESTION_REQUEST_EVENT } from './extensions/AISpellcheck';
 import {
   dragHandleComputePositionConfig,
   getDragHandleElement,
@@ -425,6 +441,34 @@ const NOVA_BLOCK_SLASH_ITEMS = [
     action: (chain: ChainedCommands) => chain.insertContent({ type: 'slider', attrs: { images: [] } }),
   },
   {
+    label: '画板 · 双击进入全屏编辑',
+    description: '预览+编辑分离:笔记内只做缩略展示,双击进入全屏编辑器(节点/连线/手绘/PlantUML)',
+    group: '插入',
+    icon: <Pencil size={18} />,
+    keywords: ['freehand', 'draw', 'sketch', 'canvas', 'whiteboard', 'flowchart', 'mindmap', 'plantuml', '涂鸦', '手绘', '画板', '流程图', '思维导图', '白板'],
+    action: (chain: ChainedCommands) =>
+      chain.insertContent({
+        type: 'freehand',
+        attrs: {
+          strokes: [],
+          nodes: [
+            {
+              id: Math.random().toString(36).slice(2, 9),
+              x: 60,
+              y: 60,
+              w: 140,
+              h: 64,
+              text: '开始',
+              shape: 'rect',
+            },
+          ],
+          edges: [],
+          width: 720,
+          height: 440,
+        },
+      }),
+  },
+  {
     label: '和纸胶带',
     description: '插入装饰胶带',
     group: '手账装饰',
@@ -488,6 +532,80 @@ const NOVA_BLOCK_SLASH_ITEMS = [
     keywords: ['kanban', 'kb'],
     action: (chain: ChainedCommands) => chain.insertContent({ type: 'kanban' }),
   },
+  // v0.19 D1/D2/D3 扩展
+  {
+    label: '提示 · 墨色纸片',
+    description: '插入一条 Callout · 笔记样',
+    group: '墨境块',
+    icon: <StickyNote size={18} />,
+    keywords: ['callout', '提示', '注意', 'note'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'note' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '在此写下要点…' }] }],
+    }),
+  },
+  {
+    label: '提示 · 信息',
+    description: '蓝色 Info Callout',
+    group: '墨境块',
+    icon: <StickyNote size={18} className="text-blue-500" />,
+    keywords: ['callout', 'info', '信息'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'info' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '信息提示…' }] }],
+    }),
+  },
+  {
+    label: '提示 · 警告',
+    description: '朱砂警告 Callout',
+    group: '墨境块',
+    icon: <StickyNote size={18} className="text-red-500" />,
+    keywords: ['callout', 'warn', '警告', 'danger'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'warn' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '注意：' }] }],
+    }),
+  },
+  {
+    label: '提示 · 引语',
+    description: '古典引语样式',
+    group: '墨境块',
+    icon: <Quote size={18} />,
+    keywords: ['callout', 'quote', '引用'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'quote' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '引一段话…' }] }],
+    }),
+  },
+  {
+    label: '提示 · 思考',
+    description: '思考 Callout · 沉心',
+    group: '墨境块',
+    icon: <Sparkles size={18} />,
+    keywords: ['callout', 'tip', '思考', 'think'],
+    action: (chain: ChainedCommands) => chain.insertContent({
+      type: 'callout', attrs: { tone: 'tip' },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '灵光一现…' }] }],
+    }),
+  },
+  {
+    label: '时间线 · Timeline',
+    description: '纵向时间线块 · D3',
+    group: '墨境块',
+    icon: <Timer size={18} />,
+    keywords: ['timeline', '时间', '时间线', '时间轴'],
+    action: (chain: ChainedCommands) => {
+      const today = new Date().toISOString().slice(0, 10)
+      const lastMonth = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10)
+      return chain.insertContent({
+        type: 'timeline',
+        content: [
+          { type: 'timelineItem', attrs: { date: lastMonth }, content: [{ type: 'text', text: '起点' }] },
+          { type: 'timelineItem', attrs: { date: today }, content: [{ type: 'text', text: '现在' }] },
+        ],
+      })
+    },
+  },
 ];
 
 interface NovaBlockEditorProps {
@@ -496,6 +614,9 @@ interface NovaBlockEditorProps {
   onSave: (payload: any) => Promise<Partial<Note> | void>;
   onNotify?: (text: string, tone?: 'success' | 'error' | 'info') => void;
   onSaveAsTemplate?: () => void;
+  onOpenMarginNotes?: () => void;
+  isTypewriterOn?: boolean;
+  onToggleTypewriter?: () => void;
 }
 
 /**
@@ -503,7 +624,8 @@ interface NovaBlockEditorProps {
  * 鏋佽嚧鎬ц兘銆乽ipro 涓撲笟瑙嗚
  */
 export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
-  note, onLiveChange, onSave, onNotify, onSaveAsTemplate
+  note, onLiveChange, onSave, onNotify, onSaveAsTemplate, onOpenMarginNotes,
+  isTypewriterOn = false, onToggleTypewriter,
 }) => {
   const { isAiEnabled } = useAI();
   const [isSaving, setIsSaving] = useState(false);
@@ -517,10 +639,33 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [stickyNotes, setStickyNotes] = useState<StickyNoteData[]>([]);
   const [isStickerMode, setIsStickerMode] = useState(false);
   const [isStickerPanelOpen, setIsStickerPanelOpen] = useState(false);
+  // v0.22.0 · 版本历史抽屉
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [historyNoteId, setHistoryNoteId] = useState<number | null>(null);
   const [isEmoticonPanelOpen, setIsEmoticonPanelOpen] = useState(false);
+  // v0.21.1 · BubbleMenu 两个新 popover 的展开状态（合并高亮+取色）
+  const [isTextColorOpen, setIsTextColorOpen] = useState(false);
+  const [isHighlightColorOpen, setIsHighlightColorOpen] = useState(false);
+  const [textColorAnchor, setTextColorAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [highlightColorAnchor, setHighlightColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [backgroundPaper, setBackgroundPaper] = useState<BackgroundPaperType>(note?.background_paper || 'none');
   const [spellcheckError, setSpellcheckError] = useState<{ error: any, rect: any } | null>(null);
   const [editorViewReadyToken, setEditorViewReadyToken] = useState(0);
+  const previousStickerModeRef = useRef(false);
+
+  // v0.21.2 · 点击 popover 以外的任何位置都收起色板
+  useEffect(() => {
+    if (!isTextColorOpen && !isHighlightColorOpen) return;
+    const handler = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && t.closest('[data-color-popover]')) return;
+      if (t && t.closest('[data-color-trigger]')) return;
+      setIsTextColorOpen(false);
+      setIsHighlightColorOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isTextColorOpen, isHighlightColorOpen]);
   const blockMenuRef = useRef<HTMLDivElement>(null);
   const emoticonPanelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -536,6 +681,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const latestNoteRef = useRef(note);
   const isSavingRef = useRef(false);
   const queuedPayloadRef = useRef<any | null>(null);
+  const handleSaveRef = useRef<(content?: string, updates?: Partial<Note>) => Promise<void> | void>(() => undefined);
+  const stickersRef = useRef<StickerData[]>([]);
+  const stickyNotesRef = useRef<StickyNoteData[]>([]);
+  const liveContentTimerRef = useRef<number | null>(null);
 
   // Global drop cursor ghost cleanup (running during drag)
   useEffect(() => {
@@ -589,21 +738,31 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     latestNoteRef.current = syncLatestDraftWithIncomingNote(latestNoteRef.current, note, prevNoteId);
   }, [note, prevNoteId]);
 
+  useEffect(() => {
+    stickersRef.current = stickers;
+  }, [stickers]);
+
+  useEffect(() => {
+    stickyNotesRef.current = stickyNotes;
+  }, [stickyNotes]);
+
   const handleStickersChange = useCallback((newStickers: StickerData[]) => {
+    stickersRef.current = newStickers;
     setStickers(newStickers);
     if (latestNoteRef.current) {
       latestNoteRef.current = { ...latestNoteRef.current, stickers: newStickers };
     }
-    if (!isDirty) setIsDirty(true);
-  }, [isDirty]);
+    setIsDirty((prev) => prev || true);
+  }, []);
 
   const handleStickyNotesChange = useCallback((newNotes: StickyNoteData[]) => {
+    stickyNotesRef.current = newNotes;
     setStickyNotes(newNotes);
     if (latestNoteRef.current) {
       latestNoteRef.current = { ...latestNoteRef.current, sticky_notes: newNotes };
     }
-    if (!isDirty) setIsDirty(true);
-  }, [isDirty]);
+    setIsDirty((prev) => prev || true);
+  }, []);
 
   // 鏍稿績 Tiptap 鎵╁睍閰嶇疆 (楂樻€ц兘 memo 妯″紡)
   const extensions = useMemo(() => [
@@ -616,17 +775,25 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       dropcursor: false,
     }),
     AILoadingNode,
+    AIStreamingPreviewNode,
     Dropcursor.configure({
       color: 'hsl(var(--primary))',
       width: 2,
       class: 'nova-drop-cursor',
     }),
+    Focus.configure({
+      className: 'has-focus',
+      mode: 'shallowest',
+    }),
     Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
     Blockquote,
     CodeBlock,
     Link.configure({ openOnClick: true, autolink: true }),
-    Highlight,
+    Highlight.configure({ multicolor: true }),
     UnderlineExtension,
+    TextColorMark,
+    MarginAnchor,
+    ListStyleExtension,
     TiptapTable.configure({ resizable: true }),
     TableRow,
     DatabaseTableHeader,
@@ -642,6 +809,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     EmbedNode,
     FileNode,
     CalloutNode,
+    TimelineBlock,
+    TimelineItem,
     WikiLink,
     TaskList,
     TaskItem.configure({ nested: true }),
@@ -659,6 +828,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     Emoticon,
     SliderExtension,
     TextEffect,
+    FreehandExtension,
     AISpellcheck.configure({ debounceMs: 800 }),
     NoteLink.configure({ suggestion: getNoteLinkSuggestionConfig() }),
     SlashCommands.configure({ suggestion: getSuggestionConfig(slashItemsRef, isAiEnabled) }),
@@ -726,9 +896,14 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }, 500); // 500ms 闃叉姈锛屽ぇ骞呮彁鍗囪緭鍏ユ€ц兘锛屾潨缁?React 娓叉煋姝婚攣
   }, []);
 
+  const normalizedNoteContent = useMemo(
+    () => sanitizeLegacyApiUrlsInHtml(note?.content) || '<p></p>',
+    [note?.content],
+  );
+
   const editor = useEditor({
     extensions,
-    content: note?.content || '<p></p>',
+    content: normalizedNoteContent,
     immediatelyRender: false,
     onUpdate: ({ editor }) => {
       // 閬垮厤閲嶅璁剧疆鐘舵€佸鑷?React React 姝诲惊鐜?
@@ -736,38 +911,44 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         setIsDirty(true);
       }
       
-      const html = editor.getHTML();
       const currentLatestNote = latestNoteRef.current;
-      const payload: any = { ...currentLatestNote, content: html };
+      const payload: any = { ...currentLatestNote };
       
-      if (!currentLatestNote?.is_title_manually_edited) {
-        // Extract title from the first text-containing block
-        const docContent = editor.getJSON().content || [];
-        let autoTitle = '';
-        for (const block of docContent) {
-          if (block.content && block.content.length > 0) {
-            autoTitle = block.content.map((n: any) => n.text || '').join('');
-            if (autoTitle.trim() !== '') {
-              break; // use the first non-empty text
-            }
-          }
-        }
-        if (autoTitle.trim() !== '') {
-          payload.title = autoTitle.trim();
-        } else {
-          payload.title = '未命名笔记';
-        }
+      const nextAutoTitle = extractLeadingNoteTitle(editor.state.doc);
+      if (
+        nextAutoTitle &&
+        !currentLatestNote?.is_title_manually_edited &&
+        nextAutoTitle !== currentLatestNote?.title
+      ) {
+        payload.title = nextAutoTitle;
+        payload.is_title_manually_edited = false;
       }
       
       latestNoteRef.current = payload;
-      onLiveChange?.(payload);
+      if (payload.title !== currentLatestNote?.title) {
+        onLiveChange?.({
+          id: payload.id,
+          title: payload.title,
+          is_title_manually_edited: payload.is_title_manually_edited,
+        });
+      }
+
+      if (liveContentTimerRef.current) {
+        window.clearTimeout(liveContentTimerRef.current);
+      }
+      liveContentTimerRef.current = window.setTimeout(() => {
+        const content = editor.getHTML();
+        latestNoteRef.current = { ...latestNoteRef.current, content } as Note;
+        onLiveChange?.({
+          id: latestNoteRef.current?.id,
+          title: latestNoteRef.current?.title,
+          is_title_manually_edited: latestNoteRef.current?.is_title_manually_edited,
+          content,
+        });
+      }, 350);
       // 杩欓噷涓嶈鍦ㄦ瘡娆℃寜閿椂绔嬪埢 await onSave(payload)锛屽洜涓?onUpdate 鏄悓姝ヨЕ鍙戠殑楂橀浜嬩欢
       // 璁?handleSave (debounced) 鍘绘帴绠′繚瀛橀€昏緫锛屾瀬澶ф彁楂樿緭鍏ユ€ц兘
       // 鍙湁鍦ㄩ渶瑕佺珛鍗虫洿鏂板ぇ绾叉椂锛屾墠璋冪敤 updateOutline(editor);
-      updateOutline(editor);
-    },
-    onTransaction: ({ editor }) => {
-      // 鍦ㄤ簨鍔℃彁浜ゅ悗鏇存柊澶х翰锛屾崟鎹夋嫋鎷藉拰灞炴€у彉鍖?
       updateOutline(editor);
     },
     onCreate: ({ editor }) => {
@@ -823,90 +1004,29 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }
   }, [editor]);
 
-  const getSpellcheckPosFromCaretPoint = useCallback((point: { left: number; top: number }) => {
-    if (!editor || editor.isDestroyed || !editor.isInitialized) {
-      return null;
+  const restoreEditorFocusAfterStickerMode = useCallback(() => {
+    if (!editor || editor.isDestroyed) {
+      return;
     }
 
-    const documentLike = editor.view.dom.ownerDocument ?? document;
-    try {
-      if (typeof documentLike.caretPositionFromPoint === 'function') {
-        const caret = documentLike.caretPositionFromPoint(point.left, point.top);
-        if (caret?.offsetNode) {
-          return editor.view.posAtDOM(caret.offsetNode, caret.offset ?? 0);
-        }
+    const focusEditor = () => {
+      if (!editor || editor.isDestroyed) {
+        return;
       }
 
-      const anyDocument = documentLike as Document & {
-        caretRangeFromPoint?: (x: number, y: number) => Range | null;
-      };
-      if (typeof anyDocument.caretRangeFromPoint === 'function') {
-        const range = anyDocument.caretRangeFromPoint(point.left, point.top);
-        if (range?.startContainer) {
-          return editor.view.posAtDOM(range.startContainer, range.startOffset ?? 0);
-        }
+      const editorDom = getEditorViewDom();
+      if (editorDom instanceof HTMLElement) {
+        editorDom.focus({ preventScroll: true });
       }
-    } catch (_error) {
-      return null;
-    }
+      editor.chain().focus().run();
+    };
 
-    return null;
-  }, [editor]);
-
-  const getSpellcheckTextblockFromTarget = useCallback((target: EventTarget | null) => {
-    if (!editor || editor.isDestroyed || !editor.isInitialized) {
-      return null;
-    }
-
-    const targetLike = target as {
-      closest?: (selector: string) => HTMLElement | null;
-      parentElement?: HTMLElement | null;
-    } | null;
-    const element = typeof Element !== 'undefined' && target instanceof Element
-      ? target
-      : typeof globalThis.Node !== 'undefined' && target instanceof globalThis.Node
-        ? target.parentElement
-        : typeof targetLike?.closest === 'function'
-          ? targetLike
-          : targetLike?.parentElement ?? null;
-
-    if (!element || typeof element.closest !== 'function') {
-      return null;
-    }
-
-    const blockElement = element.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th');
-    if (!blockElement) {
-      return null;
-    }
-
-    try {
-      const blockPos = editor.view.posAtDOM(blockElement, 0);
-      return getSpellcheckTextblockAtPos(editor.state.doc, blockPos + 1) as { text: string; rangeFrom: number } | null;
-    } catch (_error) {
-      return null;
-    }
-  }, [editor]);
-
-  const getSpellcheckBlockTextFromTarget = useCallback((target: EventTarget | null) => {
-    const targetLike = target as {
-      closest?: (selector: string) => HTMLElement | null;
-      parentElement?: HTMLElement | null;
-      textContent?: string | null;
-    } | null;
-    const element = typeof Element !== 'undefined' && target instanceof Element
-      ? target
-      : typeof globalThis.Node !== 'undefined' && target instanceof globalThis.Node
-        ? target.parentElement
-        : typeof targetLike?.closest === 'function'
-          ? targetLike
-          : targetLike?.parentElement ?? null;
-
-    if (!element || typeof element.closest !== 'function') {
-      return null;
-    }
-
-    return element.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th')?.textContent ?? null;
-  }, []);
+    window.setTimeout(() => {
+      window.requestAnimationFrame(() => {
+        focusEditor();
+      });
+    }, 0);
+  }, [editor, getEditorViewDom]);
 
   const scheduleDragHandleReposition = useCallback(() => {
     const editorDom = getEditorViewDom();
@@ -954,7 +1074,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
           rotation: (Math.random() - 0.5) * 10,
           opacity: 1,
         };
-        handleStickersChange([...stickers, newSticker]);
+        const nextStickers = [...stickersRef.current, newSticker];
+        handleStickersChange(nextStickers);
+        void handleSaveRef.current(undefined, {
+          stickers: nextStickers,
+          sticky_notes: stickyNotesRef.current,
+        });
       } else {
         const newSticky: StickyNoteData = {
           id: Math.random().toString(36).substring(7),
@@ -964,7 +1089,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
           rotation: (Math.random() - 0.5) * 10,
           content: detail?.content || '<p></p>',
         };
-        handleStickyNotesChange([...stickyNotes, newSticky]);
+        const nextStickyNotes = [...stickyNotesRef.current, newSticky];
+        handleStickyNotesChange(nextStickyNotes);
+        void handleSaveRef.current(undefined, {
+          stickers: stickersRef.current,
+          sticky_notes: nextStickyNotes,
+        });
       }
     };
     window.addEventListener('add-sticky-note', handleAddSticker as EventListener);
@@ -992,19 +1122,32 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       }
 
       try {
-        const { api } = await import('../../lib/api');
-        
+        // v0.21.8 · 直接使用顶层已导入的 api, 不再动态 import
+        //   — 消除 [INEFFECTIVE_DYNAMIC_IMPORT] 告警并让 api 进入同一 chunk.
+
         let streamBuffer = '';
+        let plainMarkdownBuffer = '';
         let isFirstToken = true;
-        
+
         // --- 实时流式解析状态 ---
         let currentStreamingAction: { type: string; language?: string; startPos: number } | null = null;
         let lastActionValue = ''; // 记录上一次 Action 累积的内容，用于增量插入
 
         const flushText = (text: string) => {
-          if (text && editor) {
-            editor.chain().focus().insertContent(text).run();
+          if (text) {
+            plainMarkdownBuffer += text;
+            if (findAIStreamingPreview(editor)) {
+              updateAIStreamingPreview(editor, plainMarkdownBuffer);
+            }
           }
+        };
+
+        const insertAccumulatedAIText = () => {
+          if (!plainMarkdownBuffer || !editor) return;
+          const text = plainMarkdownBuffer;
+          plainMarkdownBuffer = '';
+          const content = shouldRenderAIMarkdown(text) ? aiMarkdownToHtml(text) : text;
+          replaceAIStreamingPreviewWithContent(editor, content);
         };
 
         await api.streamInlineAI(
@@ -1026,6 +1169,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               if (foundPos !== -1) {
                 editor.chain().deleteRange({ from: foundPos, to: foundPos + 1 }).focus().run();
               }
+              insertAIStreamingPreview(editor);
             }
             streamBuffer += chunk;
             
@@ -1164,6 +1308,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         if (streamBuffer) {
           flushText(streamBuffer);
         }
+        insertAccumulatedAIText();
       } catch (err: any) {
         console.error(err);
 
@@ -1180,6 +1325,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         if (foundPos !== -1) {
           editor.chain().deleteRange({ from: foundPos, to: foundPos + 1 }).run();
         }
+        removeAIStreamingPreview(editor);
 
         editor.chain().focus().insertContent(`\n[AI 生成失败: ${err.message}]`).run();
       }
@@ -1188,8 +1334,6 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
     const handleAIAction = (e: any) => {
       const { type, value, attrs } = e.detail;
-      console.log(`[NovaBlock] Handling AI Action: ${type}`, { value, attrs });
-      
       if (!isAiEnabled) {
         onNotify?.('璇峰厛鍦ㄨ缃腑寮€鍚?AI 鎻掍欢', 'info');
         return;
@@ -1284,11 +1428,15 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       window.removeEventListener('ai-write', handleAIWrite as EventListener);
       window.removeEventListener('ai-action', handleAIAction);
     };
-  }, [editor, stickers, stickyNotes, handleStickersChange, handleStickyNotesChange, note?.id, onSave]);
+  }, [editor, handleStickersChange, handleStickyNotesChange, isAiEnabled, onNotify, onSave]);
 
   useEffect(() => {
-    setStickers(note?.stickers || []);
-    setStickyNotes(note?.sticky_notes || []);
+    const nextStickers = note?.stickers || [];
+    const nextStickyNotes = note?.sticky_notes || [];
+    stickersRef.current = nextStickers;
+    stickyNotesRef.current = nextStickyNotes;
+    setStickers(nextStickers);
+    setStickyNotes(nextStickyNotes);
     setBackgroundPaper(note?.background_paper || 'none');
     setSpellcheckError(null);
   }, [note?.id, note?.stickers, note?.sticky_notes, note?.background_paper]);
@@ -1310,225 +1458,27 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   useEffect(() => {
     const editorDom = getEditorViewDom();
     if (!editorDom || !editor || editor.isDestroyed || !editor.isInitialized) {
-      console.info('[spellcheck-debug] listener-skip', {
-        noteId: note?.id ?? null,
-        hasEditor: Boolean(editor),
-        hasEditorDom: Boolean(editorDom),
-        isDestroyed: Boolean(editor?.isDestroyed),
-        isInitialized: Boolean(editor?.isInitialized),
-      });
       return;
     }
 
-    console.info('[spellcheck-debug] listener-bound', {
-      noteId: note?.id ?? null,
-      aiErrors: ((editor.storage as any)?.aiSpellcheck?.errors ?? []).length,
-    });
-
-    const handleSpellcheckMarkerMouseDown = async (event: MouseEvent) => {
-      if (event.button !== 0) {
+    const handleSpellcheckSuggestionRequest = (event: Event) => {
+      const detail = (event as CustomEvent<{ error?: any; rect?: any }>).detail;
+      if (!detail?.error || !detail.rect) {
         return;
       }
 
-      const marker = findSpellcheckMarkerFromTarget(event.target);
-      const cachedErrors = ((editor.storage as any)?.aiSpellcheck?.errors ?? []);
-      const clickedPos = editor.view?.posAtCoords?.({ left: event.clientX, top: event.clientY })?.pos ?? null;
-      const clickedBlockFromTarget = getSpellcheckTextblockFromTarget(event.target);
-      const clickedBlockTextFromTarget = getSpellcheckBlockTextFromTarget(event.target);
-
-      let parsedError = marker
-        ? (
-          parseSpellcheckErrorFromTarget(event.target)
-          ?? findSpellcheckErrorFromTarget(cachedErrors, event.target)
-        )
-        : findSpellcheckErrorFromCoords(
-          cachedErrors,
-          editor.view?.posAtCoords?.bind(editor.view),
-          { left: event.clientX, top: event.clientY },
-        );
-
-      if (!parsedError) {
-        const targetBlockErrors = clickedBlockFromTarget
-          ? findSpellcheckErrorsInRange(
-            cachedErrors,
-            clickedBlockFromTarget.rangeFrom,
-            clickedBlockFromTarget.rangeFrom + clickedBlockFromTarget.text.length,
-          )
-          : [];
-
-        if (targetBlockErrors.length === 1) {
-          parsedError = targetBlockErrors[0];
-        } else if (targetBlockErrors.length > 1) {
-          parsedError = findClosestSpellcheckErrorByPoint(
-            targetBlockErrors,
-            editor.view?.coordsAtPos?.bind(editor.view),
-            { left: event.clientX, top: event.clientY },
-          );
-        }
-      }
-
-      if (!parsedError) {
-        const textMatchedErrors = findSpellcheckErrorsMatchingBlockText(cachedErrors, clickedBlockTextFromTarget);
-        if (textMatchedErrors.length === 1) {
-          parsedError = textMatchedErrors[0];
-        } else if (textMatchedErrors.length > 1) {
-          parsedError = findClosestSpellcheckErrorByPoint(
-            textMatchedErrors,
-            editor.view?.coordsAtPos?.bind(editor.view),
-            { left: event.clientX, top: event.clientY },
-          );
-        }
-      }
-
-      if (!parsedError) {
-        parsedError = findSpellcheckErrorFromPointProbes(
-          (point) => findSpellcheckErrorFromCaretPoint(
-            cachedErrors,
-            getSpellcheckPosFromCaretPoint,
-            point,
-          ),
-          { left: event.clientX, top: event.clientY },
-        );
-      }
-
-      if (!parsedError) {
-        parsedError = findSpellcheckErrorFromRenderedRects(
-          cachedErrors,
-          editor.view?.coordsAtPos?.bind(editor.view),
-          { left: event.clientX, top: event.clientY },
-        );
-      }
-
-      if (!parsedError && typeof clickedPos === 'number') {
-        const spellcheckStorage = (editor.storage as any)?.aiSpellcheck;
-        const clickedBlock = getSpellcheckTextblockAtPos(editor.state.doc, clickedPos) as { text: string; rangeFrom: number } | null;
-        const clickedBlockText = clickedBlock ? clickedBlock.text : null;
-        const clickedBlockRangeFrom = clickedBlock ? clickedBlock.rangeFrom : null;
-        const clickedBlockRangeTo = clickedBlock ? clickedBlock.rangeFrom + clickedBlock.text.length : null;
-
-        if (clickedBlockText && typeof clickedBlockRangeFrom === 'number' && spellcheckStorage?.runCheck) {
-          try {
-            await spellcheckStorage.runCheck(editor.view, clickedBlockText, clickedBlockRangeFrom);
-            const refreshedErrors = ((editor.storage as any)?.aiSpellcheck?.errors ?? []);
-            parsedError = findSpellcheckErrorAtPos(refreshedErrors, clickedPos);
-            if (!parsedError && typeof clickedBlockRangeTo === 'number') {
-              const blockErrors = findSpellcheckErrorsInRange(
-                refreshedErrors,
-                clickedBlockRangeFrom,
-                clickedBlockRangeTo,
-              );
-              parsedError = blockErrors.length === 1
-                ? blockErrors[0]
-                : findClosestSpellcheckErrorByPoint(
-                  blockErrors,
-                  editor.view?.coordsAtPos?.bind(editor.view),
-                  { left: event.clientX, top: event.clientY },
-                );
-            }
-          } catch (_error) {
-            // Ignore and fall through to debug logging below.
-          }
-        }
-      }
-
-      if (!marker && !parsedError) {
-        let blockErrorsCount = 0;
-        if (clickedBlockFromTarget) {
-          blockErrorsCount = findSpellcheckErrorsInRange(
-            cachedErrors,
-            clickedBlockFromTarget.rangeFrom,
-            clickedBlockFromTarget.rangeFrom + clickedBlockFromTarget.text.length,
-          ).length;
-        } else if (typeof clickedPos === 'number') {
-          const clickedBlock = getSpellcheckTextblockAtPos(editor.state.doc, clickedPos) as { text: string; rangeFrom: number } | null;
-          if (clickedBlock) {
-            blockErrorsCount = findSpellcheckErrorsInRange(
-              cachedErrors,
-              clickedBlock.rangeFrom,
-              clickedBlock.rangeFrom + clickedBlock.text.length,
-            ).length;
-          }
-        }
-        console.info('[spellcheck-debug] non-ai-click', {
-          noteId: note?.id ?? null,
-          targetNode: (event.target as any)?.nodeName ?? null,
-          targetClass: (event.target as any)?.className ?? null,
-          aiErrors: cachedErrors.length,
-          blockErrors: blockErrorsCount,
-        });
-        return;
-      }
-
-      if (!parsedError) {
-        console.info('[spellcheck-debug] marker-hit-without-error', {
-          noteId: note?.id ?? null,
-          targetClass: (event.target as any)?.className ?? null,
-        });
-        return;
-      }
-
-      console.info('[spellcheck-debug] marker-hit', {
-        noteId: note?.id ?? null,
-        word: parsedError.word,
-        suggestion: parsedError.suggestion,
-        from: parsedError.from,
-        to: parsedError.to,
-      });
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation?.();
-
-      const rect = marker
-        ? marker.getBoundingClientRect()
-        : (() => {
-          try {
-            const startRect = editor.view.coordsAtPos(parsedError.from);
-            const endRect = editor.view.coordsAtPos(parsedError.to);
-            return {
-              top: Math.min(startRect.top, endRect.top),
-              left: Math.min(startRect.left, endRect.left),
-              right: Math.max(startRect.right, endRect.right),
-              bottom: Math.max(startRect.bottom, endRect.bottom),
-              width: Math.max(endRect.right - startRect.left, 0),
-              height: Math.max(startRect.bottom - startRect.top, 0),
-            };
-          } catch (_error) {
-            return {
-              top: event.clientY,
-              left: event.clientX,
-              right: event.clientX,
-              bottom: event.clientY,
-              width: 0,
-              height: 0,
-            };
-          }
-        })();
       setSpellcheckError(buildSpellcheckSuggestionDetail(
-        parsedError,
-        rect,
-        rect,
+        detail.error,
+        detail.rect,
+        detail.rect,
       ));
     };
 
-    editorDom.addEventListener('mousedown', handleSpellcheckMarkerMouseDown, true);
+    editorDom.addEventListener(SPELLCHECK_SUGGESTION_REQUEST_EVENT, handleSpellcheckSuggestionRequest);
     return () => {
-      editorDom.removeEventListener('mousedown', handleSpellcheckMarkerMouseDown, true);
+      editorDom.removeEventListener(SPELLCHECK_SUGGESTION_REQUEST_EVENT, handleSpellcheckSuggestionRequest);
     };
-  }, [getEditorViewDom, getSpellcheckBlockTextFromTarget, getSpellcheckPosFromCaretPoint, getSpellcheckTextblockFromTarget, note?.id, editor, editorViewReadyToken]);
-
-  useEffect(() => {
-    if (!spellcheckError) {
-      return;
-    }
-
-    console.info('[spellcheck-debug] popup-state-set', {
-      noteId: note?.id ?? null,
-      word: spellcheckError.error?.word ?? null,
-      suggestion: spellcheckError.error?.suggestion ?? null,
-      rect: spellcheckError.rect ?? null,
-    });
-  }, [note?.id, spellcheckError]);
+  }, [getEditorViewDom, note?.id, editor, editorViewReadyToken]);
 
   useEffect(() => {
     if (!editor || editor.isDestroyed || !editor.isInitialized || !note?.id) {
@@ -1612,9 +1562,22 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     await runSave(payloadToSave);
   }, [editor, onNotify, onSave]);
 
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  }, [handleSave]);
+
+  useEffect(() => {
+    return () => {
+      if (liveContentTimerRef.current) {
+        window.clearTimeout(liveContentTimerRef.current);
+        liveContentTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // 鑷姩淇濆瓨 (debounce)
   const timerRef = useRef<any>(null);
-  const autosaveDelayMs = window.electron?.ipcInvoke ? 0 : 3000;
+  const autosaveDelayMs = window.electron?.ipcInvoke ? 250 : 3000;
   useEffect(() => {
     // 鍙鏈夋敼鍔紝灏辫缃畾鏃跺櫒
     if (!isDirty) return;
@@ -1750,7 +1713,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       if (editor.isDestroyed) return;
       const tr = editor.state.tr.setMeta('lockDragHandle', isBlockMenuOpen);
       editor.view.dispatch(tr);
-    } catch (e) {
+    } catch {
       // Ignore if view is not ready or unmounted
     }
   }, [editor, isBlockMenuOpen]);
@@ -1878,7 +1841,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         });
       }
 
-      editor.commands.setContent(note.content || '<p></p>', { emitUpdate: false });
+      replaceEditorContentWithoutHistory(editor, sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>');
       // 鍒囨崲鍐呭鍚庯紝寮哄埗琛ラ綈 ID 骞舵洿鏂板ぇ绾?
       // @ts-ignore
       editor.commands.ensureHeadingIds();
@@ -1890,12 +1853,103 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }
   }, [editor, isDirty, note, onNotify, onSave, prevNoteId, updateOutline]);
 
+  useEffect(() => {
+    if (!editor || !note?.id || note.id !== prevNoteId || isDirty || isSavingRef.current) {
+      return;
+    }
+
+    const incomingContent = sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>';
+    const knownContent = sanitizeLegacyApiUrlsInHtml(latestNoteRef.current?.content) || '<p></p>';
+    if (incomingContent === knownContent || incomingContent === editor.getHTML()) {
+      latestNoteRef.current = note;
+      return;
+    }
+
+    replaceEditorContentWithoutHistory(editor, incomingContent);
+    // @ts-ignore
+    editor.commands.ensureHeadingIds();
+    latestNoteRef.current = note;
+    setIsDirty(false);
+    updateOutline(editor);
+  }, [editor, isDirty, note, prevNoteId, updateOutline]);
+
+  useEffect(() => {
+    if (!editor || !note?.id) return;
+
+    const handleExternalContentReplace = (event: Event) => {
+      const detail = (event as CustomEvent<{ noteId?: number; content?: string }>).detail;
+      if (!detail || Number(detail.noteId) !== Number(note.id) || typeof detail.content !== 'string') {
+        return;
+      }
+      if (isDirty || isSavingRef.current) {
+        latestNoteRef.current = { ...latestNoteRef.current, content: detail.content } as Note;
+        return;
+      }
+      const nextContent = sanitizeLegacyApiUrlsInHtml(detail.content) || '<p></p>';
+      replaceEditorContentWithoutHistory(editor, nextContent);
+      // @ts-ignore
+      editor.commands.ensureHeadingIds();
+      latestNoteRef.current = { ...latestNoteRef.current, ...note, content: detail.content } as Note;
+      setIsDirty(false);
+      updateOutline(editor);
+    };
+
+    window.addEventListener('nova:replace-current-note-content', handleExternalContentReplace);
+    return () => window.removeEventListener('nova:replace-current-note-content', handleExternalContentReplace);
+  }, [editor, isDirty, note, updateOutline]);
+
   // 鍚屾棰勮/缂栬緫妯″紡
   useEffect(() => {
     if (editor) {
       editor.setEditable(viewMode === 'edit');
     }
   }, [editor, viewMode]);
+
+  // v0.21.3 · 打字机模式：把光标所在块滚到视口纵向中央
+  useEffect(() => {
+    if (!editor || !isTypewriterOn) return;
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) return;
+
+    let frameId = 0;
+    const centerCaret = () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        try {
+          const { view } = editor;
+          if (!view || !view.hasFocus()) return;
+          const { from } = view.state.selection;
+          const coords = view.coordsAtPos(from);
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const viewportCenter = containerRect.top + containerRect.height / 2;
+          const delta = coords.top - viewportCenter;
+          if (Math.abs(delta) < 4) return;
+          scrollContainer.scrollBy({ top: delta, behavior: 'smooth' });
+        } catch {
+          /* noop */
+        }
+      });
+    };
+
+    editor.on('selectionUpdate', centerCaret);
+    editor.on('update', centerCaret);
+    editor.on('focus', centerCaret);
+    centerCaret();
+
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      editor.off('selectionUpdate', centerCaret);
+      editor.off('update', centerCaret);
+      editor.off('focus', centerCaret);
+    };
+  }, [editor, isTypewriterOn]);
+
+  useEffect(() => {
+    if (previousStickerModeRef.current && !isStickerMode) {
+      restoreEditorFocusAfterStickerMode();
+    }
+    previousStickerModeRef.current = isStickerMode;
+  }, [isStickerMode, restoreEditorFocusAfterStickerMode]);
 
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -1914,6 +1968,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     return () => {
       scrollContainer.removeEventListener('scroll', handleReposition);
       window.removeEventListener('resize', handleReposition);
+      if (dragHandleRepositionFrameRef.current !== null) {
+        cancelAnimationFrame(dragHandleRepositionFrameRef.current);
+      }
     };
   }, [scheduleDragHandleReposition]);
 
@@ -1948,7 +2005,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       // Accessing editor.view throws an error in Tiptap if the view is not mounted yet
       if (editor.isDestroyed) return;
       editorElement = editor.view.dom;
-    } catch (e) {
+    } catch {
       return;
     }
 
@@ -2051,6 +2108,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               lastSavedAt={lastSavedAt}
               showRelations={false}
               showOutline={false}
+              showMarginNotes={false}
+              onToggleMarginNotes={() => onOpenMarginNotes?.()}
+              isTypewriterOn={isTypewriterOn}
+              onToggleTypewriter={onToggleTypewriter}
               viewMode={viewMode}
               isStickerMode={isStickerMode}
               backgroundPaper={backgroundPaper}
@@ -2076,6 +2137,16 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               onOpenStickerPanel={() => setIsStickerPanelOpen(true)}
               onClearStickers={() => handleStickersChange([])}
               onSaveAsTemplate={onSaveAsTemplate}
+              onOpenHistory={() => {
+                const stableNoteId =
+                  typeof latestNoteRef.current?.id === 'number'
+                    ? latestNoteRef.current.id
+                    : typeof note?.id === 'number'
+                      ? note.id
+                      : null;
+                setHistoryNoteId(stableNoteId);
+                setIsHistoryOpen(true);
+              }}
               onChangeBackgroundPaper={(type) => {
                 setBackgroundPaper(type);
                 if (latestNoteRef.current) {
@@ -2270,6 +2341,82 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                       </div>
                     </div>
 
+                    {(() => {
+                      // 通过 targetPos 精准判断：支持 NodeSelection 指向 list / listItem / 内部 paragraph
+                      let listKind: 'bulletList' | 'orderedList' | null = null;
+                      try {
+                        if (targetPos !== null && targetPos >= 0) {
+                          const nodeAt = editor.state.doc.nodeAt(targetPos);
+                          if (nodeAt?.type.name === 'bulletList') listKind = 'bulletList';
+                          else if (nodeAt?.type.name === 'orderedList') listKind = 'orderedList';
+                          else {
+                            const $at = editor.state.doc.resolve(targetPos);
+                            for (let d = $at.depth; d >= 0; d -= 1) {
+                              const n = $at.node(d);
+                              if (n.type.name === 'bulletList') { listKind = 'bulletList'; break; }
+                              if (n.type.name === 'orderedList') { listKind = 'orderedList'; break; }
+                            }
+                          }
+                        }
+                      } catch { /* noop */ }
+                      if (!listKind) {
+                        if (editor.isActive('bulletList')) listKind = 'bulletList';
+                        else if (editor.isActive('orderedList')) listKind = 'orderedList';
+                      }
+                      if (!listKind) return null;
+                      return (
+                      <>
+                        <div className="h-px bg-border/20 mx-2" />
+                        <div className="px-2 py-1.5">
+                          <p className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest mb-1.5 px-1">
+                            列表样式
+                          </p>
+                          <div className="grid grid-cols-6 gap-1 px-1">
+                            {(listKind === 'bulletList'
+                              ? [
+                                  { key: 'disc', label: '•', title: '实心圆点 disc' },
+                                  { key: 'circle', label: '◦', title: '空心圆 circle' },
+                                  { key: 'square', label: '▪', title: '方块 square' },
+                                  { key: 'dash', label: '—', title: '短横线 dash' },
+                                  { key: 'arrow', label: '→', title: '箭头 arrow' },
+                                  { key: 'star', label: '★', title: '五角星 star' },
+                                  { key: 'flower', label: '❀', title: '花 flower' },
+                                  { key: 'check', label: '✓', title: '对勾 check' },
+                                ]
+                              : [
+                                  { key: 'decimal', label: '1.', title: '阿拉伯数字' },
+                                  { key: 'lower-alpha', label: 'a.', title: '小写字母' },
+                                  { key: 'upper-alpha', label: 'A.', title: '大写字母' },
+                                  { key: 'lower-roman', label: 'i.', title: '小写罗马' },
+                                  { key: 'upper-roman', label: 'I.', title: '大写罗马' },
+                                  { key: 'cjk-han', label: '一、', title: '汉字' },
+                                ]).map((item) => (
+                              <button
+                                key={item.key}
+                                title={item.title}
+                                onMouseDown={(e) => {
+                                  // 防止 button 获取焦点 + NodeSelection 残留
+                                  e.preventDefault();
+                                }}
+                                onClick={() => {
+                                  const pos = targetPos ?? undefined;
+                                  editor
+                                    .chain()
+                                    .setListStyle(item.key as never, pos)
+                                    .run();
+                                  setIsBlockMenuOpen(false);
+                                }}
+                                className="h-8 flex items-center justify-center text-sm text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-all duration-200"
+                              >
+                                {item.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                      );
+                    })()}
+
                     <div className="h-px bg-border/20 mx-2" />
 
                     <div className="px-2 py-1.5">
@@ -2381,21 +2528,21 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
             {/* 娴姩鑿滃崟 */}
             {editor && (
-              <BubbleMenu 
-                editor={editor} 
+              <BubbleMenu
+                editor={editor}
 
                 shouldShow={({ editor }: { editor: Editor }) => {
                   const { selection } = editor.state;
                   const isNodeSelection = selection instanceof NodeSelection;
-                  
+
                   return (
-                    !isBlockMenuOpen && 
-                    !selection.empty && 
+                    !isBlockMenuOpen &&
+                    !selection.empty &&
                     !isNodeSelection &&
                     !editor.isActive('table')
                   );
                 }}
-                className="flex overflow-hidden rounded-2xl border shadow-soft p-1.5"
+                className="flex rounded-2xl border shadow-soft p-1.5"
                 style={{
                   opacity: 'var(--text-menu-opacity, 0.9)',
                   backdropFilter: 'blur(var(--text-menu-blur, 10px))',
@@ -2466,12 +2613,91 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                     <LinkIcon size={16} />
                   </button>
 
-                  <button 
-                    onClick={() => editor.chain().focus().toggleHighlight({ color: '#ffec3d' }).run()} 
-                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${editor.isActive('highlight') ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
-                    title="高亮"
+                  {/* v0.21.1 · 文字颜色 */}
+                  <button
+                    data-color-trigger="text"
+                    ref={(el) => {
+                      if (el && isTextColorOpen && !textColorAnchor) {
+                        const r = el.getBoundingClientRect();
+                        setTextColorAnchor({ x: r.left + r.width / 2, y: r.bottom + 6 });
+                      }
+                    }}
+                    onMouseDown={(e) => { e.preventDefault(); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const r = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                      setTextColorAnchor({ x: r.left + r.width / 2, y: r.bottom + 6 });
+                      setIsHighlightColorOpen(false);
+                      setIsTextColorOpen((v) => !v);
+                    }}
+                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${editor.isActive('textColor') || isTextColorOpen ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+                    title="文字颜色"
+                  >
+                    <Palette size={16} />
+                  </button>
+
+                  {/* v0.21.1 · 高亮:点击切换默认色,右侧小箭头选色 */}
+                  <button
+                    data-color-trigger="highlight"
+                    onMouseDown={(e) => { e.preventDefault(); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const r = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                      setHighlightColorAnchor({ x: r.left + r.width / 2, y: r.bottom + 6 });
+                      setIsTextColorOpen(false);
+                      setIsHighlightColorOpen((v) => !v);
+                    }}
+                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${editor.isActive('highlight') || isHighlightColorOpen ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+                    title="高亮 (点击选择颜色)"
                   >
                     <Highlighter size={16} />
+                  </button>
+
+                  {/* v0.21.1 · Margin Notes 入口 */}
+                  <button
+                    onMouseDown={(e) => { e.preventDefault(); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      try {
+                        const noteId = note?.id;
+                        if (noteId == null) {
+                          onNotify?.('请先保存笔记再新增批注', 'info');
+                          return;
+                        }
+                        const selText = editor.state.doc.textBetween(
+                          editor.state.selection.from,
+                          editor.state.selection.to,
+                          ' '
+                        ).trim();
+                        if (!selText) {
+                          onNotify?.('请先选中一段文字', 'info');
+                          return;
+                        }
+                        const now = Date.now();
+                        const anchorId = `mn_${now}_${Math.random().toString(36).slice(2, 7)}`;
+                        try {
+                          const key = `nova.margin.${noteId}`;
+                          const raw = localStorage.getItem(key);
+                          const list = raw ? (JSON.parse(raw) as any[]) : [];
+                          const newNote = {
+                            id: anchorId,
+                            excerpt: selText.slice(0, 160),
+                            body: '',
+                            createdAt: now,
+                            updatedAt: now,
+                          };
+                          localStorage.setItem(key, JSON.stringify([newNote, ...list]));
+                        } catch { /* noop */ }
+                        editor.chain().focus().setMarginAnchor(anchorId).run();
+                        onOpenMarginNotes?.();
+                      } catch (err) {
+                        console.error('[MarginNotes] create failed', err);
+                      }
+                    }}
+                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${editor.isActive('marginAnchor') ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+                    title={editor.isActive('marginAnchor') ? '已有批注 · 点击再次打开批注面板' : '为选中文字添加边栏批注'}
+                  >
+                    <MessageSquare size={16} />
                   </button>
 
                   <button 
@@ -2567,6 +2793,102 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               onChange={handleStickyNotesChange}
             />
 
+            {/* v0.21.2 · 文字颜色 / 高亮取色 popover (Portal 至 body,避免被 BubbleMenu 裁切/卸载) */}
+            {(isTextColorOpen || isHighlightColorOpen) && createPortal(
+              <div
+                data-color-popover="true"
+                onMouseDown={(e) => { e.preventDefault(); }}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: 'fixed',
+                  left: (isTextColorOpen ? textColorAnchor?.x : highlightColorAnchor?.x) ?? 0,
+                  top: (isTextColorOpen ? textColorAnchor?.y : highlightColorAnchor?.y) ?? 0,
+                  transform: 'translateX(-50%)',
+                  zIndex: 10000,
+                }}
+                className="rounded-xl border border-border/40 bg-background/98 shadow-xl backdrop-blur-md p-2 flex flex-col gap-1.5"
+              >
+                <div className="text-[10px] text-muted-foreground px-0.5 flex items-center justify-between">
+                  <span>{isTextColorOpen ? '文字颜色' : '高亮颜色'}</span>
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      if (isTextColorOpen) {
+                        editor?.chain().focus().unsetTextColor().run();
+                        setIsTextColorOpen(false);
+                      } else {
+                        editor?.chain().focus().unsetHighlight().run();
+                        setIsHighlightColorOpen(false);
+                      }
+                    }}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    清除
+                  </button>
+                </div>
+                <div className="grid grid-cols-8 gap-1" style={{ width: 196 }}>
+                  {(isTextColorOpen
+                    ? [
+                        { c: '#000000', n: '墨' },
+                        { c: '#d32f2f', n: '朱砂' },
+                        { c: '#e65100', n: '赤金' },
+                        { c: '#f9a825', n: '杏黄' },
+                        { c: '#2e7d32', n: '翠绿' },
+                        { c: '#0288d1', n: '靛青' },
+                        { c: '#6a1b9a', n: '玄紫' },
+                        { c: '#5d4037', n: '褐' },
+                      ]
+                    : [
+                        { c: '#fff59d', n: '淡黄' },
+                        { c: '#ffec3d', n: '柠黄' },
+                        { c: '#ffcdd2', n: '胭脂' },
+                        { c: '#ffab91', n: '橘粉' },
+                        { c: '#c8e6c9', n: '嫩绿' },
+                        { c: '#b3e5fc', n: '浅蓝' },
+                        { c: '#d1c4e9', n: '淡紫' },
+                        { c: '#d7ccc8', n: '米褐' },
+                      ]
+                  ).map(({ c, n }) => (
+                    <button
+                      key={c}
+                      title={n}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        if (isTextColorOpen) {
+                          editor?.chain().focus().setTextColor(c).run();
+                          setIsTextColorOpen(false);
+                        } else {
+                          editor?.chain().focus().toggleHighlight({ color: c }).run();
+                          setIsHighlightColorOpen(false);
+                        }
+                      }}
+                      className="w-5 h-5 rounded-full border border-border/60 hover:scale-110 transition-transform"
+                      style={{ background: c }}
+                    />
+                  ))}
+                </div>
+                <label
+                  className="flex items-center gap-2 pt-1.5 border-t border-border/30 text-[11px] text-muted-foreground cursor-pointer"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  <input
+                    type="color"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (isTextColorOpen) {
+                        editor?.chain().focus().setTextColor(v).run();
+                      } else {
+                        editor?.chain().focus().setHighlight({ color: v }).run();
+                      }
+                    }}
+                    className="w-6 h-6 rounded cursor-pointer"
+                  />
+                  <span>自定义颜色</span>
+                </label>
+              </div>,
+              document.body
+            )}
+
             {/* Global Emoticon Panel (Detached from BubbleMenu) */}
             <AnimatePresence>
               {isEmoticonPanelOpen && (
@@ -2622,6 +2944,50 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         )}
       </AnimatePresence>
 
+      {/* v0.22.0 · 版本历史抽屉 */}
+      <RevisionHistoryDrawer
+        isOpen={isHistoryOpen}
+        noteId={isHistoryOpen ? historyNoteId : null}
+        onClose={() => {
+          setIsHistoryOpen(false);
+          setHistoryNoteId(null);
+        }}
+        onRestored={(updated: any) => {
+          // 恢复成功后 · 用返回的 note 刷新当前编辑器内容
+          if (editor && updated && typeof updated.content === 'string') {
+            // v0.22.0-a hotfix10 · 宽松剥离嵌套 frontmatter (兼容 CRLF / 单行压缩)
+            let cleanContent = updated.content as string;
+            if (cleanContent.indexOf('\r') !== -1) {
+              cleanContent = cleanContent.replace(/\r\n?/g, '\n');
+            }
+            const fmPattern = /^---[ \t]*\n[\s\S]*?\n---[ \t]*(?:\n|$)/;
+            for (let i = 0; i < 5; i++) {
+              const stripped = cleanContent.replace(/^\s+/, '');
+              if (!stripped.startsWith('---')) break;
+              const match = fmPattern.exec(stripped);
+              if (!match) break;
+              cleanContent = stripped.slice(match[0].length);
+            }
+            cleanContent = cleanContent.replace(/^\n+/, '');
+            const patched: any = { ...updated, content: cleanContent };
+            replaceEditorContentWithoutHistory(
+              editor,
+              sanitizeLegacyApiUrlsInHtml(cleanContent) || '<p></p>',
+            );
+            latestNoteRef.current = { ...latestNoteRef.current, ...patched } as Note;
+            setIsDirty(false);
+            onNotify?.('已恢复到所选版本', 'success');
+            // v0.22.0-a hotfix10 · 通知全局:恢复可能改了内容及链接, 触发一次 vault 重扫,
+            // 否则其他笔记对本笔记的正/反向链接会停留在"恢复前"的旧内容上, 出现"点进去空笔记".
+            try {
+              window.dispatchEvent(new CustomEvent('nova:notes-invalidate', {
+                detail: { reason: 'revision-restored', noteId: updated.id },
+              }));
+            } catch { /* noop */ }
+          }
+        }}
+      />
+
       <AnimatePresence>
         {spellcheckError && (
           <SpellcheckSuggestionCard
@@ -2631,9 +2997,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                 onReplace={(suggestion) => {
               if (editor && spellcheckError) {
                 const { error } = spellcheckError;
-                // Dispatch meta to remove the error and decoration BEFORE mapping changing the pos
                 const tr = editor.state.tr;
-                tr.setMeta(spellcheckPluginKey, { type: 'removeError', from: error.from, to: error.to });
                 tr.insertText(suggestion, error.from, error.to);
                 editor.view.dispatch(tr);
 
@@ -2657,23 +3021,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {isSaving && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-12 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 bg-primary text-primary-foreground px-6 py-3 rounded-2xl shadow-soft"
-          >
-            <div className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
-            <span className="text-xs font-bold tracking-widest uppercase">鎵嬪啓璁板繂鍚屾涓?..</span>
-          </motion.div>
-        )}
-
-        {/* AI Loading is now handled inline by pixel-maid.webp */}
-      </AnimatePresence>
+      {/* AI Loading is now handled inline by pixel-maid.webp */}
     </motion.div>
   );
 });
-
-

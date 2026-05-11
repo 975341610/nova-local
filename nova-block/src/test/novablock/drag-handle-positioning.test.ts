@@ -27,8 +27,10 @@ describe('dragHandlePositioning', () => {
     const blockNode = document.createElement('p')
     const editor = {
       view: {
+        dom: document.createElement('div'),
         nodeDOM: vi.fn(() => blockNode),
       },
+      isDestroyed: false,
     }
 
     vi.mocked(computePosition).mockResolvedValue({

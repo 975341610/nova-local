@@ -1,4 +1,7 @@
 from collections.abc import Generator
+from datetime import datetime
+from pathlib import Path
+import sqlite3
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import get_settings
@@ -7,6 +10,35 @@ settings = get_settings()
 
 class Base(DeclarativeBase):
     pass
+
+
+def ensure_sqlite_database_file(db_path: str | Path) -> Path | None:
+    """Move a corrupt SQLite file aside before SQLAlchemy opens it."""
+    path = Path(db_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+
+    with path.open("rb") as file:
+        header = file.read(16)
+
+    if header == b"SQLite format 3\x00":
+        try:
+            with sqlite3.connect(path) as conn:
+                result = conn.execute("PRAGMA integrity_check").fetchone()
+                if result and result[0] == "ok":
+                    return None
+        except sqlite3.DatabaseError:
+            pass
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = path.with_name(f"{path.name}.corrupt-{timestamp}")
+    path.replace(backup_path)
+    for suffix in ("-wal", "-shm"):
+        sidecar = path.with_name(f"{path.name}{suffix}")
+        if sidecar.exists():
+            sidecar.unlink()
+    print(f"[!] Corrupt SQLite database moved to {backup_path}; a fresh database will be created.")
+    return backup_path
 
 # 增加 timeout 到 30秒 (默认5秒)，给并发操作更多等待时间
 engine = create_engine(

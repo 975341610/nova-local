@@ -11,6 +11,8 @@ import sys
 import json
 import uuid
 import shutil
+import secrets
+from contextlib import asynccontextmanager
 
 # 🚀 模块导入路径修复：确保项目根目录在 sys.path 中，防止 ModuleNotFoundError
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -28,12 +30,35 @@ from sqlalchemy import inspect, text
 from backend.api.routes import router
 from backend.services.local_ai import local_ai_manager
 from backend.config import get_settings, resource_root, runtime_root
-from backend.database import Base, SessionLocal, engine
+from backend.database import Base, SessionLocal, engine, ensure_sqlite_database_file
 from backend.sample_data import seed_database, seed_files
 
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    validate_runtime_security()
+
+    # Print mounted routes for 404 debugging.
+    print("[*] Registering routes:")
+    for route in app.routes:
+        print(f"    - {getattr(route, 'path', 'N/A')} ({getattr(route, 'name', 'N/A')})")
+
+    Path(settings.chroma_path).mkdir(parents=True, exist_ok=True)
+    ensure_sqlite_database_file(Path(settings.sqlite_url.replace("sqlite:///", "")))
+    Base.metadata.create_all(bind=engine)
+    run_migrations()
+    seed_files()
+    with SessionLocal() as db:
+        seed_database(db)
+        from backend.services.repositories import init_default_achievements
+        init_default_achievements(db)
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 # 读取并打印版本号
 version_file = resource_root() / "VERSION.txt"
@@ -55,12 +80,81 @@ app.add_middleware(
      allow_headers=["*"],
  )
 
+
+def validate_runtime_security() -> None:
+    run_mode = (settings.run_mode or "desktop_local").strip().lower()
+    if run_mode == "server_mode" and not settings.access_token:
+        raise RuntimeError("ACCESS_TOKEN must be configured when RUN_MODE=server_mode")
+
+
+DESKTOP_ONLY_API_PATHS = frozenset({
+    f"{settings.api_prefix}/system/switch-data-path",
+    f"{settings.api_prefix}/system/update",
+    f"{settings.api_prefix}/system/restart",
+    f"{settings.api_prefix}/system/open-file",
+    f"{settings.api_prefix}/system/import-data",
+    f"{settings.api_prefix}/ai/update-ollama",
+})
+
+PROTECTED_API_EXEMPT_PATHS = frozenset({
+    f"{settings.api_prefix}/system/version",
+    # v0.22.0-a · 单用户本地模式,这几条只接受 loopback,无需额外 token
+    f"{settings.api_prefix}/system/revision-settings",
+    f"{settings.api_prefix}/system/export-all",
+    f"{settings.api_prefix}/system/vault-health",
+})
+
+PROTECTED_API_PATHS = frozenset({
+    f"{settings.api_prefix}/model-config",
+    f"{settings.api_prefix}/ai/toggle",
+    f"{settings.api_prefix}/ai/toggle-plugin",
+})
+
+
+def is_desktop_only_api_path(path: str) -> bool:
+    return path in DESKTOP_ONLY_API_PATHS
+
+
+def is_protected_api_path(path: str) -> bool:
+    if path in PROTECTED_API_EXEMPT_PATHS:
+        return False
+    return (
+        path in PROTECTED_API_PATHS
+        or path.startswith(f"{settings.api_prefix}/system/")
+        or path.startswith(f"{settings.api_prefix}/ai/toggle")
+        or is_desktop_only_api_path(path)
+    )
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    client_host = request.client.host if request.client else ""
+    is_loopback = client_host in {"127.0.0.1", "::1", "localhost", "testclient"}
+    desktop_token = request.headers.get("x-nova-desktop-token", "")
+    is_local_desktop = bool(settings.desktop_local_token) and is_loopback and secrets.compare_digest(desktop_token, settings.desktop_local_token)
+    desktop_only_api = is_desktop_only_api_path(path)
+    protected_api = is_protected_api_path(path)
+
+    if desktop_only_api and not settings.enable_legacy_system_http:
+        return JSONResponse(
+            status_code=410,
+            content={"detail": "Gone: desktop-only operation moved to Electron IPC"}
+        )
+
+    if desktop_only_api and not is_local_desktop:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Forbidden: desktop-only operation"}
+        )
+
+    if protected_api and is_local_desktop:
+        return await call_next(request)
+
     # 豁免路径：健康检查、静态文件、以及认证配置本身不开启时
     # 基础初始化 API 也不强制鉴权，避免桌面端启动卡死
     is_exempt = (
-        not settings.access_token
+        (not settings.access_token and settings.run_mode == "desktop_local" and not protected_api)
         or request.url.path == "/health"
         or not request.url.path.startswith(settings.api_prefix)
         or request.url.path.startswith(f"{settings.api_prefix}/media/files")
@@ -70,14 +164,17 @@ async def auth_middleware(request: Request, call_next):
         or request.url.path == f"{settings.api_prefix}/media/music-upload"
         or request.url.path.startswith(f"{settings.api_prefix}/stickers")
         or request.url.path == f"{settings.api_prefix}/system/version"
-        or request.url.path == f"{settings.api_prefix}/model-config"
+        # v0.22.0-a · 单用户本地应用,以下接口默认豁免 token(只接受 loopback)
+        or request.url.path == f"{settings.api_prefix}/system/vault-health"
+        or request.url.path == f"{settings.api_prefix}/system/revision-settings"
+        or request.url.path == f"{settings.api_prefix}/system/export-all"
+        or ("/revisions" in request.url.path and request.url.path.startswith(f"{settings.api_prefix}/notes/"))
+        or (request.url.path.endswith("/snapshot") and request.url.path.startswith(f"{settings.api_prefix}/notes/"))
     )
 
     # 如果是本地桌面端发起的请求 (127.0.0.1)，且没有设置环境变量强制开启鉴权，则自动豁免
     # 这确保了打包版在没有配置 token 时也能正常初始化
-    is_local = request.client and request.client.host == "127.0.0.1"
-    
-    if is_exempt or is_local:
+    if is_exempt or is_local_desktop:
         return await call_next(request)
 
     # 从 Header 或 Cookie 中获取 Token
@@ -108,6 +205,7 @@ app.include_router(router, prefix=settings.api_prefix)
 
 frontend_dist = resource_root() / "frontend_dist"
 assets_dir = frontend_dist / "assets"
+frontend_dist_resolved = frontend_dist.resolve()
 
 # 调试信息
 print(f"[*] Frontend dist directory: {frontend_dist}")
@@ -181,23 +279,6 @@ def run_migrations() -> None:
             connection.execute(text("CREATE TABLE user_achievements (id INTEGER PRIMARY KEY, achievement_id INTEGER, unlocked_at DATETIME, FOREIGN KEY(achievement_id) REFERENCES achievements(id) ON DELETE CASCADE)"))
 
 
-@app.on_event("startup")
-async def startup_event() -> None:
-    # 打印所有挂载的路由，用于调试 404 问题
-    print("[*] Registering routes:")
-    for route in app.routes:
-        print(f"    - {getattr(route, 'path', 'N/A')} ({getattr(route, 'name', 'N/A')})")
-
-    Path(settings.chroma_path).mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(bind=engine)
-    run_migrations()
-    seed_files()
-    with SessionLocal() as db:
-        seed_database(db)
-        from backend.services.repositories import init_default_achievements
-        init_default_achievements(db)
-
-
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -226,7 +307,11 @@ async def spa(request: Request, full_path: str):
          )
 
     # 1. Check if it's a direct file in frontend_dist (like favicon.svg, robots.txt)
-    target_file = frontend_dist / full_path
+    target_file = (frontend_dist / full_path).resolve()
+    try:
+        target_file.relative_to(frontend_dist_resolved)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Resource not found: {full_path}")
     
     if not full_path:
         pass

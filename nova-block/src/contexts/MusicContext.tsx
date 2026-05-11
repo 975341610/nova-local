@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { api, getApiBase } from '../lib/api';
+import { api, formatUrl } from '../lib/api';
 
 export interface Track {
   url: string;
@@ -184,19 +184,12 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const data = await api.listMusicLibrary();
       if (Array.isArray(data)) {
-        // 🚀 修复：确保 API 基础路径拼接正确，避免双重 /api 路径问题
-        const apiBase = getApiBase().replace(/\/api$/, '');
         const tracks = data.map((track: any) => ({
           ...track,
-          // 如果已经是 http 开头则保持原样，否则拼接服务器 root
-          url: (track.url && track.url.startsWith('http')) ? track.url : `${apiBase}${track.url}`,
-          cover: track.cover
-            ? (track.cover.startsWith('http')
-              ? track.cover
-              : `${apiBase}${track.cover}`)
-            : track.cover,
+          url: typeof track.url === 'string' ? formatUrl(track.url) : '',
+          cover: typeof track.cover === 'string' ? formatUrl(track.cover) : track.cover,
           // 判断来源
-          source: track.source || (track.url.startsWith('http') ? 'network' : 'local'),
+          source: track.source || (typeof track.url === 'string' && /^https?:\/\//i.test(track.url) ? 'network' : 'local'),
         }));
         setPlaylist(tracks);
         console.log(`[MusicContext] Library refreshed, ${tracks.length} tracks found.`);

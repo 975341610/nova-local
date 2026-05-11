@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+import os
 import socket
+import time
 from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
@@ -32,13 +34,15 @@ class AIClient:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.logger = get_ai_logger()
+        self._connectivity_cache: dict[str, tuple[float, str | None]] = {}
         # 优化连接池：增加最大连接数和保持存活的连接数，提升并发稳定性
         limits = httpx.Limits(max_keepalive_connections=50, max_connections=100)
         
-        # 禁用 SSL 验证以兼容各种代理环境 (针对打包后的证书问题)
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        verify = False
+        # Keep TLS verification on by default; allow opt-out only for explicit local debugging.
+        allow_insecure_tls = os.getenv("ALLOW_INSECURE_TLS", "false").strip().lower() in {"1", "true", "yes", "on"}
+        verify = not allow_insecure_tls
+        if allow_insecure_tls:
+            self.logger.warning("ALLOW_INSECURE_TLS is enabled; remote AI TLS certificates will not be verified.")
         
         # 注意：在某些环境中 trust_env=True 可能会因为环境变量解析失败导致启动崩溃
         try:
@@ -89,12 +93,21 @@ class AIClient:
         Verify DNS resolution and TCP connectivity to the base URL host.
         Returns an error message if failed, else None.
         """
+        cache_key = url.strip().rstrip("/")
+        cached = self._connectivity_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < 60:
+            return cached[1]
+
+        def remember(result: str | None) -> str | None:
+            self._connectivity_cache[cache_key] = (time.monotonic(), result)
+            return result
+
         parsed = urlparse(url)
         host = parsed.hostname
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
         if not host:
-            return "Error: Invalid Hostname. Please check your AI API base URL setting."
+            return remember("Error: Invalid Hostname. Please check your AI API base URL setting.")
 
         # Detect Anthropic Endpoint
         if "api.anthropic.com" in host or "/v1/messages" in url:
@@ -119,23 +132,23 @@ class AIClient:
                     return True
             
             await asyncio.get_running_loop().run_in_executor(None, _tcp_check)
-            return None
+            return remember(None)
         except socket.gaierror as e:
             err_str = f"域名解析失败 ({host}): [Errno {e.errno}] {str(e)}"
             self.logger.error(f"Connectivity Check Failed (DNS): {err_str}")
-            return f"Error: {err_str}\n请检查网络连接或域名是否输入正确。"
+            return remember(f"Error: {err_str}\n请检查网络连接或域名是否输入正确。")
         except (socket.timeout, TimeoutError):
             err_str = f"连接超时 ({host}:{port})"
             self.logger.error(f"Connectivity Check Failed (Timeout): {err_str}")
-            return f"Error: {err_str}\n请确认 API 地址可达，或检查代理/防火墙设置。"
+            return remember(f"Error: {err_str}\n请确认 API 地址可达，或检查代理/防火墙设置。")
         except ConnectionRefusedError:
             err_str = f"连接被拒绝 ({host}:{port})"
             self.logger.error(f"Connectivity Check Failed (Refused): {err_str}")
-            return f"Error: {err_str}\n目标服务器拒绝连接，请检查端口号或代理配置。"
+            return remember(f"Error: {err_str}\n目标服务器拒绝连接，请检查端口号或代理配置。")
         except Exception as e:
             err_str = f"连接预检异常: {str(e)}"
             self.logger.error(f"Connectivity Check Failed: {err_str}")
-            return f"Error: {err_str}"
+            return remember(f"Error: {err_str}")
 
     async def embed(self, text: str, config: dict[str, str] | None = None) -> list[float]:
         if not self._can_call_remote(config):

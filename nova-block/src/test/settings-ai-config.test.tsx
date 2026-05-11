@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -12,6 +12,9 @@ const { apiMock } = vi.hoisted(() => ({
     importDictionary: vi.fn(),
     getModelConfig: vi.fn(),
     updateModelConfig: vi.fn(),
+    getVaultHealth: vi.fn(),
+    getRevisionSettings: vi.fn(),
+    updateRevisionSettings: vi.fn(),
   },
 }))
 
@@ -19,10 +22,17 @@ vi.mock('../lib/api', () => ({
   api: apiMock,
 }))
 
+const { setIsAiEnabledMock, setAiModeMock } = vi.hoisted(() => ({
+  setIsAiEnabledMock: vi.fn(),
+  setAiModeMock: vi.fn(),
+}))
+
 vi.mock('../contexts/AIContext', () => ({
   useAI: () => ({
     isAiEnabled: true,
-    setIsAiEnabled: vi.fn(),
+    setIsAiEnabled: setIsAiEnabledMock,
+    aiMode: 'remote',
+    setAiMode: setAiModeMock,
     contextLength: 8192,
     setContextLength: vi.fn(),
     refreshAiStatus: vi.fn().mockResolvedValue(undefined),
@@ -30,6 +40,10 @@ vi.mock('../contexts/AIContext', () => ({
 }))
 
 import { SettingsDialog } from '../components/SettingsDialog'
+
+afterEach(() => {
+  cleanup()
+})
 
 describe('SettingsDialog AI config', () => {
   beforeEach(() => {
@@ -39,18 +53,27 @@ describe('SettingsDialog AI config', () => {
     apiMock.checkAIHardware.mockReset()
     apiMock.updateOllama.mockReset()
     apiMock.importDictionary.mockReset()
+    apiMock.getVaultHealth.mockReset()
+    apiMock.getRevisionSettings.mockReset()
+    apiMock.updateRevisionSettings.mockReset()
+    setIsAiEnabledMock.mockReset()
+    setAiModeMock.mockReset()
+    apiMock.getAIPluginStatus.mockResolvedValue({ enabled: true, ai_mode: 'remote', num_ctx: 8192 })
+    apiMock.updateAIPluginConfig.mockResolvedValue({ enabled: true, ai_mode: 'remote', num_ctx: 8192 })
+    apiMock.getVaultHealth.mockResolvedValue({ summary: { total_issues: 0 }, issues: [] })
+    apiMock.getRevisionSettings.mockResolvedValue({ debounce_seconds: 120, max_keep: 30 })
   })
 
   it('loads and saves remote AI model config from settings', async () => {
     apiMock.getModelConfig.mockResolvedValue({
       provider: 'openai',
-      api_key: 'sk-test',
+      api_key_masked: 'sk-****test',
       base_url: 'https://api.openai.com/v1',
       model_name: 'gpt-4o-mini',
     })
     apiMock.updateModelConfig.mockResolvedValue({
       provider: 'openai',
-      api_key: 'sk-next',
+      api_key_masked: 'sk-****next',
       base_url: 'https://example.com/v1',
       model_name: 'gpt-4.1-mini',
     })
@@ -62,7 +85,8 @@ describe('SettingsDialog AI config', () => {
     const modelInput = screen.getByTestId('ai-model-name')
     const saveButton = screen.getByTestId('ai-model-save')
 
-    expect((apiKeyInput as HTMLInputElement).value).toBe('sk-test')
+    expect((apiKeyInput as HTMLInputElement).value).toBe('')
+    expect((apiKeyInput as HTMLInputElement).placeholder).toBe('sk-****test')
     expect((baseUrlInput as HTMLInputElement).value).toBe('https://api.openai.com/v1')
     expect((modelInput as HTMLInputElement).value).toBe('gpt-4o-mini')
 
@@ -81,3 +105,25 @@ describe('SettingsDialog AI config', () => {
     })
   })
 })
+
+  it('switches AI engine mode from settings', async () => {
+    apiMock.getModelConfig.mockResolvedValue({
+      provider: 'openai',
+      api_key_masked: 'sk-****test',
+      base_url: 'https://api.openai.com/v1',
+      model_name: 'gpt-4o-mini',
+    })
+    apiMock.updateAIPluginConfig.mockResolvedValue({ enabled: true, ai_mode: 'local', num_ctx: 8192 })
+
+    render(<SettingsDialog isOpen onClose={() => {}} />)
+
+    const localModeButton = await screen.findByTestId('ai-mode-local')
+    fireEvent.click(localModeButton)
+
+    await waitFor(() => {
+      expect(apiMock.updateAIPluginConfig).toHaveBeenCalledWith({ enabled: true, ai_mode: 'local' })
+      expect(setIsAiEnabledMock).toHaveBeenCalledWith(true)
+      expect(setAiModeMock).toHaveBeenCalledWith('local')
+    })
+  })
+

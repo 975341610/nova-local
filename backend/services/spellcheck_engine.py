@@ -2,8 +2,25 @@ import ahocorasick
 import re
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Set, Tuple
+
+
+def _default_user_dict_path() -> str:
+    """Keep the mutable spellcheck dictionary in the app data directory."""
+    try:
+        from backend.config import PROJECT_DIR, get_settings
+
+        target = Path(get_settings().data_root) / "user_dictionary.json"
+        legacy = PROJECT_DIR / "user_dictionary.json"
+        if legacy.exists() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy, target)
+        return str(target)
+    except Exception:
+        return str(Path(os.environ.get("DATA_ROOT", ".")) / "user_dictionary.json")
+
 
 class SpellcheckEngine:
     """
@@ -15,7 +32,7 @@ class SpellcheckEngine:
         self.mistakes: Dict[str, Tuple[str, str]] = {} # key: wrong, value: (suggestion, reason)
         self.whitelist: Set[str] = set()
         self._is_built = False
-        self.user_dict_path = user_dict_path or str(Path(os.environ.get("DATA_ROOT", ".")) / "user_dictionary.json")
+        self.user_dict_path = user_dict_path or _default_user_dict_path()
         
         # 内置高频易错词库
         self._load_builtin_rules()
@@ -245,6 +262,37 @@ class SpellcheckEngine:
         2. 错误词, 正确词, 理由
         3. "引号词", "正确引号", "理由"
         """
+        rules: List[Tuple[str, str, str]] = []
+        quoted_triple = re.compile(
+            r'["“”\']([^"“”\']+)["“”\']\s*[,，]\s*'
+            r'["“”\']([^"“”\']+)["“”\']\s*[,，]\s*'
+            r'["“”\']([^"“”\']+)["“”\']'
+        )
+
+        def clean(value: str) -> str:
+            return value.strip().strip("()[]{} \t\r\n,，'\"“”")
+
+        def append_rule(parts: Tuple[str, str, str]) -> None:
+            wrong, correct, reason = (clean(part) for part in parts)
+            if wrong and correct and reason and wrong != correct:
+                rules.append((wrong, correct, reason))
+
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            quoted_match = quoted_triple.search(line)
+            if quoted_match:
+                append_rule((quoted_match.group(1), quoted_match.group(2), quoted_match.group(3)))
+                continue
+
+            parts = [clean(part) for part in re.split(r"[,，\s]+", line, maxsplit=2)]
+            if len(parts) >= 3:
+                append_rule((parts[0], parts[1], parts[2]))
+
+        return rules
+
         rules = []
         lines = text.split("\n")
         

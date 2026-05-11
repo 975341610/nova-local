@@ -145,6 +145,104 @@ title: 测试画布
   assert.doesNotMatch(raw, /title: 测试画布\nicon:/);
 });
 
+test('fsBridge retries atomic note saves when Windows temporarily blocks the target file', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Canvas Retry',
+    content: '{"version":"v1","nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    type: 'canvas',
+  });
+
+  const originalRename = fs.rename;
+  let blockedAttempts = 0;
+
+  fs.rename = async (sourcePath, targetPath) => {
+    if (targetPath === created.file_path && sourcePath.endsWith('.tmp') && blockedAttempts < 2) {
+      blockedAttempts += 1;
+      const error = new Error('target file is locked');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return originalRename(sourcePath, targetPath);
+  };
+
+  try {
+    const updated = await bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      content: '{"version":"v1","nodes":[{"id":"media-1"}],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    });
+
+    assert.equal(blockedAttempts, 2);
+    assert.equal(updated.type, 'canvas');
+
+    const raw = await fs.readFile(created.file_path, 'utf8');
+    assert.match(raw, /media-1/);
+  } finally {
+    fs.rename = originalRename;
+  }
+});
+
+test('fsBridge falls back to direct write when atomic rename keeps failing', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Canvas Fallback',
+    content: '{"version":"v1","nodes":[],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    type: 'canvas',
+  });
+
+  const originalRename = fs.rename;
+  const originalWriteFile = fs.writeFile;
+  let renameAttempts = 0;
+  let directWriteAttempts = 0;
+
+  fs.rename = async (sourcePath, targetPath) => {
+    if (targetPath === created.file_path && sourcePath.endsWith('.tmp')) {
+      renameAttempts += 1;
+      const error = new Error('target file is locked forever');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return originalRename(sourcePath, targetPath);
+  };
+
+  fs.writeFile = async (targetPath, content, encodingOrOptions) => {
+    if (targetPath === created.file_path) {
+      directWriteAttempts += 1;
+    }
+    return originalWriteFile(targetPath, content, encodingOrOptions);
+  };
+
+  try {
+    const updated = await bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      content: '{"version":"v1","nodes":[{"id":"media-fallback"}],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}',
+    });
+
+    assert.equal(updated.type, 'canvas');
+    assert.ok(renameAttempts >= 3);
+    assert.ok(directWriteAttempts >= 1);
+
+    const raw = await fs.readFile(created.file_path, 'utf8');
+    assert.match(raw, /media-fallback/);
+
+    const dirents = await fs.readdir(path.dirname(created.file_path));
+    for (const entry of dirents) {
+      assert.ok(!entry.endsWith('.tmp'));
+    }
+  } finally {
+    fs.rename = originalRename;
+    fs.writeFile = originalWriteFile;
+  }
+});
+
 test('fsBridge repairs duplicate note ids in an existing vault', async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
   const notesDir = path.join(tempRoot, 'Notes');
@@ -252,6 +350,33 @@ test('fsBridge can target a note directly by file_path without scanning by id', 
   assert.match(firstRaw, /First/);
 });
 
+test('fsBridge getNote uses cached note path after notes have been listed', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Indexed Note',
+    content: '<p>Indexed</p>',
+    type: 'note',
+  });
+
+  await bridge.listNotes();
+
+  const originalReaddir = fs.readdir;
+  fs.readdir = async () => {
+    throw new Error('getNote should not scan directories when cached path is valid');
+  };
+  try {
+    const note = await bridge.getNote(created.id);
+    assert.equal(note.id, created.id);
+    assert.equal(note.title, 'Indexed Note');
+    assert.match(note.content, /Indexed/);
+  } finally {
+    fs.readdir = originalReaddir;
+  }
+});
+
 test('fsBridge updates a note by file_path even when the cached note id is stale', async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
   const bridge = createFsBridge({ vaultRoot: tempRoot });
@@ -306,6 +431,85 @@ test('fsBridge falls back cleanly when payload file_path is already missing on d
   await assert.doesNotReject(() => fs.access(updated.file_path));
   const raw = await fs.readFile(updated.file_path, 'utf8');
   assert.match(raw, /Recovered/);
+});
+
+test('fsBridge falls back to copy-delete when note rename keeps hitting Windows EPERM', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Rename Fallback',
+    content: '<p>Before rename</p>',
+    type: 'note',
+  });
+
+  const expectedPath = path.join(tempRoot, 'Notes', 'Rename Fallback Final.md');
+  const originalRename = fs.rename;
+
+  fs.rename = async (sourcePath, targetPath) => {
+    if (sourcePath === created.file_path && targetPath === expectedPath) {
+      const error = new Error('rename target is locked');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return originalRename(sourcePath, targetPath);
+  };
+
+  try {
+    const updated = await bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      title: 'Rename Fallback Final',
+      rename_file: true,
+    });
+
+    assert.equal(updated.file_path, expectedPath);
+    await assert.doesNotReject(() => fs.access(expectedPath));
+    await assert.rejects(() => fs.access(created.file_path));
+
+    const raw = await fs.readFile(expectedPath, 'utf8');
+    assert.match(raw, /Before rename/);
+    assert.match(raw, /Rename Fallback Final/);
+  } finally {
+    fs.rename = originalRename;
+  }
+});
+
+test('fsBridge serializes concurrent save and rename updates for the same note', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Concurrent Draft',
+    content: '<p>Initial</p>',
+    type: 'note',
+  });
+
+  const [renamed] = await Promise.all([
+    bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      title: 'Concurrent Final',
+      rename_file: true,
+    }),
+    bridge.updateNote(created.id, {
+      id: created.id,
+      file_path: created.file_path,
+      content: '<p>After race</p>',
+    }),
+  ]);
+
+  const expectedPath = path.join(tempRoot, 'Notes', 'Concurrent Final.md');
+  assert.equal(renamed.file_path, expectedPath);
+  await assert.doesNotReject(() => fs.access(expectedPath));
+  await assert.rejects(() => fs.access(created.file_path));
+
+  const reloaded = await bridge.getNote(created.id);
+  assert.equal(reloaded.file_path, expectedPath);
+  assert.equal(reloaded.title, 'Concurrent Final');
+  assert.match(reloaded.content || '', /After race/);
 });
 
 test('fsBridge keeps concurrent rename_file updates from colliding on the same target title', async () => {
@@ -374,4 +578,48 @@ test('fsBridge persists backlink metadata so links survive restart', async () =>
   const source = notes.find((note) => note.title === 'Source Note');
 
   assert.deepEqual(source?.links, [target.id]);
+});
+
+test('fsBridge reads standard block-style YAML frontmatter emitted by Python', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const notesDir = path.join(tempRoot, 'Notes');
+  await fs.writeFile(
+    path.join(notesDir, 'Python YAML.md'),
+    [
+      '---',
+      'id: 42',
+      'uuid: 00000000-0000-4000-8000-000000000042',
+      'title: Python YAML',
+      'icon: note',
+      'summary: ""',
+      'tags:',
+      '- alpha',
+      '- beta',
+      'type: note',
+      'created_at: "2026-01-01T00:00:00Z"',
+      'updated_at: "2026-01-01T00:00:00Z"',
+      'properties:',
+      '- id: 1',
+      '  name: Status',
+      '  type: text',
+      '  value: Open',
+      'links:',
+      '- 7',
+      'ai_links:',
+      '- 8',
+      '---',
+      '',
+      '<p>Hello</p>',
+    ].join('\n'),
+    'utf8'
+  );
+
+  const note = await bridge.getNote(42);
+
+  assert.equal(note.title, 'Python YAML');
+  assert.deepEqual(note.tags, ['alpha', 'beta']);
+  assert.equal(note.properties[0].name, 'Status');
 });

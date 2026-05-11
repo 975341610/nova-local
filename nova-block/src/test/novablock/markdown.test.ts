@@ -1,13 +1,10 @@
+/**
+ * @vitest-environment jsdom
+ */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from 'tiptap-markdown';
-// @ts-ignore
-import container from 'markdown-it-container';
-// @ts-ignore
-import footnote from 'markdown-it-footnote';
-// @ts-ignore
-import texmath from 'markdown-it-texmath';
 import { 
   MathInline, MathBlock, Footnote, 
   ColumnGroup, Column, HighlightBlock,
@@ -49,8 +46,8 @@ describe('NovaBlock Markdown Fidelity', () => {
     editor.commands.setContent(markdown);
     
     // 内容包含检查，允许部分转义差异（取决于 markdown 渲染器）
-    // @ts-ignore
-    const output = editor.storage.markdown.getMarkdown().trim();
+    const markdownStorage = editor.storage as unknown as { markdown: { getMarkdown: () => string } };
+    markdownStorage.markdown.getMarkdown().trim();
     // expect(output).toContain('$E=mc^2$');
     // 注意：反斜杠可能会被转义，取决于 tiptap-markdown 的具体实现版本
     // 关键是看 Tiptap 是否正确识别了 LaTeX 内容

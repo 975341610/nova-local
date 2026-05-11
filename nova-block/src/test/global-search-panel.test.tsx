@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Note } from '../lib/types'
 
@@ -35,6 +35,10 @@ const baseNote: Note = {
 }
 
 describe('GlobalSearchPanel', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
   beforeEach(() => {
     apiMock.getNote.mockReset()
   })
@@ -63,5 +67,35 @@ describe('GlobalSearchPanel', () => {
 
     await screen.findByText('未打开的笔记')
     expect(screen.getByText(/画布联动/)).toBeTruthy()
+  })
+
+  it('hydrates unopened note bodies in small batches', async () => {
+    apiMock.getNote.mockImplementation(async (id: number) => ({
+      ...baseNote,
+      id,
+      title: `Batch ${id}`,
+      content: '<p>batch content</p>',
+    }))
+
+    render(
+      <GlobalSearchPanel
+        notes={Array.from({ length: 20 }, (_, index) => ({
+          ...baseNote,
+          id: index + 200,
+          title: `Batch ${index}`,
+          content: undefined,
+        }))}
+        onSelectNote={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'batch query' } })
+
+    await waitFor(() => {
+      expect(apiMock.getNote).toHaveBeenCalled()
+    })
+
+    expect(apiMock.getNote).toHaveBeenCalledTimes(8)
   })
 })

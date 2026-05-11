@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { GripVertical, Trash2, Maximize2, RotateCcw, Layers } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { StickerData } from '../../lib/types';
-import { getApiBase } from '../../lib/api';
+import { formatUrl } from '../../lib/api';
 
 interface StickerItemProps {
   sticker: StickerData;
@@ -59,6 +59,18 @@ export const StickerItem: React.FC<StickerItemProps> = ({
 
   // 使用 transform 替代 left/top，减少重排，并使用 localSticker 以获得极速响应
   const transform = `translate3d(${localSticker.x}px, ${localSticker.y}px, 0) rotate(${localSticker.rotation || 0}deg) scale(${localSticker.scale || 1})`;
+
+  const handleContainerMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isEditable || e.button !== 0) return;
+
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('[data-sticker-toolbar="true"]')) {
+      return;
+    }
+
+    onSelect(sticker.id);
+    handleMouseDown(e, 'move');
+  };
 
   const handleMouseDown = (e: React.MouseEvent, action: 'move' | 'scale' | 'rotate' | 'opacity') => {
     if (!isEditable) return;
@@ -151,11 +163,7 @@ export const StickerItem: React.FC<StickerItemProps> = ({
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  const imageUrl = sticker.url.startsWith('http') || sticker.url.startsWith('data:') 
-    ? sticker.url 
-    : sticker.url.startsWith('/') 
-      ? `${getApiBase()}${sticker.url.replace('/api', '')}`
-      : `${getApiBase()}/${sticker.url}`;
+  const imageUrl = formatUrl(sticker.url);
 
   return (
     <motion.div
@@ -171,9 +179,10 @@ export const StickerItem: React.FC<StickerItemProps> = ({
           onSelect(sticker.id);
         }
       }}
+      onMouseDown={handleContainerMouseDown}
     >
       <div
-        className={`relative transition-shadow duration-300 ${isEditable && isSelected ? 'ring-2 ring-blue-400/50 rounded-lg shadow-2xl bg-white/5 backdrop-blur-sm' : ''}`}
+        className={`relative transition-shadow duration-300 ${isEditable ? 'cursor-move' : ''} ${isEditable && isSelected ? 'ring-2 ring-blue-400/50 rounded-lg shadow-2xl bg-white/5 backdrop-blur-sm' : ''}`}
       >
         <img 
           src={imageUrl} 
@@ -196,6 +205,7 @@ export const StickerItem: React.FC<StickerItemProps> = ({
               initial={{ opacity: 0, scale: 0.9, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              data-sticker-toolbar="true"
               className="absolute -top-12 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-white/95 backdrop-blur-xl p-1.5 rounded-2xl shadow-soft border border-stone-200/50 z-[60]"
             >
               <div

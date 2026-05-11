@@ -54,6 +54,23 @@ export type Note = {
   background_paper?: BackgroundPaperType;
 };
 
+export type NoteRevision = {
+  id: number;
+  note_id: number;
+  created_at: string | null;
+  content_hash: string;
+  title_snapshot: string;
+  byte_size: number;
+  source: 'auto' | 'save' | 'pre-save' | 'stable' | 'restore' | 'restore-point' | 'missing' | string;
+  content?: string;
+  missing?: boolean;
+};
+
+export type RevisionSettings = {
+  debounce_seconds: number;
+  max_keep: number;
+};
+
 export type OutlineItem = {
   id: string;
   text: string;
@@ -71,6 +88,27 @@ export type Notebook = {
 export type TrashState = {
   notes: Note[];
   notebooks: Notebook[];
+};
+
+export type VaultHealthIssue = {
+  type: string;
+  severity: 'info' | 'warning' | 'error';
+  message: string;
+  note_path?: string;
+  asset_path?: string;
+  target?: string;
+};
+
+export type VaultHealthReport = {
+  summary: {
+    total_issues: number;
+    missing_attachments?: number;
+    orphan_attachments?: number;
+    mojibake_notes?: number;
+    encoding_errors?: number;
+    unsafe_references?: number;
+  };
+  issues: VaultHealthIssue[];
 };
 
 export type Task = {
@@ -113,9 +151,59 @@ export type ChatSession = {
   updated_at: string;
 };
 
+export type AIEngineMode = 'remote' | 'local';
+
+export type UploadResponse = {
+  imported_notes: Note[];
+};
+
+export type NormalizedBlockPayload = {
+  type: string;
+  text: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type NormalizedContentPayload = {
+  source_type: string;
+  title: string;
+  blocks: NormalizedBlockPayload[];
+  plain_text: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type GeneratedNoteResponse = {
+  title: string;
+  markdown: string;
+  source_type: string;
+  metadata: Record<string, unknown>;
+};
+
+export type GeneratedNotePersistResponse = {
+  generated: GeneratedNoteResponse;
+  note: Note;
+};
+
+export type ImportTemplateId = 'general' | 'meeting' | 'study' | 'paper' | 'table' | 'video';
+
+export type ImportPreviewItem = {
+  file_name: string;
+  file_type: string;
+  size: number;
+  title: string;
+  status: 'ok' | 'empty' | 'error' | string;
+  message: string;
+  summary: string;
+  block_count: number;
+};
+
+export type ImportPreviewResponse = {
+  items: ImportPreviewItem[];
+};
+
 export type ModelConfig = {
   provider: string;
-  api_key: string;
+  api_key?: string;
+  api_key_masked?: string;
   base_url: string;
   model_name: string;
 };

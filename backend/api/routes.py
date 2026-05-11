@@ -10,7 +10,9 @@ import sys
 import uuid
 import shutil
 import asyncio
-import threading
+import hashlib
+import re
+import time
 from PIL import Image
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form, BackgroundTasks
@@ -27,6 +29,12 @@ from backend.models.schemas import (
     AskResponse,
     BulkNoteAction,
     Citation,
+    GeneratedNotePersistResponse,
+    GeneratedNoteResponse,
+    ImportPreviewItem,
+    ImportPreviewResponse,
+    ImportBatchAskRequest,
+    ImportUrlRequest,
     InlineAIRequest,
     ModelConfigPayload,
     NotebookCreate,
@@ -43,6 +51,7 @@ from backend.models.schemas import (
     NoteTemplateUpdate,
     NoteListItemResponse,
     NoteTreeResponse,
+    NormalizedContentPayload,
     NoteUpdate,
     QuickCaptureRequest,
     QuickCaptureResponse,
@@ -66,7 +75,14 @@ import json
 from backend.config import get_settings, get_custom_config_path, PROJECT_DIR
 from backend.rag.pipeline import citations_from_results, cosine_similarity, search_knowledge
 from backend.services.ai_client import AIClient
-from backend.services.document_service import chunk_text, parse_document
+from backend.services.ai_mode import AI_MODE_LOCAL, AI_MODE_REMOTE, normalize_ai_mode, read_ai_runtime_config, should_run_remote_ai_indexing
+from backend.services.document_service import build_import_preview_item, build_url_preview_item, chunk_text, combine_imported_documents_for_note_generation, combine_imported_urls_for_note_generation, fetch_url_article, parse_document
+from backend.services.import_generation import generate_note_from_imported_documents
+from backend.services.note_generation import generate_structured_note
+from backend.services.note_indexing_queue import NoteIndexingQueue
+from backend.services.template_files import delete_template_file, mirror_template_to_vault
+from backend.services.vault_health import scan_vault_health
+from backend.services import revision_service
 from backend.services.repositories import (
     add_exp,
     create_note,
@@ -105,6 +121,7 @@ from backend.services.repositories import (
     update_notebook,
     update_note,
     update_template,
+    mask_api_key,
     update_model_config,
     update_note_property,
     update_task,
@@ -113,6 +130,7 @@ from backend.services.repositories import (
     update_user_theme,
     update_user_wallpaper,
 )
+from backend.api.path_security import safe_child_path, safe_media_subdir, safe_named_file, validate_uuid
 from backend.services.vector_store import vector_store
 
 from backend.services.local_ai import local_ai_manager
@@ -120,25 +138,46 @@ from backend.services.local_ai import local_ai_manager
 router = APIRouter()
 settings = get_settings()
 ai_client = AIClient()
+note_indexing_queue: NoteIndexingQueue | None = None
 
-import re
 import platform
 import psutil
 
 # AI 插件状态全局变量
 ai_enabled = True
+ai_mode = AI_MODE_REMOTE
+UPLOAD_SESSION_TTL_SECONDS = 30 * 60
+
+
+def cleanup_expired_upload_sessions(now: float | None = None, ttl_seconds: int = UPLOAD_SESSION_TTL_SECONDS) -> None:
+    now = now if now is not None else time.time()
+    temp_root = Path(settings.uploads_path) / "temp"
+    if not temp_root.exists():
+        return
+    for session_dir in temp_root.iterdir():
+        if not session_dir.is_dir():
+            continue
+        try:
+            newest_mtime = max(
+                (path.stat().st_mtime for path in session_dir.rglob("*")),
+                default=session_dir.stat().st_mtime,
+            )
+            if now - newest_mtime > ttl_seconds:
+                shutil.rmtree(session_dir)
+        except FileNotFoundError:
+            continue
 
 def load_ai_status():
-    """从 ai_config.json 加载 AI 启用状态"""
-    global ai_enabled
-    config_path = Path(settings.data_root) / "ai_config.json"
-    if config_path.exists():
-        try:
-            with open(config_path, "r") as f:
-                config = json.load(f)
-                ai_enabled = config.get("enabled", True)
-        except Exception as e:
-            print(f"[!] Error loading AI status: {e}")
+    """从 ai_config.json 加载 AI 启用状态与引擎模式。"""
+    global ai_enabled, ai_mode
+    try:
+        config = read_ai_runtime_config(settings.data_root)
+        ai_enabled = config["enabled"]
+        ai_mode = config["ai_mode"]
+    except Exception as e:
+        ai_enabled = True
+        ai_mode = AI_MODE_REMOTE
+        print(f"[!] Error loading AI status: {e}")
 
 # 初始化加载
 load_ai_status()
@@ -166,25 +205,35 @@ def extract_manual_links(content: str) -> list[int]:
 
 
 def should_run_ai_indexing(llm_config: dict[str, str] | None) -> bool:
-    if not ai_enabled or not llm_config:
-        return False
-    return bool(llm_config.get("api_key") and llm_config.get("base_url"))
+    return should_run_remote_ai_indexing(ai_enabled, ai_mode, llm_config)
 
 
 def spawn_note_indexing(*args, **kwargs) -> None:
-    threading.Thread(
-        target=background_index_note_task,
-        args=args,
-        kwargs=kwargs,
-        daemon=True,
-    ).start()
+    global note_indexing_queue
+    if not args:
+        return
+    note_id = int(args[0])
+    if note_indexing_queue is None:
+        note_indexing_queue = NoteIndexingQueue(background_index_note_task)
+    note_indexing_queue.enqueue(note_id, *args[1:], **kwargs)
 
-async def background_index_note_async(note_id: int, title: str, content: str, tags: list[str] | None = None, icon: str = "\U0001f4dd", type: str = "note", parent_id: int | None = None, is_title_manually_edited: bool = False):
+async def background_index_note_async(
+    note_id: int,
+    title: str,
+    content: str,
+    tags: list[str] | None = None,
+    icon: str = "\U0001f4dd",
+    type: str = "note",
+    parent_id: int | None = None,
+    is_title_manually_edited: bool = False,
+    ai_client_instance: AIClient | None = None,
+):
     """异步执行 AI 处理：摘要、向量化、自动链接"""
     if not ai_enabled:
         return
         
     db = SessionLocal()
+    client = ai_client_instance or ai_client
     try:
         # 获取最新的 AI 配置
         model_config = get_or_create_model_config(db)
@@ -198,7 +247,7 @@ async def background_index_note_async(note_id: int, title: str, content: str, ta
             return
         
         # 1. 摘要处理
-        summary = await ai_client.summarize(content, llm_config)
+        summary = await client.summarize(content, llm_config)
         if not summary or summary.startswith("Error:"):
             return
         
@@ -217,10 +266,10 @@ async def background_index_note_async(note_id: int, title: str, content: str, ta
         vector_store.delete_note_chunks(note_id)
         
         # 笔记级向量（基于摘要和前 3000 字）
-        note_embedding = await ai_client.embed(f"{title}\n{summary}\n{content[:3000]}", llm_config)
+        note_embedding = await client.embed(f"{title}\n{summary}\n{content[:3000]}", llm_config)
         
         for index, chunk in enumerate(chunks):
-            embedding = await ai_client.embed(chunk, llm_config)
+            embedding = await client.embed(chunk, llm_config)
             records.append({
                 "id": f"note-{note_id}-chunk-{index}",
                 "document": chunk,
@@ -264,13 +313,7 @@ def background_index_note_task(*args, **kwargs):
         local_ai_client = AIClient()
         try:
             # 临时替换全局引用：复用 background_index_note_async 的逻辑
-            global ai_client
-            old = ai_client
-            ai_client = local_ai_client
-            try:
-                await background_index_note_async(*args, **kwargs)
-            finally:
-                ai_client = old
+            await background_index_note_async(*args, ai_client_instance=local_ai_client, **kwargs)
         finally:
             try:
                 await local_ai_client.client.aclose()
@@ -365,6 +408,7 @@ def persist_note_sync(
     sort_key: str | None = None,
     stickers: list[dict] | None = None,
     sticky_notes: list[dict] | None = None,
+    properties: list | None = None,
 ) -> NoteResponse:
     # 1. 快速创建数据库记录
     from backend.database import with_db_retry
@@ -388,6 +432,7 @@ def persist_note_sync(
             sort_key=sort_key,
             stickers=stickers,
             sticky_notes=sticky_notes,
+            properties=properties,
         )
     
     note = do_create()
@@ -530,81 +575,137 @@ async def upload_documents(background_tasks: BackgroundTasks, files: list[Upload
     return UploadResponse(imported_notes=imported)
 
 @router.post("/media/upload")
-def upload_media_api(file: UploadFile = File(...), note_id: str = Form(None)):
+async def upload_media_api(file: UploadFile = File(...), note_id: str = Form(None)):
     try:
         ext = os.path.splitext(file.filename)[1]
         unique_name = f"{uuid.uuid4()}{ext}"
         
-        # Isolate by note_id if provided
-        upload_base = Path(settings.uploads_path)
-        if note_id:
-            upload_base = upload_base / note_id
-            upload_base.mkdir(parents=True, exist_ok=True)
+        upload_base = safe_media_subdir(settings.uploads_path, note_id)
+        upload_base.mkdir(parents=True, exist_ok=True)
             
         save_path = upload_base / unique_name
-        with open(save_path, "wb") as f:
-            # Sync read from UploadFile
-            f.write(file.file.read())
+        content = await file.read()
+        await run_in_threadpool(save_path.write_bytes, content)
             
         url_path = f"{note_id}/{unique_name}" if note_id else unique_name
         return {
             "url": f"/api/media/static/files/{url_path}",
             "name": file.filename,
             "size": save_path.stat().st_size,
-            "type": file.content_type
+            "type": getattr(file, "content_type", None)
         }
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.post("/media/upload/init")
-def upload_media_init(filename: str = Form(...), size: int = Form(...), note_id: str = Form(None)):
+def upload_media_init(
+    filename: str = Form(...),
+    size: int = Form(...),
+    note_id: str = Form(None),
+    total_chunks: int | None = Form(None),
+    file_sha256: str | None = Form(None),
+):
+    cleanup_expired_upload_sessions()
     upload_id = str(uuid.uuid4())
-    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    safe_media_subdir(settings.uploads_path, note_id)
+    temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
     temp_dir.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "filename": filename,
+        "size": size,
+        "note_id": note_id,
+        "total_chunks": total_chunks,
+        "file_sha256": file_sha256,
+    }
+    (temp_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     return {"upload_id": upload_id}
 
+@router.get("/media/upload/status/{upload_id}")
+def upload_media_status(upload_id: str):
+    upload_id = validate_uuid(upload_id, "upload_id")
+    temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
+    if not temp_dir.exists():
+        raise HTTPException(status_code=404, detail="Invalid upload_id")
+
+    chunk_pattern = re.compile(r"^chunk_(\d+)$")
+    uploaded_chunks: list[int] = []
+    for chunk_path in temp_dir.iterdir():
+        match = chunk_pattern.match(chunk_path.name)
+        if match:
+            uploaded_chunks.append(int(match.group(1)))
+
+    uploaded_chunks.sort()
+    return {"upload_id": upload_id, "uploaded_chunks": uploaded_chunks}
+
 @router.post("/media/upload/chunk")
-def upload_media_chunk(
+async def upload_media_chunk(
     upload_id: str = Form(...),
     chunk_index: int = Form(...),
     file: UploadFile = File(...),
-    note_id: str = Form(None)
+    note_id: str = Form(None),
+    chunk_sha256: str | None = Form(None),
 ):
-    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    upload_id = validate_uuid(upload_id, "upload_id")
+    temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
     if not temp_dir.exists():
         raise HTTPException(status_code=400, detail="Invalid upload_id")
+    content = await file.read()
+    if chunk_sha256:
+        actual_sha = hashlib.sha256(content).hexdigest()
+        if actual_sha.lower() != chunk_sha256.lower():
+            raise HTTPException(status_code=400, detail=f"Chunk checksum mismatch: {chunk_index}")
     chunk_path = temp_dir / f"chunk_{chunk_index}"
-    with open(chunk_path, "wb") as f:
-        f.write(file.file.read())
+    await run_in_threadpool(chunk_path.write_bytes, content)
     return {"status": "ok"}
 
 @router.post("/media/upload/complete")
-def upload_media_complete(
+async def upload_media_complete(
     upload_id: str = Form(...),
     filename: str = Form(...),
     content_type: str = Form(...),
-    note_id: str = Form(None)
+    note_id: str = Form(None),
+    total_chunks: int | None = Form(None),
+    file_sha256: str | None = Form(None),
 ):
-    temp_dir = Path(settings.uploads_path) / "temp" / upload_id
+    upload_id = validate_uuid(upload_id, "upload_id")
+    temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
     if not temp_dir.exists():
         raise HTTPException(status_code=400, detail="Invalid upload_id")
     
     ext = os.path.splitext(filename)[1]
     unique_name = f"{uuid.uuid4()}{ext}"
     
-    # Isolate by note_id if provided
-    upload_base = Path(settings.uploads_path)
-    if note_id:
-        upload_base = upload_base / note_id
-        upload_base.mkdir(parents=True, exist_ok=True)
+    upload_base = safe_media_subdir(settings.uploads_path, note_id)
+    upload_base.mkdir(parents=True, exist_ok=True)
         
     final_path = upload_base / unique_name
     
     chunks = sorted(temp_dir.glob("chunk_*"), key=lambda p: int(p.name.split("_")[1]))
-    with open(final_path, "wb") as outfile:
-        for chunk_path in chunks:
-            with open(chunk_path, "rb") as infile:
-                shutil.copyfileobj(infile, outfile)
+    if total_chunks is not None and len(chunks) != total_chunks:
+        raise HTTPException(status_code=400, detail="Chunk count mismatch")
+
+    def merge_chunks_and_verify():
+        file_hasher = hashlib.sha256() if file_sha256 else None
+        with open(final_path, "wb") as outfile:
+            for chunk_path in chunks:
+                with open(chunk_path, "rb") as infile:
+                    while True:
+                        chunk = infile.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        outfile.write(chunk)
+                        if file_hasher:
+                            file_hasher.update(chunk)
+
+        if file_sha256:
+            actual_sha = file_hasher.hexdigest()
+            if actual_sha.lower() != file_sha256.lower():
+                final_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail="File checksum mismatch")
+
+    await run_in_threadpool(merge_chunks_and_verify)
     
     shutil.rmtree(temp_dir)
     url_path = f"{note_id}/{unique_name}" if note_id else unique_name
@@ -614,6 +715,124 @@ def upload_media_complete(
         "size": final_path.stat().st_size,
         "type": content_type
     }
+
+@router.post("/import/preview", response_model=ImportPreviewResponse)
+async def preview_import_files(files: list[UploadFile] = File(...)) -> ImportPreviewResponse:
+    items: list[ImportPreviewItem] = []
+    for file in files:
+        content = await file.read()
+        items.append(ImportPreviewItem(**build_import_preview_item(file.filename, content)))
+    return ImportPreviewResponse(items=items)
+
+
+@router.post("/import/url/preview", response_model=ImportPreviewResponse)
+async def preview_import_urls(payload: ImportUrlRequest) -> ImportPreviewResponse:
+    items: list[ImportPreviewItem] = []
+    for url in payload.urls:
+        try:
+            article = await fetch_url_article(url)
+            items.append(ImportPreviewItem(**build_url_preview_item(article["url"], article["html"])))
+        except Exception as error:
+            items.append(
+                ImportPreviewItem(
+                    file_name=url,
+                    file_type="url",
+                    size=0,
+                    title=url,
+                    status="error",
+                    message=str(error),
+                    summary="",
+                    block_count=0,
+                )
+            )
+    return ImportPreviewResponse(items=items)
+
+
+@router.post("/import/generate-note", response_model=GeneratedNoteResponse)
+async def import_and_generate_note(
+    files: list[UploadFile] = File(...),
+    template_id: str = Form("general"),
+    db: Session = Depends(get_db),
+) -> GeneratedNoteResponse:
+    documents: list[dict[str, str]] = []
+    for file in files:
+        content = await file.read()
+        title, parsed = parse_document(file.filename, content)
+        documents.append({"file_name": file.filename, "title": title, "content": parsed})
+
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    result = await generate_note_from_imported_documents(
+        documents=documents,
+        template_id=template_id,
+        ai_client=ai_client,
+        llm_config=llm_config,
+    )
+    return GeneratedNoteResponse(**result)
+
+
+@router.post("/import/url/generate-note", response_model=GeneratedNoteResponse)
+async def import_urls_and_generate_note(payload: ImportUrlRequest, db: Session = Depends(get_db)) -> GeneratedNoteResponse:
+    documents: list[dict[str, str]] = []
+    for url in payload.urls:
+        article = await fetch_url_article(url)
+        documents.append({"url": article["url"], "title": article["title"], "content": article["content"]})
+
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    normalized = combine_imported_urls_for_note_generation(documents, template_id=payload.template_id)
+    result = await generate_structured_note(normalized, ai_client, llm_config)
+    return GeneratedNoteResponse(**result)
+
+
+@router.post("/ai/generate-note-from-content", response_model=GeneratedNoteResponse)
+async def generate_note_from_content(payload: NormalizedContentPayload, db: Session = Depends(get_db)) -> GeneratedNoteResponse:
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    result = await generate_structured_note(payload.model_dump(), ai_client, llm_config)
+    return GeneratedNoteResponse(**result)
+
+
+@router.post("/ai/generate-note-from-content/persist", response_model=GeneratedNotePersistResponse)
+async def generate_and_persist_note_from_content(
+    payload: NormalizedContentPayload,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> GeneratedNotePersistResponse:
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    result = await generate_structured_note(payload.model_dump(), ai_client, llm_config)
+    generated = GeneratedNoteResponse(**result)
+    note = persist_note_sync(
+        db,
+        generated.title,
+        generated.markdown,
+        background_tasks,
+        icon="🤖",
+        tags=["AI整理"],
+    )
+    return GeneratedNotePersistResponse(generated=generated, note=note)
+
 
 @router.post("/ask", response_model=AskResponse)
 async def ask_question(payload: AskRequest, db: Session = Depends(get_db)) -> AskResponse:
@@ -637,8 +856,208 @@ async def ask_question(payload: AskRequest, db: Session = Depends(get_db)) -> As
     else:
         results = await search_knowledge(payload.question, ai_client=ai_client)
         citations = await run_in_threadpool(citations_from_results, db, results)
+        citations = filter_relevant_vault_citations(citations, payload.question)
+        if not citations:
+            citations = await run_in_threadpool(build_vault_fallback_citations, db, payload.question)
         answer = await ai_client.answer(payload.question, citations, llm_config)
         return AskResponse(answer=answer, citations=[Citation(**item) for item in citations], mode="rag")
+
+
+def build_import_batch_citations(notes) -> list[dict]:
+    citations: list[dict] = []
+    for note in notes:
+        content = getattr(note, "content", "") or ""
+        if not content.strip():
+            continue
+        citations.append(
+            {
+                "note_id": int(note.id),
+                "title": note.title,
+                "chunk_id": f"import-batch-{note.id}",
+                "score": 1.0,
+                "excerpt": content[:1200],
+            }
+        )
+    return citations
+
+
+def build_note_citation(note) -> dict | None:
+    content = getattr(note, "content", "") or ""
+    if not content.strip():
+        return None
+    return {
+        "note_id": int(note.id),
+        "title": note.title,
+        "chunk_id": f"note-{note.id}",
+        "score": 1.0,
+        "excerpt": content[:1800],
+    }
+
+
+def _plain_note_text(content: str) -> str:
+    text = re.sub(r"<script[\s\S]*?</script>", " ", content or "", flags=re.IGNORECASE)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+_CJK_QUERY_STOP_TERMS = {
+    "还有", "哪些", "哪个", "什么", "怎么", "如何", "是否", "关于", "有关", "相关",
+    "笔记", "内容", "当前", "全部", "全库", "知识", "知识库", "这个", "那个", "一些",
+    "可以", "不能", "需要", "进行", "里面", "中的", "的是", "以及", "或者", "如果",
+}
+
+
+def _query_terms(question: str) -> set[str]:
+    terms = {
+        term.lower()
+        for term in re.findall(r"[A-Za-z0-9_]{2,}", question or "")
+    }
+    cjk_runs = re.findall(r"[\u4e00-\u9fff]{2,}", question or "")
+    for run in cjk_runs:
+        if 2 <= len(run) <= 6:
+            terms.add(run.lower())
+        for size in (2, 3, 4):
+            for index in range(0, max(0, len(run) - size + 1)):
+                terms.add(run[index:index + size].lower())
+    return {
+        term for term in terms
+        if term not in _CJK_QUERY_STOP_TERMS
+        and not any(stop in term for stop in _CJK_QUERY_STOP_TERMS if len(term) <= 4)
+    }
+
+
+def _citation_term_overlap(citation: dict, terms: set[str]) -> int:
+    if not terms:
+        return 0
+    haystack = f"{citation.get('title', '')} {citation.get('excerpt', '')}".lower()
+    return sum(1 for term in terms if term in haystack)
+
+
+def filter_relevant_vault_citations(citations: list[dict], question: str, *, limit: int = 2) -> list[dict]:
+    if not citations:
+        return []
+
+    terms = _query_terms(question)
+    scored = [
+        {
+            **citation,
+            "_term_overlap": _citation_term_overlap(citation, terms),
+        }
+        for citation in sorted(citations, key=lambda item: float(item.get("score") or 0), reverse=True)
+    ]
+
+    top_score = float(scored[0].get("score") or 0)
+    min_score = max(0.25, top_score * 0.9, top_score - 0.06)
+    min_overlap = 1 if len(terms) <= 2 else 2
+    filtered = [scored[0]]
+    seen_note_ids = {scored[0].get("note_id")}
+
+    for item in scored[1:]:
+        note_id = item.get("note_id")
+        if note_id in seen_note_ids:
+            continue
+        item_score = float(item.get("score") or 0)
+        if terms and int(item.get("_term_overlap") or 0) < min_overlap:
+            continue
+        if top_score > 0 and item_score < min_score:
+            continue
+        filtered.append(item)
+        seen_note_ids.add(note_id)
+        if len(filtered) >= min(limit, 2):
+            break
+
+    return [
+        {key: value for key, value in item.items() if key != "_term_overlap"}
+        for item in filtered
+    ]
+
+
+def build_vault_fallback_citations(
+    db: Session,
+    question: str,
+    *,
+    limit: int = 6,
+) -> list[dict]:
+    notes = [
+        note for note in list_notes(db, include_content=True)
+        if not getattr(note, "is_folder", False)
+        and not getattr(note, "deleted_at", None)
+        and _plain_note_text(getattr(note, "content", "") or "")
+    ]
+    if not notes:
+        return []
+
+    query_terms = _query_terms(question)
+
+    def score_note(note) -> tuple[int, str]:
+        title = getattr(note, "title", "") or ""
+        text = _plain_note_text(getattr(note, "content", "") or "")
+        haystack = f"{title} {text}".lower()
+        overlap = sum(1 for term in query_terms if term in haystack)
+        updated_at = str(getattr(note, "updated_at", "") or getattr(note, "created_at", "") or "")
+        return overlap, updated_at
+
+    ranked_notes = sorted(notes, key=score_note, reverse=True)
+    if query_terms:
+        ranked_notes = [note for note in ranked_notes if score_note(note)[0] > 0]
+    return [
+        {
+            "note_id": int(note.id),
+            "title": note.title,
+            "chunk_id": f"vault-fallback-{note.id}",
+            "score": float(score_note(note)[0]),
+            "excerpt": _plain_note_text(getattr(note, "content", "") or "")[:1800],
+        }
+        for note in ranked_notes[:limit]
+    ]
+
+
+@router.post("/import/batches/{batch_id}/ask", response_model=AskResponse)
+async def ask_import_batch(batch_id: str, payload: ImportBatchAskRequest, db: Session = Depends(get_db)) -> AskResponse:
+    if not ai_enabled:
+        return AskResponse(answer="AI is disabled in settings.", citations=[], mode="import_batch")
+
+    property_filter = {"import_batch_id": batch_id}
+    notes = list_notes(db, property_filter, include_content=True)
+    citations = build_import_batch_citations(notes)
+    if not citations:
+        return AskResponse(answer="No notes were found for this import batch.", citations=[], mode="import_batch")
+
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    answer = await ai_client.answer(payload.question, citations, llm_config)
+    return AskResponse(answer=answer, citations=[Citation(**item) for item in citations], mode="import_batch")
+
+
+@router.post("/notes/{note_id}/ask", response_model=AskResponse)
+async def ask_note(note_id: int, payload: ImportBatchAskRequest, db: Session = Depends(get_db)) -> AskResponse:
+    if not ai_enabled:
+        return AskResponse(answer="AI is disabled in settings.", citations=[], mode="note")
+
+    note = get_note(db, note_id)
+    if not note or getattr(note, "deleted_at", None):
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    citation = build_note_citation(note)
+    if not citation:
+        return AskResponse(answer="This note has no readable content yet.", citations=[], mode="note")
+
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    answer = await ai_client.answer(payload.question, [citation], llm_config)
+    return AskResponse(answer=answer, citations=[Citation(**citation)], mode="note")
+
 
 @router.post("/search")
 async def search_api(payload: SearchRequest, db: Session = Depends(get_db)) -> dict:
@@ -654,6 +1073,12 @@ async def inline_ai(payload: InlineAIRequest, db: Session = Depends(get_db)):
     if not ai_enabled:
         return StreamingResponse(iter([f"data: {{\"error\": \"AI is disabled in settings.\"}}\n\n"]), media_type="text/event-stream")
         
+    markdown_output_rules = (
+        "\n\nOutput format rules: Return only clean Markdown content that can be inserted into a note editor. "
+        "Do not explain the format. Do not wrap the whole answer in a Markdown code fence. "
+        "Use headings, bullet lists, numbered lists, bold text, blockquotes, inline code and code blocks only when helpful. "
+        "Do not output raw HTML unless the user explicitly asks for HTML."
+    )
     system_prompts = {
         "continue": "You are a writing assistant. Continue writing the following text naturally. Return only the new text.",
         "expand": "You are a writing assistant. Expand the following text with more details and depth. Return only the expanded version.",
@@ -664,16 +1089,11 @@ async def inline_ai(payload: InlineAIRequest, db: Session = Depends(get_db)):
         "ask": "You are a note-taking and personal knowledge base assistant. Based on the selected text and context, answer the user's intent or improve the text accordingly. Return only the result.",
     }
     messages = [
-        {"role": "system", "content": system_prompts.get(payload.action, "You are a helpful writing assistant.")},
+        {"role": "system", "content": system_prompts.get(payload.action, "You are a helpful writing assistant.") + markdown_output_rules},
         {"role": "user", "content": f"Context: {payload.context or ''}\n\nInput: {payload.prompt}"}
     ]
 
-    # check local ai plugin first
-    import logging
-    logging.warning(f"[DEBUG] inline_ai called. ai_enabled={ai_enabled}")
-    if ai_enabled:
-        logging.warning(f"[DEBUG] inline_ai local_ai_manager id: {id(local_ai_manager)}")
-        logging.warning(f"[DEBUG] local_ai_manager.is_ready={local_ai_manager.is_ready}")
+    if ai_mode == AI_MODE_LOCAL:
         if not local_ai_manager.is_ready:
             await local_ai_manager.initialize_model()
         if local_ai_manager.is_ready:
@@ -692,6 +1112,12 @@ async def inline_ai(payload: InlineAIRequest, db: Session = Depends(get_db)):
                 }
             )
 
+        status = local_ai_manager.get_status()
+        if status.get("is_loading"):
+            return StreamingResponse(iter(['data: {"text": "Local AI model is still loading, please wait..."}\n\n']), media_type="text/event-stream")
+        error_msg = status.get("error") or "Local AI model is not ready."
+        return StreamingResponse(iter([f'data: {json.dumps({"error": error_msg}, ensure_ascii=False)}\n\n']), media_type="text/event-stream")
+
     model_config = await run_in_threadpool(get_or_create_model_config, db)
     if not model_config.api_key or not model_config.base_url:
         return StreamingResponse(iter([f"data: {{\"error\": \"AI Config missing (API Key or Base URL is empty). Please check your settings.\"}}\n\n"]), media_type="text/event-stream")
@@ -704,32 +1130,17 @@ async def inline_ai(payload: InlineAIRequest, db: Session = Depends(get_db)):
     
     async def generate():
         try:
-            # 如果本地 AI 插件已启用，则优先使用本地模型
-            if ai_enabled:
-                status = local_ai_manager.get_status()
-                if status["is_ready"]:
-                    async for chunk in local_ai_manager.generate_chat_stream_messages(messages):
-                        yield chunk
-                    return
-                elif status["is_loading"]:
-                    yield "Local AI model is still loading, please wait..."
-                    return
-                else:
-                    if status.get("error"):
-                        import json
-                        error_msg = status.get('error', 'Unknown Error')
-                        yield f'data: {json.dumps({"error": f"Local AI Error: {error_msg}. Please check your model file or disable Local AI."})}\n\n'
-                        return
-                    pass
-
             async for chunk in ai_client.stream_chat(messages, llm_config):
+                if isinstance(chunk, str) and chunk.lstrip().startswith("data:"):
+                    yield chunk
+                    if '"error"' in chunk:
+                        return
+                    continue
                 yield f'data: {json.dumps({"text": chunk}, ensure_ascii=False)}\n\n'
             yield 'data: [DONE]\n\n'
         except Exception as e:
-            import json
             error_msg = f"Inline AI Error: {str(e)}"
             yield f'data: {json.dumps({"error": error_msg})}\n\n'
-    
     return StreamingResponse(
         generate(), 
         media_type="text/event-stream", 
@@ -756,6 +1167,9 @@ async def global_chat(payload: AskRequest, db: Session = Depends(get_db)):
     if payload.mode == "rag":
         results = await search_knowledge(payload.question, ai_client=ai_client, top_k=5)
         citations = await run_in_threadpool(citations_from_results, db, results)
+        citations = filter_relevant_vault_citations(citations, payload.question)
+        if not citations:
+            citations = await run_in_threadpool(build_vault_fallback_citations, db, payload.question, limit=5)
         citation_block = "\n\n".join(
             f"[{idx + 1}] {item['title']}\n{item['excerpt']}" for idx, item in enumerate(citations)
         )
@@ -775,6 +1189,12 @@ async def global_chat(payload: AskRequest, db: Session = Depends(get_db)):
             if payload.mode == "rag":
                 import json
                 yield f"__CITATIONS__:{json.dumps(citations)}\n"
+            if ai_mode == AI_MODE_LOCAL:
+                if not local_ai_manager.is_ready:
+                    await local_ai_manager.initialize_model()
+                async for chunk in local_ai_manager.generate_chat_stream_messages(messages):
+                    yield chunk
+                return
             async for chunk in ai_client.stream_chat(messages, llm_config):
                 yield chunk
         except Exception as e:
@@ -1023,6 +1443,7 @@ def create_note_api(payload: NoteCreate, background_tasks: BackgroundTasks, db: 
         payload.sort_key,
         payload.stickers,
         payload.sticky_notes,
+        payload.properties,
     )
 
 @router.put("/notes/{note_id}", response_model=NoteResponse)
@@ -1070,7 +1491,20 @@ def update_note_api(note_id: int, payload: NoteUpdate, background_tasks: Backgro
         )
     
     note = do_quick_update()
-    
+
+    # v0.22.0 · 旁路打快照(去重+去抖)
+    try:
+        revision_service.maybe_snapshot(
+            db,
+            note_id=note_id,
+            title=title or "",
+            content=content or "",
+            source="auto",
+        )
+    except Exception as snapshot_error:
+        # 快照失败不阻塞主流程
+        print(f"[revision] maybe_snapshot failed for note {note_id}: {snapshot_error}")
+
     # 1.5 更新手动链接
     manual_link_ids = extract_manual_links(content or "")
     # 即使为空也更新，以防用户删除了所有链接
@@ -1143,6 +1577,218 @@ def purge_trash_api(db: Session = Depends(get_db)) -> dict:
     if not purge_trash(db):
         raise HTTPException(status_code=500, detail="Failed to purge trash")
     return {"status": "ok"}
+
+
+# ============================================================
+# 📜 v0.22.0 · 笔记版本快照 (revisions)
+# ============================================================
+
+@router.get("/system/revision-settings")
+def get_revision_settings_api() -> dict:
+    """读取版本快照策略(去抖秒数 / 保留条数)."""
+    return revision_service.get_settings()
+
+
+@router.put("/system/revision-settings")
+def update_revision_settings_api(payload: dict) -> dict:
+    """更新版本快照策略. 参数: {debounce_seconds?: int, max_keep?: int}"""
+    allowed = {k: v for k, v in (payload or {}).items() if k in ("debounce_seconds", "max_keep")}
+    return revision_service.update_settings(allowed)
+
+
+@router.get("/notes/{note_id}/revisions")
+def list_note_revisions_api(note_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """列出某笔记的所有版本快照(元信息),不含正文.
+
+    v0.22.0-a hotfix8 · 笔记不存在(如回滚后竞态/vault 扫描未命中)时返回空列表,
+    不再 404,避免 Chrome DevTools 红字打印且前端显示 raw JSON 错误.
+
+    v0.23.4 hotfix (idle-collapse) · 回退后 vault 扫描瞬间 get_note 可能抖回
+    None, 这里改为: 即使 get_note 找不到笔记, 只要 note_revisions 表还有本
+    note_id 的行, 就把快照列出来, 避免历史抽屉被"扫描抖动"清空.
+    """
+    note_present = get_note(db, note_id) is not None
+    rows = revision_service.list_revisions(db, note_id)
+    if not note_present and not rows:
+        # 笔记真的没了, 且数据库也没快照 → 返回空
+        return []
+    if not note_present:
+        # vault 扫描瞬时抖动: 保留历史, 不让前端以为记录被清了
+        print(
+            f"[revision] list: note {note_id} missing in vault but "
+            f"{len(rows)} revision rows still in DB — serving cached"
+        )
+    return [
+        {
+            "id": r.id,
+            "note_id": r.note_id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "content_hash": r.content_hash,
+            "title_snapshot": r.title_snapshot,
+            "byte_size": r.byte_size,
+            "source": r.source,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/notes/{note_id}/revisions/{revision_id}")
+def get_note_revision_api(note_id: int, revision_id: int, db: Session = Depends(get_db)) -> dict:
+    """获取指定版本的完整内容.
+
+    v0.22.0-a hotfix6 · 版本被 prune 是正常业务流,不再返回 404
+    (会被 Chrome DevTools 红字打印且无法拦截),改为 200 + {"missing": true},
+    由前端静默刷新列表.
+
+    v0.23.4 hotfix (idle-collapse v2) · 回退过程中 vault 扫描可能瞬时返回
+    get_note=None, 旧代码直接 404 → 前端捕获异常后重新拉 list → list 又去
+    拉 detail → 再 404 → 循环刷新. 改成只要 revision 行在 DB 里就返回内容,
+    不再用 vault 状态做 404 门槛.
+    """
+    result = revision_service.get_revision(db, note_id, revision_id)
+    if result is None:
+        # 只有"笔记不存在 且 快照行也不存在"才算真正 missing
+        return {
+            "id": revision_id,
+            "note_id": note_id,
+            "created_at": None,
+            "content_hash": "",
+            "title_snapshot": "",
+            "byte_size": 0,
+            "source": "missing",
+            "content": "",
+            "missing": True,
+        }
+    content, rev = result
+    return {
+        "id": rev.id,
+        "note_id": rev.note_id,
+        "created_at": rev.created_at.isoformat() if rev.created_at else None,
+        "content_hash": rev.content_hash,
+        "title_snapshot": rev.title_snapshot,
+        "byte_size": rev.byte_size,
+        "source": rev.source,
+        "content": content,
+        "missing": False,
+    }
+
+
+@router.post("/notes/{note_id}/revisions/{revision_id}/restore")
+def restore_note_revision_api(note_id: int, revision_id: int, db: Session = Depends(get_db)):
+    """回滚到指定版本:
+      1. 先为当前版本打一条 restore-point 兜底
+      2. 用目标版本内容覆盖 note.content
+
+    v0.22.0-a hotfix7 · 目标版本若已被 prune 删除,返回 200 + {"missing": true},
+    由前端提示"该版本已失效,请刷新列表",避免 Chrome DevTools 红字 404.
+
+    v0.23.4 hotfix (idle-collapse) · 在关键步骤前后打印快照行数, 方便回退后
+    "历史变空"时定位是: (a) DB 真被清了 / (b) vault 扫描抖动 / (c) 前端未触发刷新.
+    """
+    existing = get_note(db, note_id)
+    if not existing:
+        # v0.23.4 idle-collapse v2: vault 扫描瞬时抖动不应阻断 restore.
+        # 只要有任意快照行, 再等 3ms 重试一次; 依旧 None 才真 404
+        from backend.models.db_models import NoteRevision as _NR0
+        if db.query(_NR0).filter(_NR0.note_id == note_id).count() > 0:
+            import time as _time
+            _time.sleep(0.003)
+            existing = get_note(db, note_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Note not found")
+
+    from backend.models.db_models import NoteRevision as _NR
+    rows_before = db.query(_NR).filter(_NR.note_id == note_id).count()
+    print(f"[revision][restore] before: note={note_id} revisions={rows_before}")
+
+    result = revision_service.restore_revision(
+        db,
+        note_id=note_id,
+        revision_id=revision_id,
+        current_title=existing.title or "",
+        current_content=existing.content or "",
+    )
+    if result is None:
+        # 版本已失效(被 prune 或其它会话删除),前端会捕获 missing 并刷新列表
+        return {"missing": True, "detail": "Revision not found"}
+    target_content, _rev = result
+
+    # 覆盖写回
+    from backend.database import with_db_retry
+
+    @with_db_retry(max_retries=3)
+    def do_restore():
+        return update_note(
+            db,
+            note_id,
+            title=existing.title,
+            content=target_content,
+            summary=existing.summary,
+        )
+
+    note = do_restore()
+    if not note:
+        raise HTTPException(status_code=500, detail="Failed to restore revision")
+
+    # 再为"新当前版本"打一条 manual 快照, 方便后续继续版本回溯
+    try:
+        revision_service.maybe_snapshot(
+            db,
+            note_id=note_id,
+            title=note.title or "",
+            content=note.content or "",
+            source="restore",
+            protected_revision_ids={_rev.id},
+        )
+    except Exception as err:
+        print(f"[revision] post-restore snapshot failed for note {note_id}: {err}")
+
+    rows_after = db.query(_NR).filter(_NR.note_id == note_id).count()
+    print(f"[revision][restore] after:  note={note_id} revisions={rows_after}")
+
+    return note_to_response(note)
+
+
+# v0.22.0-a hotfix2 · 独立的快照触发接口
+# 前端在 Electron IPC 保存成功后调用,解决 IPC 绕过 FastAPI 路由导致快照不生成的问题
+@router.post("/notes/{note_id}/snapshot")
+def capture_note_snapshot_api(
+    note_id: int,
+    payload: dict | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """主动触发一次快照(去重+去抖).
+    Body: {"source": "auto" | "save"}  — 默认 auto
+    返回 {"status": "ok", "snapshot_id": int | null}
+    """
+    existing = get_note(db, note_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    source = "auto"
+    if isinstance(payload, dict):
+        raw_source = payload.get("source")
+        if raw_source in ("auto", "save", "manual", "pre-save", "stable"):
+            source = "save" if raw_source == "manual" else raw_source
+
+    try:
+        rev = revision_service.maybe_snapshot(
+            db,
+            note_id=note_id,
+            title=existing.title or "",
+            content=existing.content or "",
+            source=source,
+        )
+    except Exception as err:
+        print(f"[revision] snapshot API failed for note {note_id}: {err}")
+        return {"status": "error", "snapshot_id": None, "detail": str(err)}
+
+    return {
+        "status": "ok",
+        "snapshot_id": rev.id if rev else None,
+        "skipped": rev is None,
+    }
+
 
 # ============================================================
 # 🎵 音乐库接口 (整合自 main.py)
@@ -1230,7 +1876,7 @@ def upload_music(file: UploadFile = File(...), cover: UploadFile = File(None)):
     
     # 📝 修复：安全处理文件名，防止目录遍历，并确保文件写入
     safe_filename = Path(file.filename).name if file.filename else f"upload_{uuid.uuid4().hex}"
-    audio_path = music_dir / safe_filename
+    audio_path = safe_named_file(music_dir, safe_filename)
     
     try:
         with open(audio_path, "wb") as f:
@@ -1242,7 +1888,7 @@ def upload_music(file: UploadFile = File(...), cover: UploadFile = File(None)):
     cover_url = None
     if cover and cover.filename:
         safe_cover_name = Path(cover.filename).name
-        cover_path = music_dir / safe_cover_name
+        cover_path = safe_named_file(music_dir, safe_cover_name)
         try:
             with open(cover_path, "wb") as f:
                 f.write(cover.file.read())
@@ -1275,7 +1921,7 @@ def list_bgm():
 @router.get("/bgm/stream/{filename}")
 def stream_bgm(filename: str):
     """流式返回 BGM 文件"""
-    bgm_path = Path(settings.data_root) / "bgm" / filename
+    bgm_path = safe_named_file(Path(settings.data_root) / "bgm", filename)
     if not bgm_path.exists():
         raise HTTPException(status_code=404, detail="BGM file not found")
 
@@ -1333,7 +1979,7 @@ def upload_sticker(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Unsupported file type")
             
         unique_name = f"{uuid.uuid4()}{ext}"
-        save_path = Path(settings.stickers_path) / unique_name
+        save_path = safe_named_file(settings.stickers_path, unique_name)
         
         with open(save_path, "wb") as f:
             f.write(file.file.read())
@@ -1351,7 +1997,7 @@ def upload_sticker(file: UploadFile = File(...)):
 @router.get("/stickers/files/{filename}")
 def get_sticker_file(filename: str):
     """获取贴纸文件内容"""
-    file_path = Path(settings.stickers_path) / filename
+    file_path = safe_named_file(settings.stickers_path, filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Sticker not found")
 
@@ -1364,7 +2010,7 @@ def get_sticker_file(filename: str):
 @router.delete("/stickers/files/{filename}")
 def delete_sticker_file(filename: str):
     """物理删除贴纸文件"""
-    file_path = Path(settings.stickers_path) / filename
+    file_path = safe_named_file(settings.stickers_path, filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Sticker not found")
     
@@ -1404,7 +2050,7 @@ def upload_emoticon(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Unsupported file type")
             
         unique_name = f"{uuid.uuid4()}{ext}"
-        save_path = emoticons_path / unique_name
+        save_path = safe_named_file(emoticons_path, unique_name)
         
         with open(save_path, "wb") as f:
             f.write(file.file.read())
@@ -1423,7 +2069,7 @@ def upload_emoticon(file: UploadFile = File(...)):
 def get_emoticon_file(filename: str):
     """获取表情文件内容"""
     emoticons_path = Path(settings.data_root) / "emoticons"
-    file_path = emoticons_path / filename
+    file_path = safe_named_file(emoticons_path, filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Emoticon not found")
 
@@ -1437,7 +2083,7 @@ def get_emoticon_file(filename: str):
 def delete_emoticon_file(filename: str):
     """物理删除表情文件"""
     emoticons_path = Path(settings.data_root) / "emoticons"
-    file_path = emoticons_path / filename
+    file_path = safe_named_file(emoticons_path, filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Emoticon not found")
     
@@ -1470,7 +2116,7 @@ def get_model_config_api(db: Session = Depends(get_db)) -> dict:
     config = get_or_create_model_config(db)
     return {
         "provider": config.provider,
-        "api_key": config.api_key,
+        "api_key_masked": mask_api_key(config.api_key),
         "base_url": config.base_url,
         "model_name": config.model_name,
     }
@@ -1480,7 +2126,7 @@ def update_model_config_api(payload: ModelConfigPayload, db: Session = Depends(g
     config = update_model_config(db, payload.provider, payload.api_key, payload.base_url, payload.model_name)
     return {
         "provider": config.provider,
-        "api_key": config.api_key,
+        "api_key_masked": mask_api_key(config.api_key),
         "base_url": config.base_url,
         "model_name": config.model_name,
     }
@@ -1493,6 +2139,150 @@ def update_model_config_api(payload: ModelConfigPayload, db: Session = Depends(g
 async def get_system_logs():
     """获取实时日志 Buffer"""
     return {"logs": log_buffer.get_logs()}
+
+
+@router.get("/system/vault-health")
+async def get_vault_health():
+    return scan_vault_health(settings.vault_path)
+
+
+# ============================================================
+# 📦 v0.22.0 · 一键导出全部数据 (single-user backup)
+# ============================================================
+
+@router.post("/system/export-all")
+async def export_all_data(payload: dict | None = None):
+    """打包导出 Nova 的全部本地数据为一个 zip 文件.
+
+    包含:
+      - manifest.json         · 元信息(版本, 导出时间, 各区尺寸)
+      - nova.db               · SQLite 主库 (WAL checkpoint 后)
+      - vault/**              · 笔记 markdown 物理文件
+      - music/** stickers/** emoticons/**  · 用户上传的多媒体资源
+      - widgets-kv.json       · 前端 LocalStorage dump (来自调用方)
+
+    请求体 (可选):
+      { "localstorage": { ...前端 localStorage 的键值 JSON... } }
+    """
+    import zipfile
+    import tempfile
+    import json as _json
+    from datetime import datetime as _dt
+
+    localstorage_dump: dict = {}
+    if isinstance(payload, dict):
+        ls = payload.get("localstorage")
+        if isinstance(ls, dict):
+            localstorage_dump = ls
+
+    data_root: Path = settings.data_root
+    db_file = data_root / "second_brain.db"
+
+    # 1. WAL checkpoint + integrity_check
+    integrity = "unknown"
+    checkpoint_ok = False
+    try:
+        with engine.connect() as conn:
+            try:
+                conn.exec_driver_sql("PRAGMA wal_checkpoint(FULL)")
+                checkpoint_ok = True
+            except Exception as e:
+                print(f"[export-all] wal_checkpoint failed: {e}")
+            try:
+                row = conn.exec_driver_sql("PRAGMA integrity_check").fetchone()
+                if row:
+                    integrity = str(row[0])
+            except Exception as e:
+                print(f"[export-all] integrity_check failed: {e}")
+    except Exception as e:
+        print(f"[export-all] sqlite pragma phase failed: {e}")
+
+    # 2. 组装 zip 到临时文件
+    tmp = tempfile.NamedTemporaryFile(prefix="nova-export-", suffix=".zip", delete=False)
+    tmp.close()
+    tmp_path = Path(tmp.name)
+
+    def _add_dir(zf: zipfile.ZipFile, root: Path, arcprefix: str) -> int:
+        if not root.exists() or not root.is_dir():
+            return 0
+        count = 0
+        for p in root.rglob("*"):
+            if p.is_file():
+                try:
+                    zf.write(p, arcname=f"{arcprefix}/{p.relative_to(root).as_posix()}")
+                    count += 1
+                except Exception as e:
+                    print(f"[export-all] skip {p}: {e}")
+        return count
+
+    file_counts: dict[str, int] = {}
+    try:
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+            # manifest 先占位, 最后再写
+            if db_file.exists():
+                zf.write(db_file, arcname="nova.db")
+                file_counts["nova.db"] = 1
+
+            file_counts["vault"] = _add_dir(zf, Path(settings.vault_path), "vault")
+            file_counts["music"] = _add_dir(zf, Path(settings.music_path), "music")
+            file_counts["stickers"] = _add_dir(zf, Path(settings.stickers_path), "stickers")
+            file_counts["emoticons"] = _add_dir(zf, Path(settings.emoticons_path), "emoticons")
+
+            # chroma 向量库可选(体积较大, 但缺失可重建, 这里也一并带上以便完全还原)
+            chroma_dir = Path(settings.chroma_path)
+            file_counts["chroma_store"] = _add_dir(zf, chroma_dir, "chroma_store")
+
+            # LocalStorage dump
+            zf.writestr(
+                "widgets-kv.json",
+                _json.dumps(localstorage_dump, ensure_ascii=False, indent=2),
+            )
+
+            # manifest
+            manifest = {
+                "schema": "nova-export/v1",
+                "exported_at": _dt.utcnow().isoformat() + "Z",
+                "integrity_check": integrity,
+                "wal_checkpoint": checkpoint_ok,
+                "file_counts": file_counts,
+                "data_root": str(data_root),
+            }
+            zf.writestr(
+                "manifest.json",
+                _json.dumps(manifest, ensure_ascii=False, indent=2),
+            )
+    except Exception as e:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"export failed: {e}")
+
+    # 3. 流式返回并在完成后清理临时文件
+    def _iter_and_cleanup():
+        try:
+            with open(tmp_path, "rb") as f:
+                while True:
+                    chunk = f.read(1024 * 512)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    filename = f"nova-export-{_dt.utcnow().strftime('%Y%m%d-%H%M%S')}.zip"
+    return StreamingResponse(
+        _iter_and_cleanup(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Nova-Integrity-Check": integrity,
+        },
+    )
+
 
 @router.post("/system/switch-data-path")
 async def switch_data_path(payload: dict):
@@ -1623,16 +2413,29 @@ async def system_update(force: bool = False):
         print(f"[*] Using git at: {git_cmd}")
         print(f"[*] Git repo dir: {repo_dir}")
         print("[*] Checking for updates...")
+
+        branch_res = subprocess.run(
+            [git_cmd, "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',
+        )
+        branch = (branch_res.stdout or "").strip()
+        if not branch or branch == "HEAD":
+            branch = _os.environ.get("NOVA_RELEASE_CHANNEL", "main").strip() or "main"
         
         # 4. 先执行 fetch 获取远程状态 (设置超时)
         try:
-            subprocess.run([git_cmd, "fetch", "origin", "main"], cwd=repo_dir, capture_output=True, timeout=15)
+            subprocess.run([git_cmd, "fetch", "origin", branch], cwd=repo_dir, capture_output=True, timeout=15)
         except subprocess.TimeoutExpired:
             return {"status": "error", "output": "❌ git fetch 超时 (15s)，请检查网络连接后再重试。"}
         
         # 5. 比较本地和远程版本
         local_res = subprocess.run([git_cmd, "rev-parse", "HEAD"], cwd=repo_dir, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-        remote_res = subprocess.run([git_cmd, "rev-parse", "origin/main"], cwd=repo_dir, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+        remote_ref = f"origin/{branch}"
+        remote_res = subprocess.run([git_cmd, "rev-parse", remote_ref], cwd=repo_dir, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         
         local = local_res.stdout.strip()
         remote = remote_res.stdout.strip()
@@ -1648,7 +2451,7 @@ async def system_update(force: bool = False):
 
         # 6. 执行更新
         process = subprocess.run(
-            [git_cmd, "pull", "origin", "main"],
+            [git_cmd, "pull", "origin", branch],
             cwd=repo_dir,
             capture_output=True,
             text=True,
@@ -1678,7 +2481,11 @@ async def system_restart():
         
         print(f"[*] Restarting application via {bat_path}...")
         # 启动脚本，不阻塞当前进程
-        subprocess.Popen([str(bat_path)], shell=True, cwd=str(repo_dir))
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+            subprocess.Popen(["cmd.exe", "/c", str(bat_path)], cwd=str(repo_dir), creationflags=creationflags)
+        else:
+            subprocess.Popen([str(bat_path)], cwd=str(repo_dir))
         return {"status": "ok", "message": "Restarting..."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1693,7 +2500,17 @@ async def open_file(payload: dict):
     # 允许打开本地绝对路径或相对于上传目录的路径
     p = Path(file_path_str)
     if not p.is_absolute():
-        p = Path(settings.uploads_path) / p.name
+        p = safe_child_path(settings.uploads_path, file_path_str, detail="File path is outside allowed roots")
+    else:
+        requested = p.resolve()
+        allowed_roots = (
+            Path(settings.vault_path).resolve(),
+            Path(settings.uploads_path).resolve(),
+            Path(settings.music_path).resolve(),
+        )
+        if not any(requested == root or requested.is_relative_to(root) for root in allowed_roots):
+            raise HTTPException(status_code=403, detail="File path is outside allowed roots")
+        p = requested
     
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {p}")
@@ -1733,33 +2550,83 @@ async def import_data(payload: dict):
     if source_path == data_root:
         raise HTTPException(status_code=400, detail="选择的导入目录与当前数据目录相同，无需导入")
 
+    if not (source_path / "vault").exists():
+        raise HTTPException(status_code=400, detail="vault not found in source path")
+
+    items_to_copy = ["second_brain.db", "chroma_store", "vault"]
+    import_id = uuid.uuid4().hex
+    staging_dir = data_root.parent / f".import-staging-{import_id}"
+    backup_dir = data_root.parent / f".import-backup-{import_id}"
+    backed_up = False
+
+    def copy_item(src_item: Path, dest_item: Path):
+        if src_item.is_dir():
+            shutil.copytree(src_item, dest_item)
+        else:
+            dest_item.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_item, dest_item)
+
+    def remove_item(path: Path):
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+
+    def restore_backup():
+        if not backed_up or not backup_dir.exists():
+            return
+        for item_name in items_to_copy:
+            dest_item = data_root / item_name
+            backup_item = backup_dir / item_name
+            remove_item(dest_item)
+            if backup_item.exists():
+                shutil.move(str(backup_item), str(dest_item))
+
     try:
-        # 4. 关闭所有数据库连接以便文件操作
-        engine.dispose()
-        
-        # 5. 复制数据
         print(f"[*] Importing data from {source_path} to {data_root}...")
-        
-        # 定义要复制的文件和目录
-        items_to_copy = ["second_brain.db", "chroma_store", "uploads"]
-        
+        staging_dir.mkdir(parents=True, exist_ok=False)
+        data_root.mkdir(parents=True, exist_ok=True)
+
+        # 先复制到 staging，避免复制到一半时破坏当前数据目录。
         for item_name in items_to_copy:
             src_item = source_path / item_name
-            dest_item = data_root / item_name
-            
             if src_item.exists():
-                if src_item.is_dir():
-                    # 如果目标存在，先删除
-                    if dest_item.exists():
-                        shutil.rmtree(dest_item)
-                    shutil.copytree(src_item, dest_item)
-                else:
-                    # 如果目标是文件且存在，直接复制会覆盖
-                    shutil.copy2(src_item, dest_item)
-                    
+                copy_item(src_item, staging_dir / item_name)
+
+        import sqlite3
+        conn = sqlite3.connect(staging_dir / "second_brain.db")
+        try:
+            integrity = conn.execute("PRAGMA integrity_check").fetchone()
+        finally:
+            conn.close()
+        if not integrity or integrity[0] != "ok":
+            raise RuntimeError("Imported database failed integrity_check")
+
+        # 关闭所有数据库连接以便文件操作；之后才开始替换当前数据。
+        engine.dispose()
+        backup_dir.mkdir(parents=True, exist_ok=False)
+        for item_name in items_to_copy:
+            dest_item = data_root / item_name
+            if dest_item.exists():
+                shutil.move(str(dest_item), str(backup_dir / item_name))
+        backed_up = True
+
+        for item_name in items_to_copy:
+            staged_item = staging_dir / item_name
+            if staged_item.exists():
+                shutil.move(str(staged_item), str(data_root / item_name))
+
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
         return {"status": "ok", "message": "数据导入成功，请重启软件以加载新数据"}
     except Exception as e:
         import logging
+        try:
+            restore_backup()
+        except Exception as restore_error:
+            logging.getLogger(__name__).error(f"Failed to restore import backup: {str(restore_error)}")
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
         logging.getLogger(__name__).error(f"Failed to import data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to import data: {str(e)}")
 
@@ -1771,15 +2638,18 @@ async def import_data(payload: dict):
 @router.post("/ai/toggle-plugin")
 async def toggle_ai_plugin(payload: dict, background_tasks: BackgroundTasks):
     """切换 AI 插件启用状态或更新配置 (集成预置模型，实现瞬间就绪)"""
-    global ai_enabled
+    global ai_enabled, ai_mode
     enabled = payload.get("enabled", ai_enabled)
+    requested_mode = payload.get("ai_mode")
+    next_ai_mode = normalize_ai_mode(requested_mode) if requested_mode is not None else ai_mode
     num_ctx = payload.get("num_ctx")
     
     ai_enabled = enabled
+    ai_mode = next_ai_mode
     
     # 持久化到 ai_config.json
     config_path = Path(settings.data_root) / "ai_config.json"
-    config = {"enabled": ai_enabled, "preferred_engine": "auto", "num_ctx": 8192}
+    config = {"enabled": ai_enabled, "ai_mode": AI_MODE_REMOTE, "preferred_engine": "auto", "num_ctx": 8192}
     if config_path.exists():
         try:
             with open(config_path, "r") as f:
@@ -1789,6 +2659,7 @@ async def toggle_ai_plugin(payload: dict, background_tasks: BackgroundTasks):
             pass
     
     config["enabled"] = ai_enabled
+    config["ai_mode"] = ai_mode
     if num_ctx is not None:
         config["num_ctx"] = num_ctx
     
@@ -1796,9 +2667,9 @@ async def toggle_ai_plugin(payload: dict, background_tasks: BackgroundTasks):
         json.dump(config, f, indent=2)
 
     import logging
-    logging.warning(f"[DEBUG] toggle_ai_plugin called. ai_enabled={ai_enabled}, num_ctx={num_ctx}")
+    logging.warning(f"[DEBUG] toggle_ai_plugin called. ai_enabled={ai_enabled}, ai_mode={ai_mode}, num_ctx={num_ctx}")
     
-    if ai_enabled:
+    if ai_enabled and ai_mode == AI_MODE_LOCAL:
         # 如果只是更新 num_ctx，我们也需要重新初始化模型以使配置生效
         if num_ctx is not None:
             await local_ai_manager.stop_ollama_server() # 重启以应用新配置
@@ -1825,11 +2696,11 @@ async def toggle_ai_plugin(payload: dict, background_tasks: BackgroundTasks):
         # 3) 初始化本地 AI
         await local_ai_manager.initialize_model()
     else:
-        # 物理级解耦：如果关闭，则彻底停止后端 AI 进程
-        print("[*] AI Plugin disabled. Killing AI processes for physical decoupling...")
+        # 物理级解耦：如果关闭 AI 或切换到远程，则彻底停止后端本地 AI 进程
+        print("[*] Local AI disabled or remote mode selected. Killing local AI processes for physical decoupling...")
         await local_ai_manager.stop_ollama_server()
             
-    return {"status": "success", "enabled": ai_enabled, "num_ctx": config.get("num_ctx", 8192)}
+    return {"status": "success", "enabled": ai_enabled, "ai_mode": ai_mode, "num_ctx": config.get("num_ctx", 8192)}
 
 @router.post("/ai/toggle")
 async def ai_toggle_api(payload: dict, background_tasks: BackgroundTasks):
@@ -1866,19 +2737,22 @@ async def get_ai_plugin_status():
     """获取 AI 插件启用状态"""
     local_status = local_ai_manager.get_status()
     
-    # 读取 num_ctx
+    # 读取 ai_mode / num_ctx
+    current_ai_mode = ai_mode
     num_ctx = 8192
     config_path = Path(settings.data_root) / "ai_config.json"
     if config_path.exists():
         try:
             with open(config_path, "r") as f:
                 config = json.load(f)
+                current_ai_mode = normalize_ai_mode(config.get("ai_mode", ai_mode))
                 num_ctx = config.get("num_ctx", 8192)
         except:
             pass
             
     return {
         "enabled": ai_enabled,
+        "ai_mode": current_ai_mode,
         "num_ctx": num_ctx,
         "local_ai_ready": local_status["is_ready"],
         "local_ai_loading": local_status["is_loading"],
@@ -1926,13 +2800,15 @@ def list_templates_api(db: Session = Depends(get_db)):
 @router.post("/templates", response_model=NoteTemplateResponse)
 def create_template_api(payload: NoteTemplateCreate, db: Session = Depends(get_db)):
     """Create a new note template."""
-    return create_template(
+    template = create_template(
         db,
         name=payload.name,
         content=payload.content,
         icon=payload.icon,
         category=payload.category
     )
+    mirror_template_to_vault(settings.vault_path, template)
+    return template
 
 
 @router.patch("/templates/{template_id}", response_model=NoteTemplateResponse)
@@ -1948,6 +2824,7 @@ def update_template_api(template_id: int, payload: NoteTemplateUpdate, db: Sessi
     )
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
+    mirror_template_to_vault(settings.vault_path, template)
     return template
 
 
@@ -1957,4 +2834,5 @@ def delete_template_api(template_id: int, db: Session = Depends(get_db)):
     success = delete_template(db, template_id)
     if not success:
         raise HTTPException(status_code=404, detail="Template not found")
+    delete_template_file(settings.vault_path, template_id)
     return {"status": "success"}

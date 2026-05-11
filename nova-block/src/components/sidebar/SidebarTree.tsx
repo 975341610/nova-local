@@ -1,17 +1,16 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Layers, Settings, ChevronLeft, ChevronRight, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout } from 'lucide-react';
-import { buildTree, moveNode, isDescendant } from '../../lib/novablock/treeUtils';
+import { Search, Layers, Settings, ChevronLeft, ChevronRight, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout, Sparkles } from 'lucide-react';
+import { buildTree, moveNode, isDescendant, flattenTree } from '../../lib/novablock/treeUtils';
 import type { TreeNode } from '../../lib/novablock/treeUtils';
 import { TreeNodeItem } from './TreeNodeItem';
 import GlobalSearchPanel from './GlobalSearchPanel';
 import BacklinksPanel from './BacklinksPanel';
-import type { Note } from '../../lib/types';
+import AIImportPanel from './AIImportPanel';
+import { useNoteStore } from '../../store/useNoteStore';
 
 interface SidebarTreeProps {
-  initialNodes?: TreeNode[];
-  notes?: Note[];
   selectedNodeId?: string | null;
   onNodeSelect?: (nodeId: string) => void;
   onNodeAdd?: (parentId: string | null, type?: 'file' | 'folder' | 'canvas') => void;
@@ -44,8 +43,6 @@ const AnimatedLabel = ({ children, isCollapsed, className = "" }: { children: Re
 );
 
 export const SidebarTree = ({
-  initialNodes = [],
-  notes = [],
   selectedNodeId = null,
   onNodeSelect,
   onNodeAdd,
@@ -60,8 +57,21 @@ export const SidebarTree = ({
   isCollapsed: externalIsCollapsed,
   onToggleCollapse,
 }: SidebarTreeProps) => {
-  const [nodes, setNodes] = useState<TreeNode[]>(initialNodes);
+  const notes = useNoteStore((state) => state.notes);
+  const updateNote = useNoteStore((state) => state.updateNote);
+
+  // 将 treeData 转换为 TreeNode 格式以供 treeUtils 使用
+  const nodes = useMemo(() => {
+    return notes.map(n => ({
+      ...n,
+      parentId: n.parent_id,
+      sortKey: n.position?.toString() || 'm',
+      isFolder: n.is_folder
+    })) as unknown as TreeNode[];
+  }, [notes]);
+
   const [selectedId, setSelectedId] = useState<string | undefined>(selectedNodeId ?? undefined);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['root']));
   const [internalIsCollapsed, setInternalIsCollapsed] = useState(false);
   const lastToggleTime = useRef(0);
   
@@ -79,7 +89,7 @@ export const SidebarTree = ({
     }
   };
 
-  const [activeTab, setActiveTab] = useState<'tree' | 'search' | 'backlinks'>('tree');
+  const [activeTab, setActiveTab] = useState<'tree' | 'search' | 'backlinks' | 'ai'>('tree');
   
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, node: TreeNode } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -118,30 +128,20 @@ export const SidebarTree = ({
     }
   }, [contextMenu]);
 
-  // Sync upstream changes (e.g. title updates from editor) while preserving local structural changes from drag-and-drop
-  useEffect(() => {
-    setNodes(prevNodes => {
-      const prevNodeMap = new Map(prevNodes.map(n => [n.id, n]));
-      const newNodesMap = new Map(initialNodes.map(n => [n.id, n]));
-      
-      return initialNodes.map(n => {
-        const prev = prevNodeMap.get(n.id);
-        if (prev) {
-          // If the cached parent no longer exists in the incoming nodes (e.g., deleted folder),
-          // we must accept the new parentId from upstream.
-          const cachedParentExists = prev.parentId === null || newNodesMap.has(prev.parentId);
-          if (!cachedParentExists) {
-            return n;
-          }
-          // Preserve local parentId and sortKey, but update title
-          return { ...n, parentId: prev.parentId, sortKey: prev.sortKey };
-        }
-        return n; // New node added externally
-      });
-    });
-  }, [initialNodes]);
-
   const tree = useMemo(() => buildTree(nodes), [nodes]);
+  const visibleNodes = useMemo(() => flattenTree(tree, expandedIds), [tree, expandedIds]);
+
+  const handleToggle = (nodeId: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  };
 
   const handleMove = (nodeId: string, targetId: string, position: 'before' | 'after' | 'into') => {
     // 1. 禁止将节点移动到自身
@@ -156,9 +156,10 @@ export const SidebarTree = ({
 
     const { parentId, sortKey } = moveNode(nodes, nodeId, targetId, position);
     
-    setNodes((prevNodes) => 
-      prevNodes.map((n) => (n.id === nodeId ? { ...n, parentId, sortKey } : n))
-    );
+    updateNote(parseInt(nodeId, 10), { 
+      parent_id: parentId ? parseInt(parentId, 10) : null, 
+      position: parseFloat(sortKey) 
+    });
     onNodeMove?.(nodeId, parentId, sortKey);
   };
 
@@ -231,7 +232,7 @@ export const SidebarTree = ({
                animate={{ opacity: 1, x: 0 }}
                exit={{ opacity: 0, x: 10 }}
                onClick={() => setIsCollapsed(false)}
-               className="absolute -right-3 top-7 w-6 h-6 rounded-full bg-background border border-border shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground hover:scale-110 transition-all z-30"
+               className="absolute right-2 top-7 w-6 h-6 rounded-full bg-background border border-border shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground hover:scale-110 transition-all z-30"
              >
                <ChevronRight size={14} />
              </motion.button>
@@ -284,6 +285,20 @@ export const SidebarTree = ({
             双向链接
           </div>
         </button>
+        <button
+          type="button"
+          aria-label="open-ai-panel"
+          onClick={() => setActiveTab('ai')}
+          title="AI"
+          className={`relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
+            activeTab === 'ai' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent/50'
+          }`}
+        >
+          <Sparkles size={18} />
+          <div className="absolute left-full ml-2 px-2 py-1 bg-foreground text-background text-[10px] rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50">
+            AI
+          </div>
+        </button>
       </motion.div>
 
       {activeTab === 'search' && (
@@ -306,17 +321,29 @@ export const SidebarTree = ({
         </div>
       )}
 
+      {activeTab === 'ai' && (
+        <div className="flex-1 overflow-hidden">
+          <AIImportPanel
+            selectedNoteId={selectedNodeId ?? selectedId ?? null}
+            onSelectNoteId={(noteId) => {
+              setSelectedId(noteId);
+              onNodeSelect?.(noteId);
+            }}
+          />
+        </div>
+      )}
+
       {activeTab === 'tree' && (
         <>
           {/* Quick Actions */}
           <div className="px-3 pb-4 space-y-2">
-            <button 
+            <button
               onClick={onQuickSearchOpen}
               className="flex items-center h-11 w-full text-xs font-medium text-muted-foreground bg-accent/30 hover:bg-accent/60 border border-border/20 rounded-2xl transition-all duration-300 group overflow-hidden"
               title={isCollapsed ? "快速搜索 (⌘K)" : undefined}
             >
-              <motion.div 
-                animate={{ 
+              <motion.div
+                animate={{
                   width: isCollapsed ? 40 : 44,
                   marginLeft: isCollapsed ? 0 : 4,
                   marginRight: isCollapsed ? 0 : 4
@@ -396,28 +423,34 @@ export const SidebarTree = ({
                  </button>
                </div>
             )}
-            {!isCollapsed && tree.map((node) => (
-              <TreeNodeItem
-                key={node.id}
-                node={node}
-                level={0}
-                onMove={handleMove}
-                onSelect={handleSelect}
-                selectedId={selectedId}
-                editingId={editingId}
-                onContextMenu={(e, n) => {
-                  setContextMenu({ x: e.clientX, y: e.clientY, node: n });
-                }}
-                onRenameSubmit={(nodeId, newTitle) => {
-                  setEditingId(null);
-                  if (newTitle.trim() && newTitle !== node.title) {
-                    onNodeRename?.(nodeId, newTitle);
-                  }
-                }}
-              />
-            ))}
+            {!isCollapsed && (
+              <div className="flex-1" style={{ height: '100%', minHeight: 400 }}>
+                <div style={{ height: '100%' }}>
+                  {visibleNodes.map((node) => (
+                    <TreeNodeItem
+                      key={node.id}
+                      node={node}
+                      onMove={handleMove}
+                      onSelect={handleSelect}
+                      onToggle={handleToggle}
+                      selectedId={selectedId}
+                      editingId={editingId}
+                      onContextMenu={(e, n) => {
+                        setContextMenu({ x: e.clientX, y: e.clientY, node: n });
+                      }}
+                      onRenameSubmit={(nodeId, newTitle) => {
+                        setEditingId(null);
+                        if (newTitle.trim() && newTitle !== node.title) {
+                          onNodeRename?.(nodeId, newTitle);
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
             
-            {!isCollapsed && tree.length === 0 && (
+            {!isCollapsed && visibleNodes.length === 0 && (
               <div className="py-12 text-center space-y-3 opacity-40">
                 <div className="text-muted-foreground text-xs">暂无手账内容</div>
                 <button 
@@ -615,7 +648,6 @@ export const SidebarTree = ({
                 <button
                   onClick={() => {
                     const sortKey = Date.now().toString();
-                    setNodes(prev => prev.map(n => n.id === moveToModal.node.id ? { ...n, parentId: null, sortKey } : n));
                     onNodeMove?.(moveToModal.node.id, null, sortKey);
                     setMoveToModal(null);
                   }}

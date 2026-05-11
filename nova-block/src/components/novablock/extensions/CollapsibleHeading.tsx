@@ -52,7 +52,7 @@ export const CollapsibleHeading = BaseHeading.extend({
               .replace(/-+/g, '-')
               .replace(/^-|-$/g, '');
             
-            let baseId = `h-${safeSlug || Math.random().toString(36).substring(2, 7)}`;
+            const baseId = `h-${safeSlug || Math.random().toString(36).substring(2, 7)}`;
             let id = baseId;
             let counter = 1;
             
@@ -192,7 +192,7 @@ export const CollapsibleHeading = BaseHeading.extend({
                 .replace(/-+/g, '-')
                 .replace(/^-|-$/g, '');
               
-              let baseId = `h-${safeSlug || Math.random().toString(36).substring(2, 7)}`;
+              const baseId = `h-${safeSlug || Math.random().toString(36).substring(2, 7)}`;
               let id = baseId;
               let counter = 1;
               

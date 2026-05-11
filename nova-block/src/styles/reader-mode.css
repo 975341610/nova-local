@@ -1,0 +1,482 @@
+/**
+ * Nova Reader Mode Stylesheet
+ * 沉浸式阅读模式。切换到 body.reader-mode 后激活。
+ *
+ * 设计原则：
+ *  - 极窄阅读栏 (measure ≈ 72ch)
+ *  - 衬线标题、等宽代码
+ *  - 柔和米色背景 + 更慷慨的行距
+ *  - 隐藏侧栏、拖拽手柄、浮层 UI
+ */
+
+body.reader-mode {
+  background: var(--nv-reader-bg) !important;
+}
+
+body.reader-mode::before {
+  opacity: 0.25 !important;
+}
+
+/* 隐藏非阅读元素 */
+body.reader-mode .nv-hide-in-reader,
+body.reader-mode .nova-drop-cursor,
+body.reader-mode [data-reader-hide="true"] {
+  display: none !important;
+}
+
+/* 阅读容器 */
+.nv-reader-shell {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  padding: 64px 32px 160px;
+  background: var(--nv-reader-bg);
+  color: var(--nv-reader-fg);
+  transition: background-color var(--nv-motion-slow) var(--nv-ease-emphasized);
+}
+
+.nv-reader-column {
+  max-width: var(--nv-reader-measure);
+  width: 100%;
+  font-family: var(--nv-font-serif);
+  font-size: 1.08rem;
+  line-height: var(--nv-reader-leading);
+  color: var(--nv-reader-fg);
+}
+
+.nv-reader-column h1,
+.nv-reader-column h2,
+.nv-reader-column h3,
+.nv-reader-column h4 {
+  font-family: var(--nv-font-serif);
+  color: var(--nv-reader-fg);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.nv-reader-column h1 { font-size: 2.4rem; margin: 1em 0 0.4em; }
+.nv-reader-column h2 { font-size: 1.8rem; margin: 1.4em 0 0.5em; }
+.nv-reader-column h3 { font-size: 1.4rem; margin: 1.4em 0 0.4em; }
+
+.nv-reader-column p {
+  margin: 0 0 1.1em;
+  text-align: justify;
+  hyphens: auto;
+}
+
+.nv-reader-column blockquote {
+  margin: 1.4em 0;
+  padding: 0.2em 1.2em;
+  border-left: 3px solid var(--nv-color-accent);
+  color: var(--nv-color-fg-muted);
+  font-style: italic;
+}
+
+.nv-reader-column pre,
+.nv-reader-column code {
+  font-family: var(--nv-font-mono);
+  font-size: 0.92em;
+}
+
+.nv-reader-column img {
+  max-width: 100%;
+  border-radius: var(--nv-radius-md);
+  margin: 1.6em auto;
+  box-shadow: var(--nv-shadow-2);
+  display: block;
+}
+
+.nv-reader-column figure[data-ai-source-card] {
+  margin: 1.8em 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--nv-color-border, #d6ddd7) 78%, transparent);
+  border-radius: var(--nv-radius-md);
+  background: color-mix(in srgb, var(--nv-reader-bg, #f7faf5) 82%, var(--nv-reader-fg, #17231f) 18%);
+  box-shadow: var(--nv-shadow-2);
+}
+
+.nv-reader-column figure[data-ai-source-card] iframe {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 240px;
+  height: auto;
+  margin: 0;
+  border: 0;
+  background: #050505;
+}
+
+.nv-reader-column figure[data-ai-source-card] figcaption {
+  padding: 0.85rem 1rem 1rem;
+  color: var(--nv-reader-fg);
+  font-family: var(--nv-font-sans);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.nv-reader-column blockquote[data-ai-source-card] {
+  border: 1px solid color-mix(in srgb, var(--nv-color-border, #d6ddd7) 74%, transparent);
+  border-left: 4px solid color-mix(in srgb, var(--nv-color-accent, #0f766e) 80%, var(--nv-reader-fg, #17231f) 20%);
+  border-radius: var(--nv-radius-sm);
+  padding: 0.75rem 0.9rem;
+  background: color-mix(in srgb, var(--nv-reader-bg, #f7faf5) 84%, var(--nv-color-accent, #0f766e) 16%);
+  color: var(--nv-reader-fg);
+  font-family: var(--nv-font-sans);
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.nv-reader-column a {
+  color: color-mix(in srgb, var(--nv-color-fg, #17231f) 34%, var(--nv-color-accent, #0f766e) 66%);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  border-radius: 5px;
+  padding: 0 3px;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+:root[data-theme="dark"] .nv-reader-column a,
+.dark .nv-reader-column a {
+  color: color-mix(in srgb, var(--nv-color-fg, #f4f7f2) 28%, #8fe3d0 72%);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* 阅读模式浮动工具条
+   v0.19.5 · 默认右侧中部,垂直布局,可拖动,位置持久化。
+   - 不再占据底部空间,避免遮挡正文 */
+.nv-reader-toolbar {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+  padding: 6px 4px;
+  z-index: 120;
+  border-radius: 18px;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.55;
+  transition: opacity 260ms cubic-bezier(0.2, 0, 0, 1);
+  user-select: none;
+  box-shadow: var(--nv-shadow-2);
+}
+
+.nv-reader-toolbar:hover,
+.nv-reader-toolbar:focus-within {
+  opacity: 1;
+}
+
+.nv-reader-toolbar-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 16px;
+  color: var(--nv-color-fg-subtle);
+  cursor: grab;
+  touch-action: none;
+  margin-bottom: 2px;
+}
+.nv-reader-toolbar-grip:active {
+  cursor: grabbing;
+}
+
+.nv-reader-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  min-width: 26px;
+  width: 26px;
+  height: 26px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--nv-color-fg-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--nv-radius-full);
+  cursor: pointer;
+  transition: background-color 160ms cubic-bezier(0.2, 0, 0, 1),
+              color 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.nv-reader-toolbar button:hover {
+  background: var(--nv-color-accent-muted);
+  color: var(--nv-color-accent-fg);
+}
+
+.nv-reader-toolbar-divider {
+  width: 16px;
+  height: 1px;
+  background: var(--nv-color-border-strong);
+  opacity: 0.5;
+  margin: 2px 0;
+}
+
+.nv-reader-toolbar-pct {
+  font-family: var(--nv-font-mono);
+  font-size: 10px;
+  color: var(--nv-color-fg-subtle);
+  min-width: 26px;
+  text-align: center;
+  padding: 3px 0;
+  letter-spacing: 0.02em;
+}
+
+/* Markdown rendered container (reader-html) */
+.nv-reader-html ul,
+.nv-reader-html ol {
+  padding-left: 1.4em;
+  margin: 1em 0;
+}
+
+/* v0.21.4 · Tailwind preflight 会把 ul/ol 默认的 list-style 清掉；这里显式加回来。
+   task list 单独覆盖在下面。 */
+.nv-reader-html ul:not([data-type]) {
+  list-style-type: disc;
+}
+.nv-reader-html ul:not([data-type]) ul {
+  list-style-type: circle;
+}
+.nv-reader-html ul:not([data-type]) ul ul {
+  list-style-type: square;
+}
+.nv-reader-html ol {
+  list-style-type: decimal;
+}
+.nv-reader-html ol ol {
+  list-style-type: lower-alpha;
+}
+.nv-reader-html ol ol ol {
+  list-style-type: lower-roman;
+}
+/* 用户可通过给 ul/ol 加 data-list-style 自定义 marker */
+.nv-reader-html ul[data-list-style="disc"] { list-style-type: disc; }
+.nv-reader-html ul[data-list-style="circle"] { list-style-type: circle; }
+.nv-reader-html ul[data-list-style="square"] { list-style-type: square; }
+
+/* dash/arrow/star/flower/check：自定义 marker
+ * <li> 内部是块级 <p>，::before 会被推到独占一行。
+ * 绝对定位 marker 到 li 自身的左内边距区，避免和文字重叠。 */
+.nv-reader-html ul[data-list-style="dash"],
+.nv-reader-html ul[data-list-style="arrow"],
+.nv-reader-html ul[data-list-style="star"],
+.nv-reader-html ul[data-list-style="flower"],
+.nv-reader-html ul[data-list-style="check"] {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.nv-reader-html ul[data-list-style="dash"] > li,
+.nv-reader-html ul[data-list-style="arrow"] > li,
+.nv-reader-html ul[data-list-style="star"] > li,
+.nv-reader-html ul[data-list-style="flower"] > li,
+.nv-reader-html ul[data-list-style="check"] > li {
+  position: relative;
+  padding-left: 1.6em;
+  list-style: none;
+}
+.nv-reader-html ul[data-list-style="dash"] > li::before,
+.nv-reader-html ul[data-list-style="arrow"] > li::before,
+.nv-reader-html ul[data-list-style="star"] > li::before,
+.nv-reader-html ul[data-list-style="flower"] > li::before,
+.nv-reader-html ul[data-list-style="check"] > li::before {
+  position: absolute;
+  left: 0;
+  top: 0;
+  line-height: inherit;
+  width: 1.4em;
+  text-align: left;
+  pointer-events: none;
+}
+.nv-reader-html ul[data-list-style="dash"] > li::before { content: '—'; color: var(--nv-color-accent); }
+.nv-reader-html ul[data-list-style="arrow"] > li::before { content: '→'; color: var(--nv-color-accent); }
+.nv-reader-html ul[data-list-style="star"] > li::before { content: '★'; color: var(--nv-color-accent); }
+.nv-reader-html ul[data-list-style="flower"] > li::before { content: '❀'; color: var(--nv-color-accent); }
+.nv-reader-html ul[data-list-style="check"] > li::before { content: '✓'; color: var(--nv-color-success, #16a34a); }
+.nv-reader-html ol[data-list-style="decimal"] { list-style-type: decimal; }
+.nv-reader-html ol[data-list-style="lower-alpha"] { list-style-type: lower-alpha; }
+.nv-reader-html ol[data-list-style="upper-alpha"] { list-style-type: upper-alpha; }
+.nv-reader-html ol[data-list-style="lower-roman"] { list-style-type: lower-roman; }
+.nv-reader-html ol[data-list-style="upper-roman"] { list-style-type: upper-roman; }
+.nv-reader-html ol[data-list-style="cjk-han"] { list-style-type: cjk-ideographic; }
+
+.nv-reader-html li {
+  margin-bottom: 0.4em;
+}
+
+/* v0.19.4 · 任务列表行距优化：task list 条目不再带段落的 1.1em margin */
+.nv-reader-html ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.2em;
+  margin: 0.8em 0;
+}
+.nv-reader-html ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55em;
+  margin: 0.25em 0;
+  padding: 0;
+}
+.nv-reader-html ul[data-type="taskList"] li > label {
+  flex: 0 0 auto;
+  margin-top: 0.25em;
+  user-select: none;
+}
+.nv-reader-html ul[data-type="taskList"] li > label input[type="checkbox"] {
+  accent-color: var(--nv-color-accent);
+  width: 14px;
+  height: 14px;
+}
+.nv-reader-html ul[data-type="taskList"] li > div,
+.nv-reader-html ul[data-type="taskList"] li > p {
+  flex: 1 1 auto;
+  margin: 0;
+}
+.nv-reader-html ul[data-type="taskList"] li[data-checked="true"] > div,
+.nv-reader-html ul[data-type="taskList"] li[data-checked="true"] > p {
+  color: var(--nv-color-fg-subtle);
+  text-decoration: line-through;
+  text-decoration-color: var(--nv-color-fg-subtle);
+}
+
+/* v0.19.4 · Reader 内嵌小组件静态化展示 */
+.nv-reader-html [data-reader-widget] {
+  margin: 1.2em 0;
+  padding: 14px 16px;
+  background: var(--nv-color-bg-subtle);
+  border: 1px solid var(--nv-color-border);
+  border-radius: var(--nv-radius-md);
+  font-size: 0.95em;
+}
+.nv-reader-html [data-reader-widget] .nv-rw-title {
+  font-weight: 600;
+  font-size: 0.8em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--nv-color-fg-muted);
+  margin-bottom: 0.5em;
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+}
+.nv-reader-html [data-reader-widget] ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.nv-reader-html [data-reader-widget] li {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0.2em 0;
+}
+.nv-reader-html [data-reader-widget] li.done {
+  color: var(--nv-color-fg-subtle);
+  text-decoration: line-through;
+}
+.nv-reader-html [data-reader-widget] .nv-rw-kanban {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.nv-reader-html [data-reader-widget] .nv-rw-kanban-col {
+  background: var(--nv-color-bg);
+  border: 1px solid var(--nv-color-border);
+  border-radius: var(--nv-radius-sm);
+  padding: 8px 10px;
+}
+.nv-reader-html [data-reader-widget] .nv-rw-kanban-col h4 {
+  margin: 0 0 6px;
+  font-size: 0.85em;
+  color: var(--nv-color-fg-muted);
+}
+.nv-reader-html [data-reader-widget] .nv-rw-habit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+.nv-reader-html [data-reader-widget] .nv-rw-habit-item {
+  font-size: 0.9em;
+  display: flex;
+  justify-content: space-between;
+  background: var(--nv-color-bg);
+  padding: 4px 8px;
+  border-radius: var(--nv-radius-sm);
+}
+.nv-reader-html [data-reader-widget] .nv-rw-timeline {
+  border-left: 2px solid var(--nv-color-accent);
+  padding-left: 12px;
+  margin-left: 4px;
+}
+.nv-reader-html [data-reader-widget] .nv-rw-timeline-row {
+  margin: 0.3em 0;
+}
+.nv-reader-html [data-reader-widget] .nv-rw-timeline-date {
+  font-family: var(--nv-font-mono);
+  font-size: 0.85em;
+  color: var(--nv-color-accent);
+  margin-right: 0.5em;
+}
+
+/* v0.19.5 · 图片轮播静态网格 */
+.nv-reader-html [data-reader-widget] .nv-rw-slider {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+.nv-reader-html [data-reader-widget] .nv-rw-slider-tile {
+  background: var(--nv-color-bg);
+  border: 1px solid var(--nv-color-border);
+  border-radius: var(--nv-radius-sm);
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.nv-reader-html [data-reader-widget] .nv-rw-slider-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* v0.19.5 · Reader 中的原生视频/音频 */
+.nv-reader-html video {
+  max-width: 100%;
+  width: 100%;
+  border-radius: var(--nv-radius-md);
+  margin: 1.6em auto;
+  box-shadow: var(--nv-shadow-2);
+  display: block;
+  background: #000;
+}
+.nv-reader-html audio {
+  width: 100%;
+  margin: 1em 0;
+}
+
+.nv-reader-html table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.4em 0;
+  font-size: 0.95em;
+}
+
+.nv-reader-html th,
+.nv-reader-html td {
+  padding: 8px 12px;
+  border: 1px solid var(--nv-color-border);
+  text-align: left;
+}
+
+.nv-reader-html th {
+  background: var(--nv-color-bg-subtle);
+  font-weight: 600;
+}

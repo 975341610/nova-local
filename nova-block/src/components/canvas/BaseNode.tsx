@@ -9,24 +9,21 @@ interface BaseNodeProps extends NodeProps {
 
 export function BaseNode({ id, selected, children, onInfoClick }: BaseNodeProps) {
   const handleVisibilityClass = selected
-    ? '!opacity-100 !pointer-events-auto'
-    : '!opacity-0 !pointer-events-none group-hover:!opacity-100 group-hover:!pointer-events-auto';
+    ? '!flex !opacity-100 !pointer-events-auto'
+    : '!hidden group-hover:!flex group-hover:!opacity-100 group-hover:!pointer-events-auto';
 
   return (
     <div className={`group relative h-full w-full ${selected ? 'node-selected' : ''}`}>
-      <NodeResizeControl 
-        minWidth={160} 
-        minHeight={100}
-        // 使用 Position.BottomRight，这是 xyflow 导出的 enum 成员之一
-        position={'bottom-right' as any}
-        className="!border-none !bg-transparent !p-2 !w-6 !h-6 !flex !items-end !justify-end -bottom-2 -right-2 z-50 cursor-se-resize"
-      >
-        <div
-          className={`h-3 w-3 rounded-full border-2 border-[#d7a685] bg-white transition-opacity ${
-            selected ? 'opacity-100' : 'opacity-0'
-          }`}
-        />
-      </NodeResizeControl>
+      {selected ? (
+        <NodeResizeControl
+          minWidth={160}
+          minHeight={100}
+          position={'bottom-right'}
+          className="!border-none !bg-transparent !p-1.5 !w-5 !h-5 !flex !items-end !justify-end -bottom-1 -right-1 z-30 cursor-se-resize"
+        >
+          <div className="h-2.5 w-2.5 rounded-full border-2 border-[#d7a685] bg-white transition-opacity opacity-100" />
+        </NodeResizeControl>
+      ) : null}
 
       {/* Handles - 每个方向同时提供 source/target，hover/selected 才可见且可交互 */}
       {(
@@ -42,7 +39,7 @@ export function BaseNode({ id, selected, children, onInfoClick }: BaseNodeProps)
             id={`${key}-source`}
             type="source"
             position={pos}
-            className={`!w-5 !h-5 !bg-transparent !border-none !flex !items-center !justify-center !shadow-none !transition-opacity ${handleVisibilityClass} z-50`}
+            className={`!w-5 !h-5 !bg-transparent !border-none !flex !items-center !justify-center !shadow-none !transition-opacity ${handleVisibilityClass} z-30`}
           >
             <div className="w-2.5 h-2.5 rounded-full bg-[#d7a685] border-2 border-white shadow-sm pointer-events-none" />
           </Handle>
@@ -50,7 +47,7 @@ export function BaseNode({ id, selected, children, onInfoClick }: BaseNodeProps)
             id={`${key}-target`}
             type="target"
             position={pos}
-            className={`!w-5 !h-5 !bg-transparent !border-none !flex !items-center !justify-center !shadow-none !transition-opacity ${handleVisibilityClass} z-40`}
+            className={`!w-5 !h-5 !bg-transparent !border-none !flex !items-center !justify-center !shadow-none !transition-opacity ${handleVisibilityClass} z-20`}
           >
             <div className="w-2.5 h-2.5 rounded-full bg-[#d7a685] border-2 border-white shadow-sm pointer-events-none" />
           </Handle>
@@ -58,7 +55,7 @@ export function BaseNode({ id, selected, children, onInfoClick }: BaseNodeProps)
       ))}
 
       {/* Info Icon */}
-      {onInfoClick && (
+      {onInfoClick ? (
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -70,7 +67,7 @@ export function BaseNode({ id, selected, children, onInfoClick }: BaseNodeProps)
         >
           <Info size={14} />
         </button>
-      )}
+      ) : null}
 
       {children}
     </div>

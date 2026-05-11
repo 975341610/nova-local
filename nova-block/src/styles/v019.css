@@ -1,0 +1,955 @@
+/**
+ * Nova v0.19 "观照" — feature styles
+ *
+ * 聚合 v0.19 版本新增/改写的视觉层：
+ *   - D2 Callout 墨色纸片 · 朱砂印章
+ *   - D3 Timeline Block
+ *   - D5 Shiki code block 优化样式
+ *   - B1 Focus Paragraph 强化
+ *   - B2 Ambient Sound 面板
+ *   - B3 Cadence meter
+ *   - B4 Pomodoro 环
+ *   - B5 Page-turn 切换
+ *   - B6 Margin Notes 卷边注
+ *   - D6 Task Mirror 聚合面板
+ *   - A2 Smart Backlinks 侧盘区块
+ *   - A4 Daily Recap
+ *   - A5 Concept Orbit 配色
+ *   - C1 Vault Export 进度
+ *   - D4 Freehand 画笔覆盖层
+ */
+
+/* ============================================================
+ * D2 · Callout 重设计：墨色纸片 + 朱砂印章
+ * 支持 data-tone="note|info|warn|quote|tip"
+ * ============================================================ */
+.callout-block {
+  position: relative;
+  margin: 1.4em 0;
+  padding: 14px 18px 14px 52px;
+  border: 1px solid var(--nv-color-border);
+  border-left: 3px solid var(--nv-color-accent);
+  border-radius: var(--nv-radius-md);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--nv-color-accent-muted) 36%, var(--nv-color-surface-1))
+    0%,
+    var(--nv-color-surface-1) 100%
+  );
+  box-shadow: var(--nv-shadow-2),
+              inset 0 1px 0 hsla(0 0% 100% / 0.35);
+  overflow: hidden;
+}
+
+.callout-block::before {
+  /* 纸张纹理 */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 22px,
+      hsla(222 15% 40% / 0.04) 22px 23px
+    );
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.callout-block .callout-icon {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--nv-radius-sm);
+  background: var(--nv-color-accent);
+  color: hsla(0 0% 100% / 0.94);
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 2px 4px -1px rgba(186, 54, 32, 0.35),
+              inset 0 -1px 0 rgba(0, 0, 0, 0.15);
+  /* 朱砂印章感：轻微旋转 + 边缘不规则 */
+  transform: rotate(-3deg);
+  letter-spacing: -0.02em;
+}
+
+.callout-block .callout-content {
+  position: relative;
+  z-index: 1;
+}
+.callout-block .callout-content > *:first-child { margin-top: 0; }
+.callout-block .callout-content > *:last-child { margin-bottom: 0; }
+
+/* 不同 tone */
+.callout-block[data-tone="info"],
+.callout-block[data-callout-type="info"] {
+  border-left-color: var(--nv-color-indigo);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--nv-color-indigo-muted) 40%, var(--nv-color-surface-1))
+    0%,
+    var(--nv-color-surface-1) 100%
+  );
+}
+.callout-block[data-tone="info"] .callout-icon,
+.callout-block[data-callout-type="info"] .callout-icon {
+  background: var(--nv-color-indigo);
+}
+
+.callout-block[data-tone="warn"],
+.callout-block[data-callout-type="warn"] {
+  border-left-color: var(--nv-color-warning);
+  background: linear-gradient(
+    180deg,
+    hsla(32 88% 44% / 0.14) 0%,
+    var(--nv-color-surface-1) 100%
+  );
+}
+.callout-block[data-tone="warn"] .callout-icon,
+.callout-block[data-callout-type="warn"] .callout-icon {
+  background: var(--nv-color-warning);
+}
+
+.callout-block[data-tone="quote"],
+.callout-block[data-callout-type="quote"] {
+  border-left-color: var(--nv-color-fg-subtle);
+  font-family: var(--nv-font-serif);
+  font-style: italic;
+  background: linear-gradient(
+    180deg,
+    hsla(38 20% 88% / 0.4) 0%,
+    var(--nv-color-surface-1) 100%
+  );
+}
+.callout-block[data-tone="quote"] .callout-icon,
+.callout-block[data-callout-type="quote"] .callout-icon {
+  background: var(--nv-color-fg-muted);
+}
+
+/* ---- Dark-mode 适配（覆盖硬编码浅色） ----
+ * Light 模式下的几处 callout 背景使用了米色/琥珀色硬编码值，
+ * 在深色模式下会出现"亮底+亮字"难以阅读的问题。在 dark theme 下
+ * 统一改为基于 surface token 的半透明色，让文字保持可读。
+ */
+html[data-theme="dark"] .callout-block,
+.dark .callout-block {
+  box-shadow: var(--nv-shadow-2),
+              inset 0 1px 0 hsla(0 0% 100% / 0.04);
+  color: var(--nv-color-fg);
+}
+html[data-theme="dark"] .callout-block::before,
+.dark .callout-block::before {
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent 0 22px,
+    hsla(0 0% 100% / 0.04) 22px 23px
+  );
+  opacity: 0.5;
+}
+html[data-theme="dark"] .callout-block[data-tone="quote"],
+html[data-theme="dark"] .callout-block[data-callout-type="quote"],
+.dark .callout-block[data-tone="quote"],
+.dark .callout-block[data-callout-type="quote"] {
+  background: linear-gradient(
+    180deg,
+    hsla(222 20% 26% / 0.55) 0%,
+    var(--nv-color-surface-1) 100%
+  );
+  color: var(--nv-color-fg-muted);
+}
+html[data-theme="dark"] .callout-block[data-tone="warn"],
+html[data-theme="dark"] .callout-block[data-callout-type="warn"],
+.dark .callout-block[data-tone="warn"],
+.dark .callout-block[data-callout-type="warn"] {
+  background: linear-gradient(
+    180deg,
+    hsla(32 75% 48% / 0.22) 0%,
+    var(--nv-color-surface-1) 100%
+  );
+}
+/* 正文（callout-content）确保使用语义色 */
+.callout-block .callout-content {
+  color: var(--nv-color-fg);
+}
+.callout-block[data-tone="quote"] .callout-content,
+.callout-block[data-callout-type="quote"] .callout-content {
+  color: var(--nv-color-fg-muted);
+}
+
+/* ============================================================
+ * D3 · Timeline Block
+ * ============================================================ */
+.timeline-block {
+  margin: 1.6em 0;
+  padding: 18px 20px;
+  border: 1px solid var(--nv-color-border);
+  border-radius: var(--nv-radius-lg);
+  background: var(--nv-color-surface-1);
+}
+.timeline-block[contenteditable="false"] > .timeline-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--nv-color-fg);
+  letter-spacing: 0.02em;
+  margin-bottom: 14px;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+.timeline-rail {
+  position: relative;
+  padding-left: 22px;
+}
+.timeline-rail::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: linear-gradient(
+    180deg,
+    var(--nv-color-accent) 0%,
+    var(--nv-color-border-strong) 100%
+  );
+  border-radius: 2px;
+}
+.timeline-item {
+  position: relative;
+  padding: 6px 0 6px 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.timeline-item::before {
+  content: "";
+  position: absolute;
+  left: -19px;
+  top: 13px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--nv-color-surface-raised);
+  border: 2px solid var(--nv-color-accent);
+  box-shadow: 0 0 0 3px var(--nv-color-bg);
+}
+.timeline-item .timeline-date {
+  display: inline-block;
+  font-family: var(--nv-font-mono);
+  font-size: 11px;
+  color: var(--nv-color-accent-fg);
+  background: var(--nv-color-accent-muted);
+  padding: 1px 6px;
+  border-radius: var(--nv-radius-sm);
+  margin-right: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 160ms ease, color 160ms ease;
+}
+.timeline-item .timeline-date:hover {
+  background: var(--nv-color-accent);
+  color: #fff;
+}
+.timeline-item .timeline-date-input {
+  display: inline-block;
+  font-family: var(--nv-font-mono);
+  font-size: 11px;
+  color: var(--nv-color-accent-fg);
+  background: var(--nv-color-surface-raised);
+  padding: 0 4px;
+  border: 1px solid var(--nv-color-accent);
+  border-radius: var(--nv-radius-sm);
+  margin-right: 6px;
+  outline: none;
+  min-width: 130px;
+}
+.timeline-item .timeline-text {
+  color: var(--nv-color-fg);
+}
+
+/* ============================================================
+ * D5 · Shiki / 代码块优化
+ * ============================================================ */
+.nv-shiki-wrap {
+  position: relative;
+  margin: 1.4em 0;
+  border: 1px solid var(--nv-color-border);
+  border-radius: var(--nv-radius-md);
+  background: var(--nv-color-surface-sunken);
+  overflow: hidden;
+}
+.nv-shiki-wrap pre {
+  margin: 0;
+  padding: 16px;
+  overflow-x: auto;
+  font-family: var(--nv-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.nv-shiki-wrap pre code { font-family: inherit; background: transparent; }
+.nv-shiki-wrap .nv-shiki-lang {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-family: var(--nv-font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  color: var(--nv-color-fg-subtle);
+  background: var(--nv-color-surface-2);
+  border: 1px solid var(--nv-color-border);
+  border-radius: var(--nv-radius-sm);
+  pointer-events: none;
+}
+
+/* D5 · 在亮色主题下替换深色 GitHub Dark → GitHub Light 风格 */
+:root:not([data-theme="dark"]) .novablock-editor pre,
+:root:not([data-theme="dark"]) .tiptap-notion pre {
+  background: hsl(38 28% 97%) !important;
+  color: hsl(222 20% 18%) !important;
+  border: 1px solid var(--nv-color-border) !important;
+}
+:root:not([data-theme="dark"]) .hljs-comment,
+:root:not([data-theme="dark"]) .hljs-quote {
+  color: hsl(222 12% 48%);
+}
+:root:not([data-theme="dark"]) .hljs-doctag,
+:root:not([data-theme="dark"]) .hljs-keyword,
+:root:not([data-theme="dark"]) .hljs-formula {
+  color: hsl(10 68% 46%);
+}
+:root:not([data-theme="dark"]) .hljs-section,
+:root:not([data-theme="dark"]) .hljs-name,
+:root:not([data-theme="dark"]) .hljs-selector-tag,
+:root:not([data-theme="dark"]) .hljs-deletion,
+:root:not([data-theme="dark"]) .hljs-subst {
+  color: hsl(152 48% 34%);
+}
+:root:not([data-theme="dark"]) .hljs-string,
+:root:not([data-theme="dark"]) .hljs-regexp,
+:root:not([data-theme="dark"]) .hljs-addition,
+:root:not([data-theme="dark"]) .hljs-attribute,
+:root:not([data-theme="dark"]) .hljs-meta-string {
+  color: hsl(222 60% 40%);
+}
+:root:not([data-theme="dark"]) .hljs-literal,
+:root:not([data-theme="dark"]) .hljs-number {
+  color: hsl(32 82% 42%);
+}
+:root:not([data-theme="dark"]) .hljs-built_in,
+:root:not([data-theme="dark"]) .hljs-class .hljs-title,
+:root:not([data-theme="dark"]) .hljs-title {
+  color: hsl(280 50% 44%);
+}
+:root:not([data-theme="dark"]) .hljs-attr,
+:root:not([data-theme="dark"]) .hljs-variable,
+:root:not([data-theme="dark"]) .hljs-template-variable,
+:root:not([data-theme="dark"]) .hljs-type {
+  color: hsl(32 80% 40%);
+}
+
+/* 青竹主题 & 墨夜主题下阴影化底色 */
+html[data-nv-theme="bamboo"] .novablock-editor pre {
+  background: hsl(160 18% 94%) !important;
+  border-color: hsl(160 14% 80%) !important;
+}
+html[data-nv-theme="ink-midnight"] .novablock-editor pre {
+  background: hsl(222 28% 12%) !important;
+}
+
+/* ============================================================
+ * B1 · Focus Paragraph 强化（仅在 typewriter 开启时生效）
+ * 让聚焦段的左边缘出现一条朱砂细线
+ * ============================================================ */
+body[data-typewriter="true"] .ProseMirror > .has-focus,
+body[data-typewriter="true"] .ProseMirror > .ProseMirror-selectednode {
+  position: relative;
+}
+body[data-typewriter="true"] .ProseMirror > .has-focus::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 0.3em;
+  bottom: 0.3em;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--nv-color-accent);
+  box-shadow: 0 0 8px var(--nv-color-accent);
+  animation: nv-focus-pulse 2.2s ease-in-out infinite;
+}
+@keyframes nv-focus-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+/* ============================================================
+ * B2 · Ambient Sound dock
+ * ============================================================ */
+.nv-ambient-dock {
+  position: fixed;
+  left: 26px;
+  bottom: 26px;
+  z-index: 70;
+  padding: 10px 12px;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  border-radius: var(--nv-radius-full);
+}
+.nv-ambient-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--nv-color-border);
+  background: var(--nv-color-surface-1);
+  color: var(--nv-color-fg-muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  transition: background-color 160ms var(--nv-ease-standard),
+              transform 160ms var(--nv-ease-standard);
+}
+.nv-ambient-btn:hover { transform: scale(1.08); background: var(--nv-color-surface-2); }
+.nv-ambient-btn[data-active="true"] {
+  background: var(--nv-color-accent);
+  color: #fff;
+  border-color: var(--nv-color-accent);
+  box-shadow: 0 0 0 3px var(--nv-color-accent-muted);
+}
+.nv-ambient-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 70px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--nv-color-border-strong);
+  outline: none;
+  cursor: pointer;
+}
+.nv-ambient-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--nv-color-accent);
+  cursor: pointer;
+}
+
+/* ============================================================
+ * B3 · Cadence meter (bottom WPM bar)
+ * ============================================================ */
+.nv-cadence {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 4px;
+  z-index: 30;
+  height: 2px;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.nv-cadence-bar {
+  width: 3px;
+  height: 100%;
+  border-radius: 1px;
+  background: var(--nv-color-accent);
+  opacity: 0.35;
+  transition: height 120ms var(--nv-ease-standard),
+              opacity 180ms var(--nv-ease-standard);
+}
+
+/* ============================================================
+ * B4 · Pomodoro (ring indicator on dock)
+ * ============================================================ */
+.nv-pomodoro-ring {
+  position: fixed;
+  right: 26px;
+  bottom: 22px;
+  z-index: 70;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--nv-color-surface-1);
+  border: 1px solid var(--nv-color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--nv-shadow-3);
+  cursor: pointer;
+}
+.nv-pomodoro-ring svg { position: absolute; inset: 0; }
+.nv-pomodoro-ring .nv-pomodoro-text {
+  font-family: var(--nv-font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--nv-color-fg);
+  z-index: 1;
+}
+.nv-pomodoro-ring[data-phase="break"] .nv-pomodoro-text {
+  color: var(--nv-color-success);
+}
+
+/* ============================================================
+ * B5 · Page-turn note switch overlay
+ * ============================================================ */
+.nv-page-turn-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  pointer-events: none;
+  perspective: 1800px;
+}
+.nv-page-turn-paper {
+  position: absolute;
+  inset: 0;
+  background: var(--nv-color-bg);
+  transform-origin: left center;
+  box-shadow: 0 24px 60px -16px rgba(60, 35, 25, 0.35);
+}
+
+/* ============================================================
+ * B6 · Margin notes
+ * ============================================================ */
+.nv-margin-note {
+  position: absolute;
+  right: -210px;
+  width: 190px;
+  padding: 10px 12px;
+  font-family: var(--nv-font-sans);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--nv-color-fg-muted);
+  background: hsla(38 40% 99% / 0.9);
+  border-left: 2px solid var(--nv-color-accent);
+  border-radius: var(--nv-radius-sm);
+  box-shadow: var(--nv-shadow-2);
+}
+
+/* ============================================================
+ * D6 · Task Mirror panel
+ * ============================================================ */
+.nv-taskmirror-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: var(--nv-radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 160ms var(--nv-ease-standard),
+              border-color 160ms var(--nv-ease-standard);
+}
+.nv-taskmirror-item:hover {
+  background: var(--nv-color-accent-muted);
+  border-color: var(--nv-color-accent);
+}
+.nv-taskmirror-checkbox {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid var(--nv-color-border-strong);
+  margin-top: 2px;
+}
+.nv-taskmirror-item[data-done="true"] .nv-taskmirror-checkbox {
+  background: var(--nv-color-accent);
+  border-color: var(--nv-color-accent);
+}
+.nv-taskmirror-item[data-done="true"] .nv-taskmirror-label {
+  text-decoration: line-through;
+  color: var(--nv-color-fg-subtle);
+}
+.nv-taskmirror-label { font-size: 13px; color: var(--nv-color-fg); }
+.nv-taskmirror-src {
+  font-size: 11px;
+  color: var(--nv-color-fg-subtle);
+  margin-top: 2px;
+}
+
+/* ============================================================
+ * A2 · Backlinks in inspector
+ * ============================================================ */
+.nv-backlink-card {
+  padding: 10px 12px;
+  border-radius: var(--nv-radius-md);
+  border: 1px solid var(--nv-color-border);
+  background: var(--nv-color-surface-1);
+  cursor: pointer;
+  transition: background-color 160ms var(--nv-ease-standard),
+              border-color 160ms var(--nv-ease-standard);
+}
+.nv-backlink-card:hover {
+  background: var(--nv-color-accent-muted);
+  border-color: var(--nv-color-accent);
+}
+.nv-backlink-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--nv-color-fg);
+  margin-bottom: 3px;
+}
+.nv-backlink-snippet {
+  font-size: 11.5px;
+  color: var(--nv-color-fg-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.nv-backlink-score {
+  display: inline-block;
+  font-family: var(--nv-font-mono);
+  font-size: 10px;
+  color: var(--nv-color-accent-fg);
+  background: var(--nv-color-accent-muted);
+  padding: 1px 5px;
+  border-radius: var(--nv-radius-sm);
+  margin-top: 6px;
+}
+
+/* ============================================================
+ * A4 · Daily Recap
+ * ============================================================ */
+.nv-recap-card {
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  border-radius: var(--nv-radius-md);
+  border-left: 3px solid var(--nv-color-indigo);
+  background: var(--nv-color-surface-1);
+}
+.nv-recap-range {
+  font-family: var(--nv-font-mono);
+  font-size: 11px;
+  color: var(--nv-color-indigo-fg);
+  margin-bottom: 4px;
+}
+.nv-recap-body {
+  font-size: 13px;
+  color: var(--nv-color-fg);
+  line-height: 1.6;
+}
+
+/* ============================================================
+ * A5 · Concept Orbit cluster badge
+ * ============================================================ */
+.nv-cluster-legend {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  padding: 8px 10px;
+  font-size: 11px;
+  border-radius: var(--nv-radius-md);
+  background: var(--nv-glass-bg);
+  border: 1px solid var(--nv-glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  z-index: 5;
+}
+.nv-cluster-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--nv-color-fg-muted);
+}
+.nv-cluster-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* ============================================================
+ * C1 · Vault Export progress
+ * ============================================================ */
+.nv-export-progress {
+  font-family: var(--nv-font-mono);
+  font-size: 11.5px;
+  color: var(--nv-color-fg-muted);
+  margin-top: 6px;
+  white-space: pre-line;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* ============================================================
+ * D4 · Freehand canvas overlay (stub)
+ * ============================================================ */
+.nv-freehand-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  z-index: 5;
+}
+.nv-freehand-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--nv-radius-full);
+  z-index: 6;
+}
+
+/* ============================================================
+ * v0.19 · Panel shell (TaskMirror / AskMyNotes / DailyRecap / VaultExport)
+ * ============================================================ */
+.nv-panel-overlay {
+  position: fixed; inset: 0;
+  z-index: 70;
+  background: rgba(0,0,0,0.28);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px 20px;
+}
+.nv-panel-shell {
+  width: min(860px, 94vw);
+  max-height: min(720px, 92vh);
+  background: var(--nv-color-surface-1);
+  border: 1px solid var(--nv-color-border);
+  border-radius: 18px;
+  box-shadow: 0 38px 80px rgba(0,0,0,0.32);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.nv-panel-shell-sm { width: min(480px, 92vw); max-height: 520px; }
+.nv-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--nv-color-border);
+  background: linear-gradient(180deg, var(--nv-color-surface-2), transparent);
+}
+.nv-panel-close {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--nv-color-border);
+  background: var(--nv-color-surface-2);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--nv-color-fg-muted);
+  transition: all 160ms ease;
+}
+.nv-panel-close:hover {
+  background: var(--nv-color-accent-muted);
+  color: var(--nv-color-accent-fg);
+  border-color: var(--nv-color-accent);
+}
+.nv-panel-toolbar {
+  padding: 10px 16px;
+  display: flex; gap: 10px; align-items: center;
+  border-bottom: 1px solid var(--nv-color-border);
+  background: var(--nv-color-surface-2);
+}
+.nv-panel-search {
+  flex: 1;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 9px;
+  border: 1px solid var(--nv-color-border);
+  background: var(--nv-color-surface-1);
+  color: var(--nv-color-fg-subtle);
+}
+.nv-panel-search input {
+  flex: 1; border: 0; outline: 0; background: transparent;
+  color: var(--nv-color-fg); font-size: 12.5px;
+}
+.nv-panel-segmented {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px; border-radius: 9px;
+  background: var(--nv-color-surface-1);
+  border: 1px solid var(--nv-color-border);
+}
+.nv-panel-segmented button {
+  border: 0; background: transparent; cursor: pointer;
+  padding: 3px 10px; font-size: 11.5px; border-radius: 6px;
+  color: var(--nv-color-fg-muted);
+}
+.nv-panel-segmented button[data-active="true"] {
+  background: var(--nv-color-accent);
+  color: var(--nv-color-accent-fg);
+}
+.nv-panel-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px 14px; border-radius: 9px;
+  border: 1px solid var(--nv-color-border);
+  background: var(--nv-color-surface-1);
+  color: var(--nv-color-fg); font-size: 12px; cursor: pointer;
+  text-decoration: none;
+  transition: all 160ms ease;
+}
+.nv-panel-pill:hover:not(:disabled) {
+  background: var(--nv-color-accent-muted);
+  border-color: var(--nv-color-accent);
+  color: var(--nv-color-accent-fg);
+}
+.nv-panel-pill:disabled { opacity: 0.45; cursor: not-allowed; }
+.nv-panel-pill-primary {
+  background: var(--nv-color-accent);
+  color: var(--nv-color-accent-fg);
+  border-color: var(--nv-color-accent);
+}
+.nv-panel-pill-primary:hover { filter: brightness(1.06); }
+.nv-panel-body {
+  flex: 1; overflow-y: auto; padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.nv-panel-empty {
+  text-align: center;
+  color: var(--nv-color-fg-subtle);
+  font-size: 13px;
+  padding: 40px 0;
+}
+.nv-panel-empty code {
+  font-family: var(--nv-font-mono);
+  background: var(--nv-color-surface-2);
+  padding: 1px 6px; border-radius: 4px;
+}
+
+/* Task Mirror group */
+.nv-taskmirror-group {
+  border: 1px solid var(--nv-color-border);
+  border-radius: 10px; overflow: hidden;
+  background: var(--nv-color-surface-1);
+}
+.nv-taskmirror-title {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 12px; font-size: 12px; font-weight: 600;
+  border: 0; border-bottom: 1px solid var(--nv-color-border);
+  background: var(--nv-color-surface-2);
+  color: var(--nv-color-fg); cursor: pointer;
+}
+.nv-taskmirror-title:hover { color: var(--nv-color-accent-fg); }
+.nv-taskmirror-group ul {
+  list-style: none; padding: 6px 10px; margin: 0;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.nv-taskmirror-group li {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 12.5px; padding: 4px 2px;
+  color: var(--nv-color-fg);
+  line-height: 1.5;
+}
+.nv-taskmirror-group li svg { flex-shrink: 0; margin-top: 2px; color: var(--nv-color-fg-muted); }
+.nv-taskmirror-group li[data-done="true"] svg { color: var(--nv-color-accent); }
+.nv-taskmirror-group li[data-done="true"] span {
+  text-decoration: line-through;
+  color: var(--nv-color-fg-subtle);
+}
+.nv-taskmirror-group li span { flex: 1; word-break: break-word; }
+
+/* Ask My Notes */
+.nv-ask-answer {
+  border-left: 3px solid var(--nv-color-accent);
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--nv-color-fg-muted);
+  background: var(--nv-color-accent-muted);
+  border-radius: 0 8px 8px 0;
+}
+.nv-ask-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.nv-ask-card {
+  display: block; width: 100%; text-align: left;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--nv-color-border);
+  background: var(--nv-color-surface-1);
+  color: var(--nv-color-fg); cursor: pointer;
+  transition: all 160ms ease;
+}
+.nv-ask-card:hover {
+  background: var(--nv-color-surface-2);
+  border-color: var(--nv-color-accent);
+}
+.nv-ask-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; font-weight: 600;
+  margin-bottom: 4px;
+}
+.nv-ask-score {
+  font-family: var(--nv-font-mono);
+  font-size: 10.5px;
+  padding: 1px 6px; border-radius: 9px;
+  background: var(--nv-color-accent-muted);
+  color: var(--nv-color-accent-fg);
+  margin-left: auto;
+}
+.nv-ask-card p {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--nv-color-fg-subtle);
+  line-height: 1.6;
+}
+
+/* Daily Recap */
+.nv-recap-sparkline {
+  display: flex; align-items: flex-end; gap: 3px;
+  height: 72px; padding: 10px 10px 8px;
+  background: var(--nv-color-surface-2);
+  border: 1px solid var(--nv-color-border);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.nv-recap-bar {
+  flex: 1; min-width: 6px;
+  background: var(--nv-color-accent);
+  border-radius: 3px 3px 0 0;
+  opacity: 0.85;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.nv-recap-bar:hover { opacity: 1; transform: scaleY(1.05); transform-origin: bottom; }
+.nv-recap-bar[data-empty="true"] {
+  background: var(--nv-color-border);
+  opacity: 0.4;
+}
+.nv-recap-list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.nv-recap-card {
+  display: block; width: 100%; text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--nv-color-border);
+  background: var(--nv-color-surface-1);
+  color: var(--nv-color-fg);
+  border-radius: 10px; cursor: pointer;
+  transition: all 160ms ease;
+}
+.nv-recap-card:hover {
+  background: var(--nv-color-surface-2);
+  border-color: var(--nv-color-accent);
+}
+.nv-recap-date {
+  font-family: var(--nv-font-mono);
+  font-size: 11.5px; font-weight: 600;
+  color: var(--nv-color-accent-fg);
+}
+.nv-recap-meta {
+  font-size: 10.5px; color: var(--nv-color-fg-subtle);
+  margin-top: 2px;
+}
+.nv-recap-highlights {
+  list-style: disc; padding-left: 18px; margin: 6px 0 0;
+  font-size: 12px; color: var(--nv-color-fg-muted);
+}
+.nv-recap-highlights li { padding: 1px 0; }
+
+/* Vault Export */
+.nv-export-status {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 12px;
+  padding: 24px 0;
+  border: 1px dashed var(--nv-color-border);
+  border-radius: 12px;
+  background: var(--nv-color-surface-2);
+}
+.nv-export-spinner {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 3px solid var(--nv-color-border);
+  border-top-color: var(--nv-color-accent);
+  animation: nv-spin 900ms linear infinite;
+}
+@keyframes nv-spin { to { transform: rotate(360deg); } }

@@ -31,6 +31,17 @@ describe('searchUtils', () => {
     expect(getNotesMissingContent([missing, loaded, folder])).toEqual([missing])
   })
 
+  it('can cap missing-content hydration batches to avoid search-time bursts', () => {
+    const notes = Array.from({ length: 20 }, (_, index) => ({
+      ...baseNote,
+      id: index + 10,
+      title: `Note ${index}`,
+      content: undefined,
+    }))
+
+    expect(getNotesMissingContent(notes, 6)).toHaveLength(6)
+  })
+
   it('searches note title, body, sticky notes and tags together', () => {
     const results = searchNotes([
       {

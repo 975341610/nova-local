@@ -109,7 +109,16 @@ def create_note(
     sort_key: str | None = None,
     stickers: list[dict] | None = None,
     sticky_notes: list[dict] | None = None,
+    properties: list[NotePropertyBase] | None = None,
 ) -> VaultNote:
+    payload_properties = None
+    if properties is not None:
+        payload_properties = [
+            {"name": prop.get("name") if isinstance(prop, dict) else prop.name,
+             "type": prop.get("type") if isinstance(prop, dict) else prop.type,
+             "value": prop.get("value") if isinstance(prop, dict) else prop.value}
+            for prop in properties
+        ]
     store = get_vault_store()
     note = store.create_note(
         title=title,
@@ -125,6 +134,7 @@ def create_note(
         sort_key=sort_key,
         stickers=stickers,
         sticky_notes=sticky_notes,
+        properties=payload_properties,
     )
     note.summary = summary
     if summary and not note.is_folder:
@@ -402,10 +412,20 @@ def get_or_create_model_config(db: Session) -> ModelConfig:
     )
 
 
+def mask_api_key(api_key: str) -> str:
+    if not api_key:
+        return ""
+    if len(api_key) <= 4:
+        return "****"
+    prefix = api_key[:3] if api_key.startswith("sk-") else ""
+    return f"{prefix}****{api_key[-4:]}"
+
+
 def update_model_config(db: Session, provider: str, api_key: str, base_url: str, model_name: str) -> ModelConfig:
     config = db.get(ModelConfig, 1) or ModelConfig(id=1)
     config.provider = provider
-    config.api_key = obfuscate(api_key)
+    if api_key:
+        config.api_key = obfuscate(api_key)
     config.base_url = base_url
     config.model_name = model_name
     db.add(config)
