@@ -119,4 +119,22 @@ describe('AI import and generate note api client', () => {
     expect(init?.method).toBe('POST')
     expect(init?.body).toBe(JSON.stringify({ question: '讲了什么？' }))
   })
+
+  it('asks a question scoped to one note', async () => {
+    const response = {
+      answer: 'This note is about source material.',
+      citations: [{ note_id: 202, title: 'Current Note', chunk_id: 'note-202', score: 1, excerpt: 'Source material' }],
+      mode: 'note',
+    }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+    await expect(api.askNote(202, '这篇讲了什么？')).resolves.toEqual(response)
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/notes/202/ask')
+    expect(init?.method).toBe('POST')
+    expect(init?.body).toBe(JSON.stringify({ question: '这篇讲了什么？' }))
+  })
 })

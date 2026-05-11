@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, MessageSquare, Paperclip, Plus, Send, Sparkles } from 'lucide-react';
+import { Copy, FilePlus2, Loader2, MessageSquare, Paperclip, Plus, Send, Sparkles, TextCursorInput } from 'lucide-react';
 import { api } from '../../lib/api';
-import { aiMarkdownToHtml } from '../../lib/aiMarkdown';
-import type { Citation, ImportPreviewItem, ImportTemplateId } from '../../lib/types';
+import { aiMarkdownToHtmlWithFootnotes } from '../../lib/aiMarkdown';
+import type { Citation, ImportPreviewItem, ImportTemplateId, Note } from '../../lib/types';
 import { useNoteStore } from '../../store/useNoteStore';
 
 type ImportSourceRef = {
@@ -20,6 +20,9 @@ type ImportChatMessage = {
 };
 
 type ComposerMode = 'ask' | 'source';
+type WorkbenchMode = 'import' | 'ask' | 'write';
+type WriteActionId = 'summarize' | 'outline' | 'tasks';
+type AskScope = 'import' | 'note' | 'vault';
 
 type UploadedFileRef = {
   url: string;
@@ -28,12 +31,212 @@ type UploadedFileRef = {
   type?: string;
 };
 
-const getImportChatStorageKey = (batchId: string) => `nova.ai.importChat.${batchId}`;
+const AI_WRITE_ACTIONS: Array<{
+  id: WriteActionId;
+  label: string;
+  action: string;
+  prompt: string;
+}> = [
+  {
+    id: 'summarize',
+    label: '总结当前笔记',
+    action: 'summarize',
+    prompt: '请总结当前笔记，输出适合直接写回笔记的结构化摘要。',
+  },
+  {
+    id: 'outline',
+    label: '生成大纲',
+    action: 'outline',
+    prompt: '请基于当前笔记生成层次清晰的大纲。',
+  },
+  {
+    id: 'tasks',
+    label: '提取行动项',
+    action: 'ask',
+    prompt: '请从当前笔记中提取可执行行动项，按动作、背景、优先级整理。',
+  },
+];
 
-const readImportChatMessages = (batchId: string): ImportChatMessage[] => {
-  if (!batchId || typeof window === 'undefined') return [];
+const SUGGESTED_ASK_PROMPTS = [
+  '总结核心要点',
+  '提取可执行行动项',
+  '生成复习问题',
+];
+
+const htmlToPlainText = (html: string) => {
+  if (!html) return '';
+  if (typeof document === 'undefined') {
+    return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  const element = document.createElement('div');
+  element.innerHTML = html;
+  return (element.textContent || '').replace(/\s+/g, ' ').trim();
+};
+
+const cleanAiPanelText = (value?: string) => {
+  if (!value) return '';
+  let text = value;
+  if (typeof document !== 'undefined') {
+    const element = document.createElement('textarea');
+    for (let i = 0; i < 3; i += 1) {
+      element.innerHTML = text;
+      const decoded = element.value;
+      if (decoded === text) break;
+      text = decoded;
+    }
+  }
+  return text
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<\/?[^>]+>/g, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^[ \t]*[-*+]\s+/gm, '')
+    .replace(/^[ \t]*#{1,6}\s+/gm, '')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+};
+
+const normalizeCitationTitle = (value?: string) => cleanAiPanelText(value)
+  .replace(/\s+/g, ' ')
+  .trim()
+  .toLocaleLowerCase();
+
+const resolveCitationNoteId = (citation: Citation, notes: Note[]) => {
+  const citationTitle = normalizeCitationTitle(citation.title);
+  const citedId = citation.note_id === null || citation.note_id === undefined
+    ? null
+    : Number(citation.note_id);
+
+  if (Number.isFinite(citedId)) {
+    const noteById = notes.find((note) => Number(note.id) === citedId && !note.is_folder);
+    if (noteById) {
+      const noteTitle = normalizeCitationTitle(noteById.title);
+      if (!citationTitle || noteTitle === citationTitle) {
+        return String(noteById.id);
+      }
+    }
+  }
+
+  if (citationTitle) {
+    const noteByTitle = notes.find((note) => (
+      !note.is_folder && normalizeCitationTitle(note.title) === citationTitle
+    ));
+    if (noteByTitle) return String(noteByTitle.id);
+  }
+
+  return Number.isFinite(citedId) ? String(citedId) : '';
+};
+
+const buildAiAnswerTitle = (answer: string, question = '') => {
+  const source = cleanAiPanelText(question).replace(/\[\d+\]/g, '').trim()
+    || answer.split(/\r?\n/)
+    .map((line) => cleanAiPanelText(line)
+      .replace(/^\s*#{1,6}\s+/, '')
+      .replace(/\[\d+\]/g, '')
+      .replace(/^[\s>*-]+/, '')
+      .trim())
+    .find(Boolean)
+    || 'AI 回答';
+  const title = source.length > 34 ? `${source.slice(0, 34)}...` : source;
+  return title.startsWith('AI 回答') ? title : `AI 回答 - ${title}`;
+};
+
+const buildAiAnswerProperties = (scope: AskScope, question: string, citations: Citation[]) => {
+  const citationRefs = citations.map((citation, index) => ({
+    index: index + 1,
+    note_id: citation.note_id,
+    title: cleanAiPanelText(citation.title),
+    chunk_id: citation.chunk_id,
+    score: citation.score,
+  }));
+  return [
+    { name: 'ai_source', type: 'text' as const, value: 'side_panel_answer' },
+    { name: 'ai_scope', type: 'text' as const, value: scope },
+    { name: 'ai_question', type: 'text' as const, value: question },
+    { name: 'ai_citations', type: 'text' as const, value: JSON.stringify(citationRefs) },
+  ];
+};
+
+const getAskScopeLabel = (scope: AskScope) => {
+  if (scope === 'vault') return '全部知识库';
+  if (scope === 'note') return '当前笔记';
+  return '这批资料';
+};
+
+const buildAiAnswerReferenceHtml = (citations: Citation[]) => {
+  if (!citations.length) {
+    return '<h2>引用来源</h2><p>本回答未返回可追溯来源。</p>';
+  }
+  const compactSummary = (value?: string) => {
+    const text = cleanAiPanelText(value);
+    if (!text) return '';
+    return text.length > 96 ? `${text.slice(0, 96)}...` : text;
+  };
+  const items = citations.map((citation, index) => {
+    const title = cleanAiPanelText(citation.title) || `来源 ${index + 1}`;
+    const summary = compactSummary(citation.excerpt);
+    const noteLink = citation.note_id !== null && citation.note_id !== undefined
+      ? `<span data-type="note-link" data-id="${escapeHtml(String(citation.note_id))}" data-label="${escapeHtml(title)}"></span>`
+      : `<strong>${escapeHtml(title)}</strong>`;
+    return [
+      '<li>',
+      `<p><strong>[${index + 1}]</strong> ${noteLink}</p>`,
+      summary ? `<p>相关摘要：${escapeHtml(summary)}</p>` : '',
+      '</li>',
+    ].filter(Boolean).join('\n');
+  });
+  return ['<h2>引用来源</h2>', '<ol>', ...items, '</ol>'].join('\n');
+};
+
+const buildAiAnswerNoteHtml = (
+  title: string,
+  answer: string,
+  citations: Citation[],
+  scope: AskScope,
+  question = '',
+) => [
+  `<h1>${escapeHtml(title)}</h1>`,
+  '<h2>问答信息</h2>',
+  '<blockquote data-ai-answer-meta="true">',
+  `<p><strong>问题：</strong>${escapeHtml(question || '未记录')}</p>`,
+  `<p><strong>范围：</strong>${escapeHtml(getAskScopeLabel(scope))}</p>`,
+  `<p><strong>生成时间：</strong>${escapeHtml(new Date().toLocaleString('zh-CN', { hour12: false }))}</p>`,
+  '</blockquote>',
+  '<h2>AI 回答</h2>',
+  aiMarkdownToHtmlWithFootnotes(answer, citations),
+  buildAiAnswerReferenceHtml(citations),
+].filter(Boolean).join('\n');
+
+const notifyEditorContentReplaced = (noteId: number | string, content: string) => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('nova:replace-current-note-content', {
+    detail: { noteId: Number(noteId), content },
+  }));
+};
+
+const openCitationNote = (noteId: string, onSelectNoteId?: (noteId: string) => void) => {
+  const numericNoteId = Number(noteId);
+  if (!Number.isFinite(numericNoteId)) return;
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('nova:notes-invalidate', {
+      detail: { reason: 'ai-citation-open', noteId: numericNoteId },
+    }));
+  }
+  onSelectNoteId?.(String(numericNoteId));
+};
+
+const getImportChatStorageKey = (scopeId: string) => `nova.ai.chat.${scopeId}`;
+
+const readImportChatMessages = (scopeId: string): ImportChatMessage[] => {
+  if (!scopeId || typeof window === 'undefined') return [];
   try {
-    const raw = window.localStorage.getItem(getImportChatStorageKey(batchId));
+    const legacyImportId = scopeId.startsWith('import:') ? scopeId.slice('import:'.length) : '';
+    const raw = window.localStorage.getItem(getImportChatStorageKey(scopeId))
+      || (legacyImportId ? window.localStorage.getItem(`nova.ai.importChat.${legacyImportId}`) : null);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -48,9 +251,9 @@ const readImportChatMessages = (batchId: string): ImportChatMessage[] => {
   }
 };
 
-const writeImportChatMessages = (batchId: string, messages: ImportChatMessage[]) => {
-  if (!batchId || typeof window === 'undefined') return;
-  const key = getImportChatStorageKey(batchId);
+const writeImportChatMessages = (scopeId: string, messages: ImportChatMessage[]) => {
+  if (!scopeId || typeof window === 'undefined') return;
+  const key = getImportChatStorageKey(scopeId);
   if (!messages.length) {
     window.localStorage.removeItem(key);
     return;
@@ -188,7 +391,7 @@ const composeGeneratedImportHtml = (
   sourceRefs: ImportSourceRef[],
   uploads: UploadedFileRef[] = [],
 ) => [
-  aiMarkdownToHtml(markdown),
+  aiMarkdownToHtmlWithFootnotes(markdown),
   buildSourcePreviewHtml(sourceRefs),
   buildAttachmentHtml(uploads),
 ].filter(Boolean).join('\n');
@@ -210,6 +413,11 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
   const [importBatchMessages, setImportBatchMessages] = useState<ImportChatMessage[]>([]);
   const [isAskingImportBatch, setIsAskingImportBatch] = useState(false);
   const [composerMode, setComposerMode] = useState<ComposerMode>('source');
+  const [activeWorkbenchMode, setActiveWorkbenchMode] = useState<WorkbenchMode>('import');
+  const [askScope, setAskScope] = useState<AskScope>('note');
+  const [isAiWriting, setIsAiWriting] = useState(false);
+  const [aiWriteResult, setAiWriteResult] = useState('');
+  const [activeWriteActionId, setActiveWriteActionId] = useState<WriteActionId | null>(null);
   const [hydratedImportBatchId, setHydratedImportBatchId] = useState('');
   const [aiImportStatus, setAiImportStatus] = useState('');
 
@@ -223,23 +431,63 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
   const activeImportBatchId = lastImportBatchId || selectedImportBatchId;
   const activeImportSources = selectedImportSources.length > 0 ? selectedImportSources : lastImportSources;
   const canAppendToSelectedNote = Boolean(selectedNoteForImport && !selectedNoteForImport.is_folder);
+  const selectedNoteAskId = selectedNoteForImport && !selectedNoteForImport.is_folder
+    ? String(selectedNoteForImport.id)
+    : '';
+  const defaultAskScope: AskScope = activeImportBatchId ? 'import' : selectedNoteAskId ? 'note' : 'vault';
+  const effectiveAskScope: AskScope = askScope === 'import' && !activeImportBatchId
+    ? defaultAskScope
+    : askScope === 'note' && !selectedNoteAskId
+      ? defaultAskScope
+      : askScope;
+  const activeNoteAskId = effectiveAskScope === 'note' ? selectedNoteAskId : '';
+  const activeChatScopeId = effectiveAskScope === 'import' && activeImportBatchId
+    ? `import:${activeImportBatchId}`
+    : effectiveAskScope === 'note' && activeNoteAskId
+      ? `note:${activeNoteAskId}`
+      : effectiveAskScope === 'vault'
+        ? 'vault'
+        : '';
+  const visibleAskScopeId = activeWorkbenchMode === 'ask' ? activeChatScopeId : '';
+  const messageStorageScopeId = activeWorkbenchMode === 'ask' ? activeChatScopeId : '';
+  const visibleChatTitle = effectiveAskScope === 'import' ? '导入问答' : effectiveAskScope === 'note' ? '当前笔记问答' : '知识库问答';
+  const visibleChatSourceLabel = effectiveAskScope === 'import' ? '引用来源' : effectiveAskScope === 'note' ? '当前笔记' : '全部知识库';
+  const isVaultAsk = activeWorkbenchMode === 'ask' && effectiveAskScope === 'vault';
+  const isAskComposer = Boolean(visibleAskScopeId) && composerMode === 'ask';
+
+  const selectWorkbenchMode = (mode: WorkbenchMode) => {
+    setActiveWorkbenchMode(mode);
+    setComposerMode(mode === 'ask' ? 'ask' : 'source');
+  };
 
   useEffect(() => {
-    if (!activeImportBatchId) {
+    setAskScope(defaultAskScope);
+  }, [defaultAskScope]);
+
+  useEffect(() => {
+    if (!activeChatScopeId || activeChatScopeId === 'vault') {
       setImportBatchMessages([]);
       setComposerMode('source');
       setHydratedImportBatchId('');
       return;
     }
-    setImportBatchMessages(readImportChatMessages(activeImportBatchId));
+    setImportBatchMessages(readImportChatMessages(activeChatScopeId));
     setComposerMode('ask');
-    setHydratedImportBatchId(activeImportBatchId);
-  }, [activeImportBatchId]);
+    setActiveWorkbenchMode('ask');
+    setHydratedImportBatchId(activeChatScopeId);
+  }, [activeChatScopeId]);
 
   useEffect(() => {
-    if (!activeImportBatchId || hydratedImportBatchId !== activeImportBatchId) return;
-    writeImportChatMessages(activeImportBatchId, importBatchMessages);
-  }, [activeImportBatchId, hydratedImportBatchId, importBatchMessages]);
+    if (activeWorkbenchMode !== 'ask' || activeChatScopeId) return;
+    setImportBatchMessages(readImportChatMessages('vault'));
+    setComposerMode('ask');
+    setHydratedImportBatchId('vault');
+  }, [activeWorkbenchMode, activeChatScopeId]);
+
+  useEffect(() => {
+    if (!messageStorageScopeId || hydratedImportBatchId !== messageStorageScopeId) return;
+    writeImportChatMessages(messageStorageScopeId, importBatchMessages);
+  }, [messageStorageScopeId, hydratedImportBatchId, importBatchMessages]);
 
   const clearImportDraft = () => {
     setAiImportFiles([]);
@@ -251,7 +499,8 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
     setLastImportSources([]);
     setImportBatchQuestion('');
     setImportBatchMessages([]);
-    setComposerMode(activeImportBatchId ? 'ask' : 'source');
+    setComposerMode(activeChatScopeId ? 'ask' : 'source');
+    setActiveWorkbenchMode(activeChatScopeId ? 'ask' : 'import');
   };
 
   const previewFiles = async (files: File[]) => {
@@ -356,6 +605,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
     setAiImportPreview([]);
     setAiImportUrlDraft('');
     setComposerMode(importBatchId ? 'ask' : 'source');
+    setActiveWorkbenchMode(importBatchId ? 'ask' : 'import');
     setAiImportStatus(importBatchId ? '已生成，可继续提问' : '已生成');
   };
 
@@ -434,6 +684,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
       setNotes((prev) => prev.map((note) => (
         String(note.id) === String(updatedNote.id) ? { ...note, ...updatedNote } : note
       )));
+      notifyEditorContentReplaced(updatedNote.id, updatedNote.content || appendedContent);
       onSelectNoteId?.(String(updatedNote.id));
       rememberGeneratedImport(generated.metadata || {});
     } catch (error) {
@@ -444,9 +695,9 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
     }
   };
 
-  const handleAskImportBatch = async () => {
-    const question = importBatchQuestion.trim();
-    if (!activeImportBatchId || !question || isAskingImportBatch) return;
+  const handleAskImportBatch = async (suggestedQuestion?: string) => {
+    const question = (suggestedQuestion ?? importBatchQuestion).trim();
+    if (!visibleAskScopeId || !question || isAskingImportBatch) return;
 
     setIsAskingImportBatch(true);
     setAiImportError(null);
@@ -458,11 +709,63 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
       { id: `${timestamp}-user`, role: 'user', text: question },
     ]);
     try {
-      const response = await api.askImportBatch(activeImportBatchId, question);
+      const assistantId = `${timestamp}-assistant`;
+      if (effectiveAskScope === 'vault') {
+        let answer = '';
+        let citations: Citation[] = [];
+        let buffer = '';
+        setImportBatchMessages((prev) => [
+          ...prev,
+          { id: assistantId, role: 'assistant', text: '', citations: [] },
+        ]);
+        const updateStreamingMessage = () => {
+          setImportBatchMessages((prev) => prev.map((message) => (
+            message.id === assistantId ? { ...message, text: answer, citations } : message
+          )));
+        };
+        const consumeLine = (line: string) => {
+          if (line.startsWith('__CITATIONS__:')) {
+            try {
+              citations = JSON.parse(line.slice('__CITATIONS__:'.length)) as Citation[];
+            } catch (error) {
+              console.warn('Failed to parse AI citations:', error);
+            }
+            updateStreamingMessage();
+            return;
+          }
+          answer += line;
+          updateStreamingMessage();
+        };
+        await api.streamChat({ question, mode: 'rag' }, (chunk) => {
+          buffer += chunk;
+          const citationIndex = buffer.indexOf('__CITATIONS__:');
+          if (citationIndex === -1) {
+            answer = buffer;
+            updateStreamingMessage();
+            return;
+          }
+          answer = buffer.slice(0, citationIndex).replace(/\n+$/, '');
+          const citationPayload = buffer.slice(citationIndex).trim();
+          if (citationPayload.includes('\n') || citationPayload.endsWith(']')) {
+            consumeLine(citationPayload.split(/\r?\n/)[0]);
+            buffer = answer;
+          }
+          updateStreamingMessage();
+        });
+        updateStreamingMessage();
+        setAiImportStatus('AI 已回复');
+        return;
+      }
+
+      const response = effectiveAskScope === 'import' && activeImportBatchId
+        ? await api.askImportBatch(activeImportBatchId, question)
+        : effectiveAskScope === 'note' && activeNoteAskId
+          ? await api.askNote(activeNoteAskId, question)
+          : await api.ask({ question, mode: 'rag' });
       setImportBatchMessages((prev) => [
         ...prev,
         {
-          id: `${timestamp}-assistant`,
+          id: assistantId,
           role: 'assistant',
           text: response.answer,
           citations: response.citations || [],
@@ -486,8 +789,156 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
     }
   };
 
+  const handleRunWriteAction = async (actionId: WriteActionId) => {
+    const writeAction = AI_WRITE_ACTIONS.find((item) => item.id === actionId);
+    if (!writeAction || !selectedNoteForImport || selectedNoteForImport.is_folder || isAiWriting) return;
+
+    setIsAiWriting(true);
+    setActiveWriteActionId(actionId);
+    setAiWriteResult('');
+    setAiImportError(null);
+    setAiImportStatus(`${writeAction.label}中，AI 正在生成...`);
+    try {
+      const latestNote = selectedNoteForImport.content === undefined
+        ? await api.getNote(Number(selectedNoteForImport.id))
+        : selectedNoteForImport;
+      const context = htmlToPlainText(latestNote.content || '');
+      let nextResult = '';
+      await api.streamInlineAI(
+        { action: writeAction.action, prompt: writeAction.prompt, context },
+        (chunk) => {
+          nextResult += chunk;
+          setAiWriteResult(nextResult);
+        },
+      );
+      setAiImportStatus('写作结果已生成');
+    } catch (error) {
+      console.error('AI write action failed:', error);
+      setAiImportError(error instanceof Error ? error.message : String(error));
+      setAiImportStatus('写作生成失败');
+    } finally {
+      setIsAiWriting(false);
+    }
+  };
+
+  const handleCopyWriteResult = async () => {
+    if (!aiWriteResult.trim() || typeof navigator === 'undefined' || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(aiWriteResult);
+    setAiImportStatus('写作结果已复制');
+  };
+
+  const handleCopyAiText = async (text: string) => {
+    if (!text.trim() || typeof navigator === 'undefined' || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(text);
+    setAiImportStatus('AI 回答已复制');
+  };
+
+  const handleInsertAiText = async (text: string, citations: Citation[] = []) => {
+    if (!text.trim() || !selectedNoteForImport || selectedNoteForImport.is_folder || isAiWriting) return;
+
+    setIsAiWriting(true);
+    setAiImportError(null);
+    setAiImportStatus('正在插入 AI 回答...');
+    try {
+      const latestNote = selectedNoteForImport.content === undefined
+        ? await api.getNote(Number(selectedNoteForImport.id))
+        : selectedNoteForImport;
+      const updatedNote = await api.updateNote(Number(latestNote.id), {
+        content: [
+          latestNote.content || '',
+          '<hr data-ai-chat-insert="true" />',
+          aiMarkdownToHtmlWithFootnotes(text, citations),
+        ].filter(Boolean).join('\n'),
+      });
+      setNotes((prev) => prev.map((note) => (
+        String(note.id) === String(updatedNote.id) ? { ...note, ...updatedNote } : note
+      )));
+      notifyEditorContentReplaced(updatedNote.id, updatedNote.content || '');
+      onSelectNoteId?.(String(updatedNote.id));
+      setAiImportStatus('AI 回答已插入当前笔记');
+    } catch (error) {
+      console.error('AI answer insert failed:', error);
+      setAiImportError(error instanceof Error ? error.message : String(error));
+      setAiImportStatus('插入失败');
+    } finally {
+      setIsAiWriting(false);
+    }
+  };
+
+  const handleSaveAiTextAsNote = async (text: string, citations: Citation[] = [], question = '') => {
+    if (!text.trim() || isAiWriting) return;
+
+    setIsAiWriting(true);
+    setAiImportError(null);
+    setAiImportStatus('正在保存 AI 回答...');
+    try {
+      const title = buildAiAnswerTitle(text, question);
+      const nextNote = await api.createNote({
+        title,
+        icon: 'AI',
+        content: buildAiAnswerNoteHtml(title, text, citations, effectiveAskScope, question),
+        type: 'note',
+        tags: ['AI'],
+        properties: buildAiAnswerProperties(effectiveAskScope, question, citations),
+        notebook_id: null,
+        parent_id: null,
+        is_title_manually_edited: true,
+        background_paper: 'none',
+        sort_key: 'm',
+        stickers: [],
+        sticky_notes: [],
+      });
+      setNotes((prev) => {
+        const exists = prev.some((note) => note.id === nextNote.id);
+        return exists
+          ? prev.map((note) => (note.id === nextNote.id ? { ...note, ...nextNote } : note))
+          : [...prev, nextNote];
+      });
+      onSelectNoteId?.(String(nextNote.id));
+      setAiImportStatus('AI 回答已保存为新笔记');
+    } catch (error) {
+      console.error('AI answer save failed:', error);
+      setAiImportError(error instanceof Error ? error.message : String(error));
+      setAiImportStatus('保存失败');
+    } finally {
+      setIsAiWriting(false);
+    }
+  };
+
+  const handleInsertWriteResult = async () => {
+    if (!aiWriteResult.trim() || !selectedNoteForImport || selectedNoteForImport.is_folder || isAiWriting) return;
+
+    setIsAiWriting(true);
+    setAiImportError(null);
+    setAiImportStatus('正在插入当前笔记...');
+    try {
+      const latestNote = selectedNoteForImport.content === undefined
+        ? await api.getNote(Number(selectedNoteForImport.id))
+        : selectedNoteForImport;
+      const updatedNote = await api.updateNote(Number(latestNote.id), {
+        content: [
+          latestNote.content || '',
+          '<hr data-ai-write-insert="true" />',
+          aiMarkdownToHtmlWithFootnotes(aiWriteResult),
+        ].filter(Boolean).join('\n'),
+      });
+      setNotes((prev) => prev.map((note) => (
+        String(note.id) === String(updatedNote.id) ? { ...note, ...updatedNote } : note
+      )));
+      notifyEditorContentReplaced(updatedNote.id, updatedNote.content || '');
+      onSelectNoteId?.(String(updatedNote.id));
+      setAiImportStatus('写作结果已插入当前笔记');
+    } catch (error) {
+      console.error('AI write insert failed:', error);
+      setAiImportError(error instanceof Error ? error.message : String(error));
+      setAiImportStatus('插入失败');
+    } finally {
+      setIsAiWriting(false);
+    }
+  };
+
   const handleComposerSend = () => {
-    if (activeImportBatchId && composerMode === 'ask' && importBatchQuestion.trim()) {
+    if (isAskComposer && importBatchQuestion.trim()) {
       void handleAskImportBatch();
       return;
     }
@@ -495,8 +946,8 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
   };
 
   const handleClearImportChatHistory = () => {
-    if (activeImportBatchId) {
-      writeImportChatMessages(activeImportBatchId, []);
+    if (messageStorageScopeId) {
+      writeImportChatMessages(messageStorageScopeId, []);
     }
     setImportBatchMessages([]);
     setImportBatchQuestion('');
@@ -530,7 +981,38 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
           </div>
         </div>
 
-        {(aiImportPreview.length > 0 || aiImportError) && (
+        <div className="grid grid-cols-3 gap-1 rounded-lg border border-border/30 bg-muted/30 p-1">
+          {([
+            ['import', '导入'],
+            ['ask', '问答'],
+            ['write', '写作'],
+          ] as const).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              aria-label={`ai-workbench-mode-${mode}`}
+              onClick={() => selectWorkbenchMode(mode)}
+              className={`min-h-8 rounded-md px-2 text-[11px] font-medium transition-colors ${
+                activeWorkbenchMode === mode
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {activeWorkbenchMode === 'import' && aiImportPreview.length === 0 && !aiImportError && (
+          <div
+            data-testid="ai-import-empty"
+            className="rounded-lg border border-dashed border-border/40 bg-background/60 p-3 text-[11px] leading-relaxed text-muted-foreground"
+          >
+            粘贴链接、上传文件或拖入资料，将其生成可追溯的结构化笔记。
+          </div>
+        )}
+
+        {activeWorkbenchMode === 'import' && (aiImportPreview.length > 0 || aiImportError) && (
           <div
             data-testid="ai-import-preview-panel"
             className="rounded-lg border border-primary/15 bg-primary/5 p-3 space-y-3"
@@ -603,10 +1085,10 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
           </div>
         )}
 
-        {activeImportBatchId && (
+        {activeWorkbenchMode === 'ask' && visibleAskScopeId && (
           <div className="rounded-lg border border-border/30 bg-background/70 p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-semibold text-foreground">导入问答</div>
+              <div className="text-xs font-semibold text-foreground">{visibleChatTitle}</div>
               {importBatchMessages.length > 0 && (
                 <button
                   type="button"
@@ -618,9 +1100,34 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                 </button>
               )}
             </div>
-            {activeImportSources.length > 0 && (
+            <label className="block text-[10px] font-semibold uppercase text-muted-foreground">
+              问答范围
+              <select
+                aria-label="ai-ask-scope-select"
+                value={effectiveAskScope}
+                onChange={(event) => setAskScope(event.target.value as AskScope)}
+                className="mt-1 h-8 w-full rounded-lg border border-border/30 bg-background px-2 text-xs font-medium normal-case text-foreground outline-none focus:border-primary/40"
+              >
+                {activeImportBatchId && <option value="import">这批资料</option>}
+                {selectedNoteAskId && <option value="note">当前笔记</option>}
+                <option value="vault">全库</option>
+              </select>
+            </label>
+            {(activeImportSources.length > 0 || activeNoteAskId || isVaultAsk) && (
               <div data-testid="import-source-list" className="space-y-1">
-                <div className="text-[10px] font-semibold uppercase text-muted-foreground">引用来源</div>
+                <div className="text-[10px] font-semibold uppercase text-muted-foreground">{visibleChatSourceLabel}</div>
+                {isVaultAsk && (
+                  <div className="rounded-lg border border-border/30 bg-background/70 px-2 py-1.5">
+                    <div className="truncate text-[11px] font-medium text-foreground">全部笔记</div>
+                    <div className="truncate text-[10px] text-muted-foreground">基于知识库索引进行带引用问答</div>
+                  </div>
+                )}
+                {activeNoteAskId && selectedNoteForImport && (
+                  <div className="rounded-lg border border-border/30 bg-background/70 px-2 py-1.5">
+                    <div className="truncate text-[11px] font-medium text-foreground">{selectedNoteForImport.title || '无标题笔记'}</div>
+                    <div className="truncate text-[10px] text-muted-foreground">当前选中的笔记内容</div>
+                  </div>
+                )}
                 {activeImportSources.map((source, index) => {
                   const title = source.title || source.name || source.url || `来源 ${index + 1}`;
                   const detail = source.url || source.name || source.kind || '';
@@ -636,9 +1143,35 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                 })}
               </div>
             )}
+            {importBatchMessages.length === 0 && (
+              <div className="space-y-1">
+                <div className="text-[10px] font-semibold uppercase text-muted-foreground">推荐问题</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {SUGGESTED_ASK_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      aria-label={`ask-suggested-${prompt}`}
+                      onClick={() => void handleAskImportBatch(prompt)}
+                      disabled={isAskingImportBatch}
+                      className="rounded-full border border-border/40 px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent/40 hover:text-foreground disabled:opacity-50"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {importBatchMessages.length > 0 && (
               <div className="space-y-2">
-                {importBatchMessages.map((message) => (
+                {importBatchMessages.map((message, messageIndex) => {
+                  const assistantQuestion = message.role === 'assistant'
+                    ? importBatchMessages
+                      .slice(0, messageIndex)
+                      .reverse()
+                      .find((item) => item.role === 'user')?.text || ''
+                    : '';
+                  return (
                   <div key={message.id} className="space-y-1">
                     <div
                       className={`rounded-lg px-3 py-2 text-[11px] leading-relaxed ${
@@ -647,30 +1180,121 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                           : 'mr-6 bg-primary/5 text-foreground'
                       }`}
                     >
-                      {message.text}
+                      {message.role === 'assistant' ? cleanAiPanelText(message.text) : message.text}
                     </div>
+                    {message.role === 'assistant' && (
+                      <div className="mr-6 flex items-center gap-1">
+                        <button
+                          type="button"
+                          aria-label={`copy-ai-answer-${message.id}`}
+                          title="复制回答"
+                          onClick={() => void handleCopyAiText(message.text)}
+                          className="flex h-8 w-8 items-center justify-center rounded-md border border-border/30 text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+                        >
+                          <Copy size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`insert-ai-answer-${message.id}`}
+                          title="插入当前笔记"
+                          onClick={() => void handleInsertAiText(message.text, message.citations || [])}
+                          disabled={!canAppendToSelectedNote || isAiWriting}
+                          className="flex h-8 w-8 items-center justify-center rounded-md border border-border/30 text-muted-foreground hover:bg-accent/40 hover:text-foreground disabled:opacity-50"
+                        >
+                          <TextCursorInput size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`save-ai-answer-${message.id}`}
+                          title="保存为新笔记"
+                          onClick={() => void handleSaveAiTextAsNote(message.text, message.citations || [], assistantQuestion)}
+                          disabled={isAiWriting}
+                          className="flex h-8 w-8 items-center justify-center rounded-md border border-border/30 text-muted-foreground hover:bg-accent/40 hover:text-foreground disabled:opacity-50"
+                        >
+                          <FilePlus2 size={14} />
+                        </button>
+                      </div>
+                    )}
                     {message.role === 'assistant' && message.citations && message.citations.length > 0 && (
                       <div className="space-y-1">
-                        {message.citations.map((citation) => (
-                          <button
-                            key={`${message.id}-${citation.chunk_id}-${citation.note_id ?? 'none'}`}
-                            type="button"
-                            aria-label={`open-import-citation-${citation.note_id}`}
-                            onClick={() => {
-                              if (citation.note_id !== null) {
-                                onSelectNoteId?.(String(citation.note_id));
-                              }
-                            }}
-                            className="w-full rounded-lg border border-border/30 px-2 py-1.5 text-left text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent/40"
-                          >
-                            <div className="truncate font-medium">{citation.title}</div>
-                            <div className="line-clamp-1 opacity-70">{citation.excerpt}</div>
-                          </button>
-                        ))}
+                        {message.citations.map((citation) => {
+                          const resolvedNoteId = resolveCitationNoteId(citation, notes);
+                          return (
+                            <button
+                              key={`${message.id}-${citation.chunk_id}-${citation.note_id ?? 'none'}`}
+                              type="button"
+                              aria-label={`open-import-citation-${resolvedNoteId || citation.note_id || 'none'}`}
+                              onClick={() => openCitationNote(resolvedNoteId, onSelectNoteId)}
+                              disabled={!resolvedNoteId}
+                              className="w-full rounded-lg border border-border/30 px-2 py-1.5 text-left text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <div className="truncate font-medium">{cleanAiPanelText(citation.title)}</div>
+                              <div className="line-clamp-1 opacity-70">{cleanAiPanelText(citation.excerpt)}</div>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeWorkbenchMode === 'write' && (
+          <div
+            data-testid="ai-write-panel"
+            className="rounded-lg border border-border/30 bg-background/70 p-3 space-y-3"
+          >
+            <div>
+              <div className="text-xs font-semibold text-foreground">写作助手</div>
+              <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                针对当前笔记进行摘要、提纲和行动项整理。
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-2">
+              {AI_WRITE_ACTIONS.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  aria-label={`run-ai-write-${action.id}`}
+                  onClick={() => void handleRunWriteAction(action.id)}
+                  disabled={!canAppendToSelectedNote || isAiWriting}
+                  className="min-h-8 rounded-lg border border-border/40 px-3 py-1.5 text-left text-[11px] font-medium text-foreground hover:bg-accent/40 disabled:opacity-50"
+                >
+                  {activeWriteActionId === action.id && isAiWriting ? '生成中...' : action.label}
+                </button>
+              ))}
+            </div>
+            {aiWriteResult && (
+              <div className="space-y-2">
+                <div
+                  data-testid="ai-write-result"
+                  className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-foreground custom-scrollbar"
+                >
+                  {aiWriteResult}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    aria-label="copy-ai-write-result"
+                    onClick={() => void handleCopyWriteResult()}
+                    className="min-h-8 rounded-lg border border-border/40 px-3 py-1.5 text-[11px] font-medium text-foreground hover:bg-accent/40"
+                  >
+                    复制
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="insert-ai-write-result"
+                    onClick={() => void handleInsertWriteResult()}
+                    disabled={isAiWriting || !canAppendToSelectedNote}
+                    className="min-h-8 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
+                  >
+                    插入当前
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -680,10 +1304,15 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
       <div className="border-t border-border/20 p-3">
         {aiImportStatus && (
           <div role="status" aria-live="polite" className="mb-2 flex min-h-5 items-center gap-1.5 text-[11px] leading-snug text-muted-foreground">
-            {(isAiImporting || isAskingImportBatch) && <Loader2 size={12} className="shrink-0 animate-spin" />}
+            {(isAiImporting || isAskingImportBatch || isAiWriting) && <Loader2 size={12} className="shrink-0 animate-spin" />}
             <span className="min-w-0 break-words">{aiImportStatus}</span>
           </div>
         )}
+        {activeWorkbenchMode === 'write' ? (
+          <div className="rounded-lg border border-border/30 bg-background/70 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+            写作模式会基于当前笔记生成结果，可在上方复制或插入当前笔记。
+          </div>
+        ) : (
         <div className="flex items-end gap-2">
           <button
             type="button"
@@ -695,11 +1324,17 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
           >
             <Paperclip size={15} />
           </button>
-          {activeImportBatchId && (
+          {activeChatScopeId && (
             <button
               type="button"
               aria-label="toggle-ai-import-composer-mode"
-              onClick={() => setComposerMode((mode) => (mode === 'ask' ? 'source' : 'ask'))}
+              onClick={() => {
+                setComposerMode((mode) => {
+                  const nextMode = mode === 'ask' ? 'source' : 'ask';
+                  setActiveWorkbenchMode(nextMode === 'ask' ? 'ask' : 'import');
+                  return nextMode;
+                });
+              }}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/40 text-muted-foreground hover:text-foreground hover:bg-accent/40"
               title={composerMode === 'ask' ? '添加来源' : '切回问答'}
             >
@@ -707,10 +1342,10 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
             </button>
           )}
           <textarea
-            aria-label={activeImportBatchId && composerMode === 'ask' ? 'ask-import-batch-input' : 'ai-import-url-input'}
-            value={activeImportBatchId && composerMode === 'ask' ? importBatchQuestion : aiImportUrlDraft}
+            aria-label={isAskComposer ? 'ask-import-batch-input' : 'ai-import-url-input'}
+            value={isAskComposer ? importBatchQuestion : aiImportUrlDraft}
             onChange={(event) => {
-              if (activeImportBatchId && composerMode === 'ask') {
+              if (isAskComposer) {
                 setImportBatchQuestion(event.target.value);
               } else {
                 setAiImportUrlDraft(event.target.value);
@@ -722,18 +1357,18 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                 handleComposerSend();
               }
             }}
-            placeholder={activeImportBatchId && composerMode === 'ask' ? '询问这批资料...' : '粘贴链接，每行一个...'}
+            placeholder={isAskComposer ? (effectiveAskScope === 'import' ? '询问这批资料...' : effectiveAskScope === 'note' ? '询问当前笔记...' : '询问整个知识库...') : '粘贴链接，每行一个...'}
             rows={2}
             className="min-h-9 min-w-0 flex-1 resize-none rounded-lg border border-border/30 bg-background px-3 py-2 text-xs text-foreground outline-none focus:border-primary/40"
           />
           <button
             type="button"
-            aria-label={activeImportBatchId && composerMode === 'ask' ? 'ask-import-batch' : 'preview-ai-import-url'}
+            aria-label={isAskComposer ? 'ask-import-batch' : 'preview-ai-import-url'}
             onClick={handleComposerSend}
             disabled={
               isAiImporting ||
               isAskingImportBatch ||
-              (activeImportBatchId && composerMode === 'ask' ? !importBatchQuestion.trim() : !parseAiImportUrls(aiImportUrlDraft).length)
+              (isAskComposer ? !importBatchQuestion.trim() : !parseAiImportUrls(aiImportUrlDraft).length)
             }
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
             title="Send"
@@ -741,6 +1376,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
             {isAskingImportBatch ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
           </button>
         </div>
+        )}
       </div>
     </div>
   );

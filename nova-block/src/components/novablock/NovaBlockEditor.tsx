@@ -1853,6 +1853,51 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }
   }, [editor, isDirty, note, onNotify, onSave, prevNoteId, updateOutline]);
 
+  useEffect(() => {
+    if (!editor || !note?.id || note.id !== prevNoteId || isDirty || isSavingRef.current) {
+      return;
+    }
+
+    const incomingContent = sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>';
+    const knownContent = sanitizeLegacyApiUrlsInHtml(latestNoteRef.current?.content) || '<p></p>';
+    if (incomingContent === knownContent || incomingContent === editor.getHTML()) {
+      latestNoteRef.current = note;
+      return;
+    }
+
+    replaceEditorContentWithoutHistory(editor, incomingContent);
+    // @ts-ignore
+    editor.commands.ensureHeadingIds();
+    latestNoteRef.current = note;
+    setIsDirty(false);
+    updateOutline(editor);
+  }, [editor, isDirty, note, prevNoteId, updateOutline]);
+
+  useEffect(() => {
+    if (!editor || !note?.id) return;
+
+    const handleExternalContentReplace = (event: Event) => {
+      const detail = (event as CustomEvent<{ noteId?: number; content?: string }>).detail;
+      if (!detail || Number(detail.noteId) !== Number(note.id) || typeof detail.content !== 'string') {
+        return;
+      }
+      if (isDirty || isSavingRef.current) {
+        latestNoteRef.current = { ...latestNoteRef.current, content: detail.content } as Note;
+        return;
+      }
+      const nextContent = sanitizeLegacyApiUrlsInHtml(detail.content) || '<p></p>';
+      replaceEditorContentWithoutHistory(editor, nextContent);
+      // @ts-ignore
+      editor.commands.ensureHeadingIds();
+      latestNoteRef.current = { ...latestNoteRef.current, ...note, content: detail.content } as Note;
+      setIsDirty(false);
+      updateOutline(editor);
+    };
+
+    window.addEventListener('nova:replace-current-note-content', handleExternalContentReplace);
+    return () => window.removeEventListener('nova:replace-current-note-content', handleExternalContentReplace);
+  }, [editor, isDirty, note, updateOutline]);
+
   // 鍚屾棰勮/缂栬緫妯″紡
   useEffect(() => {
     if (editor) {
@@ -2980,4 +3025,3 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     </motion.div>
   );
 });
-

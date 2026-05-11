@@ -38,11 +38,32 @@ def citations_from_results(db: Session, results: list[dict[str, Any]]) -> list[d
     citations: list[dict[str, Any]] = []
     for item in results:
         note_id = item["metadata"].get("note_id")
-        note = db.get(Note, int(note_id)) if note_id else None
+        note_id_int: int | None = None
+        try:
+            note_id_int = int(note_id) if note_id is not None else None
+        except (TypeError, ValueError):
+            note_id_int = None
+
+        note = db.get(Note, note_id_int) if note_id_int is not None else None
+        if note and note.deleted_at is not None:
+            note = None
+
+        metadata_title = str(item["metadata"].get("title") or "").strip()
+        if note is None and metadata_title:
+            note = (
+                db.query(Note)
+                .filter(Note.title == metadata_title, Note.deleted_at.is_(None), Note.is_folder == 0)
+                .order_by(Note.updated_at.desc())
+                .first()
+            )
+
+        if note is None and note_id_int is not None:
+            continue
+
         citations.append(
             {
-                "note_id": int(note_id) if note_id else None,
-                "title": note.title if note else item["metadata"].get("title", "Imported note"),
+                "note_id": note.id if note else None,
+                "title": note.title if note else metadata_title or "Imported note",
                 "chunk_id": item["chunk_id"],
                 "score": item["score"],
                 "excerpt": item["document"][:260],

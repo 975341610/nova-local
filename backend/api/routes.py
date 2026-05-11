@@ -856,6 +856,9 @@ async def ask_question(payload: AskRequest, db: Session = Depends(get_db)) -> As
     else:
         results = await search_knowledge(payload.question, ai_client=ai_client)
         citations = await run_in_threadpool(citations_from_results, db, results)
+        citations = filter_relevant_vault_citations(citations, payload.question)
+        if not citations:
+            citations = await run_in_threadpool(build_vault_fallback_citations, db, payload.question)
         answer = await ai_client.answer(payload.question, citations, llm_config)
         return AskResponse(answer=answer, citations=[Citation(**item) for item in citations], mode="rag")
 
@@ -878,6 +881,138 @@ def build_import_batch_citations(notes) -> list[dict]:
     return citations
 
 
+def build_note_citation(note) -> dict | None:
+    content = getattr(note, "content", "") or ""
+    if not content.strip():
+        return None
+    return {
+        "note_id": int(note.id),
+        "title": note.title,
+        "chunk_id": f"note-{note.id}",
+        "score": 1.0,
+        "excerpt": content[:1800],
+    }
+
+
+def _plain_note_text(content: str) -> str:
+    text = re.sub(r"<script[\s\S]*?</script>", " ", content or "", flags=re.IGNORECASE)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+_CJK_QUERY_STOP_TERMS = {
+    "还有", "哪些", "哪个", "什么", "怎么", "如何", "是否", "关于", "有关", "相关",
+    "笔记", "内容", "当前", "全部", "全库", "知识", "知识库", "这个", "那个", "一些",
+    "可以", "不能", "需要", "进行", "里面", "中的", "的是", "以及", "或者", "如果",
+}
+
+
+def _query_terms(question: str) -> set[str]:
+    terms = {
+        term.lower()
+        for term in re.findall(r"[A-Za-z0-9_]{2,}", question or "")
+    }
+    cjk_runs = re.findall(r"[\u4e00-\u9fff]{2,}", question or "")
+    for run in cjk_runs:
+        if 2 <= len(run) <= 6:
+            terms.add(run.lower())
+        for size in (2, 3, 4):
+            for index in range(0, max(0, len(run) - size + 1)):
+                terms.add(run[index:index + size].lower())
+    return {
+        term for term in terms
+        if term not in _CJK_QUERY_STOP_TERMS
+        and not any(stop in term for stop in _CJK_QUERY_STOP_TERMS if len(term) <= 4)
+    }
+
+
+def _citation_term_overlap(citation: dict, terms: set[str]) -> int:
+    if not terms:
+        return 0
+    haystack = f"{citation.get('title', '')} {citation.get('excerpt', '')}".lower()
+    return sum(1 for term in terms if term in haystack)
+
+
+def filter_relevant_vault_citations(citations: list[dict], question: str, *, limit: int = 2) -> list[dict]:
+    if not citations:
+        return []
+
+    terms = _query_terms(question)
+    scored = [
+        {
+            **citation,
+            "_term_overlap": _citation_term_overlap(citation, terms),
+        }
+        for citation in sorted(citations, key=lambda item: float(item.get("score") or 0), reverse=True)
+    ]
+
+    top_score = float(scored[0].get("score") or 0)
+    min_score = max(0.25, top_score * 0.9, top_score - 0.06)
+    min_overlap = 1 if len(terms) <= 2 else 2
+    filtered = [scored[0]]
+    seen_note_ids = {scored[0].get("note_id")}
+
+    for item in scored[1:]:
+        note_id = item.get("note_id")
+        if note_id in seen_note_ids:
+            continue
+        item_score = float(item.get("score") or 0)
+        if terms and int(item.get("_term_overlap") or 0) < min_overlap:
+            continue
+        if top_score > 0 and item_score < min_score:
+            continue
+        filtered.append(item)
+        seen_note_ids.add(note_id)
+        if len(filtered) >= min(limit, 2):
+            break
+
+    return [
+        {key: value for key, value in item.items() if key != "_term_overlap"}
+        for item in filtered
+    ]
+
+
+def build_vault_fallback_citations(
+    db: Session,
+    question: str,
+    *,
+    limit: int = 6,
+) -> list[dict]:
+    notes = [
+        note for note in list_notes(db, include_content=True)
+        if not getattr(note, "is_folder", False)
+        and not getattr(note, "deleted_at", None)
+        and _plain_note_text(getattr(note, "content", "") or "")
+    ]
+    if not notes:
+        return []
+
+    query_terms = _query_terms(question)
+
+    def score_note(note) -> tuple[int, str]:
+        title = getattr(note, "title", "") or ""
+        text = _plain_note_text(getattr(note, "content", "") or "")
+        haystack = f"{title} {text}".lower()
+        overlap = sum(1 for term in query_terms if term in haystack)
+        updated_at = str(getattr(note, "updated_at", "") or getattr(note, "created_at", "") or "")
+        return overlap, updated_at
+
+    ranked_notes = sorted(notes, key=score_note, reverse=True)
+    if query_terms:
+        ranked_notes = [note for note in ranked_notes if score_note(note)[0] > 0]
+    return [
+        {
+            "note_id": int(note.id),
+            "title": note.title,
+            "chunk_id": f"vault-fallback-{note.id}",
+            "score": float(score_note(note)[0]),
+            "excerpt": _plain_note_text(getattr(note, "content", "") or "")[:1800],
+        }
+        for note in ranked_notes[:limit]
+    ]
+
+
 @router.post("/import/batches/{batch_id}/ask", response_model=AskResponse)
 async def ask_import_batch(batch_id: str, payload: ImportBatchAskRequest, db: Session = Depends(get_db)) -> AskResponse:
     if not ai_enabled:
@@ -898,6 +1033,30 @@ async def ask_import_batch(batch_id: str, payload: ImportBatchAskRequest, db: Se
     }
     answer = await ai_client.answer(payload.question, citations, llm_config)
     return AskResponse(answer=answer, citations=[Citation(**item) for item in citations], mode="import_batch")
+
+
+@router.post("/notes/{note_id}/ask", response_model=AskResponse)
+async def ask_note(note_id: int, payload: ImportBatchAskRequest, db: Session = Depends(get_db)) -> AskResponse:
+    if not ai_enabled:
+        return AskResponse(answer="AI is disabled in settings.", citations=[], mode="note")
+
+    note = get_note(db, note_id)
+    if not note or getattr(note, "deleted_at", None):
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    citation = build_note_citation(note)
+    if not citation:
+        return AskResponse(answer="This note has no readable content yet.", citations=[], mode="note")
+
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    answer = await ai_client.answer(payload.question, [citation], llm_config)
+    return AskResponse(answer=answer, citations=[Citation(**citation)], mode="note")
 
 
 @router.post("/search")
@@ -1008,6 +1167,9 @@ async def global_chat(payload: AskRequest, db: Session = Depends(get_db)):
     if payload.mode == "rag":
         results = await search_knowledge(payload.question, ai_client=ai_client, top_k=5)
         citations = await run_in_threadpool(citations_from_results, db, results)
+        citations = filter_relevant_vault_citations(citations, payload.question)
+        if not citations:
+            citations = await run_in_threadpool(build_vault_fallback_citations, db, payload.question, limit=5)
         citation_block = "\n\n".join(
             f"[{idx + 1}] {item['title']}\n{item['excerpt']}" for idx, item in enumerate(citations)
         )

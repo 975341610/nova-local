@@ -216,15 +216,6 @@ export const api = {
   // Streaming AI and File uploads still use network requests (or we can wrap them later)
   // For now, these are less critical than CRUD saving
   streamChat: async (payload: { question: string; mode: string }, onChunk: (chunk: string) => void) => {
-    if (window.electron?.ipcInvoke) {
-      // Use IPC for streaming if implemented
-      try {
-        await window.electron.ipcInvoke('ai:stream-chat', payload, (chunk: string) => onChunk(chunk));
-        return;
-      } catch (e) {
-        console.warn('IPC streaming failed, falling back to fetch', e);
-      }
-    }
     const API_BASE = getApiBase();
     const response = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
@@ -305,6 +296,17 @@ export const api = {
   askImportBatch: async (batchId: string, question: string) => {
     const API_BASE = getApiBase();
     const response = await fetch(`${API_BASE}/import/batches/${encodeURIComponent(batchId)}/ask`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<AskResponse>;
+  },
+  askNote: async (noteId: number | string, question: string) => {
+    const API_BASE = getApiBase();
+    const response = await fetch(`${API_BASE}/notes/${encodeURIComponent(String(noteId))}/ask`, {
       method: 'POST',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },

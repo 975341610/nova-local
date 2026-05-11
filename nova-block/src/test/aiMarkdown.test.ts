@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../lib/aiMarkdown'
+import { aiMarkdownToHtml, aiMarkdownToHtmlWithFootnotes, shouldRenderAIMarkdown } from '../lib/aiMarkdown'
 import { renderReaderHtml } from '../lib/readerContent'
 import { Blockquote } from '../lib/tiptapExtensions'
 
@@ -26,6 +26,20 @@ describe('AI Markdown rendering', () => {
     expect(doc.content?.some((node: any) => node.type === 'bulletList')).toBe(true)
     expect(JSON.stringify(doc)).toContain('bold')
     expect(JSON.stringify(doc)).toContain('code')
+  })
+
+  it('converts AI citation markers into Nova footnote nodes', () => {
+    const html = aiMarkdownToHtmlWithFootnotes('1. 问题答案在哪里？ [1]', [
+      { title: '来源笔记', excerpt: '&lt;h1&gt;答案&lt;/h1&gt;<mark data-color="#fff59d">在这里</mark> **重点**' },
+    ])
+
+    expect(html).toContain('data-type="footnote"')
+    expect(html).toContain('data-index="1"')
+    expect(html).not.toContain('来源笔记')
+    expect(html).toContain('答案 在这里 重点')
+    expect(html).not.toContain('&lt;h1')
+    expect(html).not.toContain('<mark')
+    expect(html).not.toContain('[1]')
   })
 
   it('reader renders markdown-like AI text wrapped in an HTML paragraph', () => {

@@ -314,12 +314,18 @@ async function ensureBackend() {
 
   startBackendProcess();
 
-  const maxAttempts = 90;
+  // Some machines need extra time after an update because Python imports,
+  // SQLite/vault repair, or antivirus scans can delay the first /health.
+  // Do not declare startup failed while the backend is still coming up.
+  const maxAttempts = 240;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (await checkBackend(1200)) {
+    if (await checkBackend(2000)) {
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    if ((attempt + 1) % 20 === 0) {
+      console.info(`[backend] waiting for health check ${attempt + 1}/${maxAttempts} at ${BACKEND_ORIGIN}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
   const detail = backendLastError ? ` Last backend error: ${backendLastError}` : '';

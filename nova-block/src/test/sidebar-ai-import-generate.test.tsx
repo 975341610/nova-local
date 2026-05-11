@@ -50,6 +50,24 @@ describe('SidebarTree AI import generate entry', () => {
     useNoteStore.getState().setCurrentNoteId(null)
   })
 
+  it('shows AI workbench modes for import, ask, and writing', async () => {
+    render(<SidebarTree selectedNodeId={null} onNodeSelect={vi.fn()} />)
+    openAiPanel()
+
+    expect(screen.getByRole('button', { name: 'ai-workbench-mode-import' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'ai-workbench-mode-ask' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'ai-workbench-mode-write' })).toBeTruthy()
+    expect(screen.getByTestId('ai-import-empty')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'ai-workbench-mode-ask' }))
+    expect(await screen.findByText('全部笔记')).toBeTruthy()
+    expect(screen.getByLabelText('ask-import-batch-input')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'ai-workbench-mode-write' }))
+    expect(await screen.findByTestId('ai-write-panel')).toBeTruthy()
+    expect(screen.getByText('总结当前笔记')).toBeTruthy()
+  })
+
   it('previews files, lets the user choose a template, generates one AI note, and selects it', async () => {
     const onNodeSelect = vi.fn()
     vi.spyOn(api, 'previewImportFiles').mockResolvedValue({
@@ -154,6 +172,74 @@ describe('SidebarTree AI import generate entry', () => {
       expect(useNoteStore.getState().notes).toEqual(expect.arrayContaining([expect.objectContaining({ id: 202, title: aiGeneratedNote.title })]))
     })
     expect(onNodeSelect).toHaveBeenCalledWith('202')
+  })
+
+  it('asks the whole knowledge base from the AI workbench ask mode', async () => {
+    vi.spyOn(api, 'createNote').mockResolvedValue({ ...aiGeneratedNote, id: 203, title: 'AI 回答 - 全库回答' })
+    vi.spyOn(api, 'streamChat').mockImplementation(async (_payload, onChunk) => {
+      onChunk('全库')
+      onChunk('回答')
+      onChunk('\n__CITATIONS__:[{"note_id":202,"title":"**Related Note**","chunk_id":"chunk-202","score":0.9,"excerpt":"- Related excerpt."}]')
+    })
+
+    render(<SidebarTree selectedNodeId={null} onNodeSelect={vi.fn()} />)
+    openAiPanel()
+
+    fireEvent.click(screen.getByRole('button', { name: 'ai-workbench-mode-ask' }))
+    fireEvent.change(await screen.findByLabelText('ask-import-batch-input'), { target: { value: '全库有什么？' } })
+    fireEvent.click(screen.getByRole('button', { name: 'ask-import-batch' }))
+
+    await waitFor(() => {
+      expect(api.streamChat).toHaveBeenCalledWith({ question: '全库有什么？', mode: 'rag' }, expect.any(Function))
+    })
+    expect(await screen.findByText('全库回答')).toBeTruthy()
+    expect(screen.getByText('Related Note')).toBeTruthy()
+    expect(screen.getByText('Related excerpt.')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /save-ai-answer-/ }))
+    await waitFor(() => {
+      expect(api.createNote).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'AI 回答 - 全库有什么？',
+        content: expect.stringContaining('<h2>问答信息</h2>'),
+        properties: expect.arrayContaining([
+          expect.objectContaining({ name: 'ai_source', value: 'side_panel_answer' }),
+          expect.objectContaining({ name: 'ai_scope', value: 'vault' }),
+          expect.objectContaining({ name: 'ai_question', value: '全库有什么？' }),
+          expect.objectContaining({ name: 'ai_citations', value: expect.stringContaining('Related Note') }),
+        ]),
+      }))
+    })
+    const createPayload = vi.mocked(api.createNote).mock.calls.at(-1)?.[0]
+    expect(createPayload?.content).toContain('<strong>问题：</strong>全库有什么？')
+    expect(createPayload?.content).toContain('<strong>范围：</strong>全部知识库')
+    expect(createPayload?.content).toContain('<h2>AI 回答</h2>')
+    expect(createPayload?.content).toContain('<h2>引用来源</h2>')
+    expect(createPayload?.content).toContain('data-type="note-link"')
+    expect(createPayload?.content).toContain('data-id="202"')
+    expect(createPayload?.content).toContain('Related Note')
+  })
+
+  it('opens the note matching the citation title when a cached citation id is stale', async () => {
+    const onNodeSelect = vi.fn()
+    useNoteStore.getState().setNotes([
+      { ...aiGeneratedNote, id: 401, title: 'Wrong Note', content: '<p>B</p>' },
+      { ...aiGeneratedNote, id: 402, title: 'Actual Source', content: '<p>A</p>' },
+    ])
+    vi.spyOn(api, 'streamChat').mockImplementation(async (_payload, onChunk) => {
+      onChunk('Answer')
+      onChunk('\n__CITATIONS__:[{"note_id":401,"title":"Actual Source","chunk_id":"chunk-stale","score":0.9,"excerpt":"Source excerpt."}]')
+    })
+
+    render(<SidebarTree selectedNodeId={null} onNodeSelect={onNodeSelect} />)
+    openAiPanel()
+
+    fireEvent.click(screen.getByRole('button', { name: 'ai-workbench-mode-ask' }))
+    fireEvent.change(await screen.findByLabelText('ask-import-batch-input'), { target: { value: 'Where is it from?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'ask-import-batch' }))
+
+    expect(await screen.findByText('Actual Source')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'open-import-citation-402' }))
+    expect(onNodeSelect).toHaveBeenLastCalledWith('402')
   })
 
   it('previews a url, generates one AI note, and selects it', async () => {
@@ -472,6 +558,7 @@ describe('SidebarTree AI import generate entry', () => {
     render(<SidebarTree selectedNodeId="301" onNodeSelect={onNodeSelect} />)
     openAiPanel()
 
+    fireEvent.click(screen.getByRole('button', { name: 'ai-workbench-mode-import' }))
     fireEvent.change(screen.getByLabelText('ai-import-url-input'), { target: { value: 'https://example.com/update' } })
     fireEvent.click(screen.getByRole('button', { name: 'preview-ai-import-url' }))
 
@@ -489,5 +576,103 @@ describe('SidebarTree AI import generate entry', () => {
       }))
     })
     expect(onNodeSelect).toHaveBeenCalledWith('301')
+  })
+
+  it('asks questions about the currently selected note when it is not an import batch', async () => {
+    const onNodeSelect = vi.fn()
+    useNoteStore.getState().setNotes([
+      {
+        ...aiGeneratedNote,
+        id: 401,
+        title: 'Project Note',
+        content: '<h1>Project Note</h1><p>核心内容</p>',
+        properties: [],
+      },
+    ])
+    vi.spyOn(api, 'askNote').mockResolvedValue({
+      answer: '这篇笔记主要讲项目内容。[1]',
+      citations: [{ note_id: 401, title: 'Project Note', chunk_id: 'note-401', score: 1, excerpt: '核心内容' }],
+      mode: 'note',
+    })
+    vi.spyOn(api, 'updateNote').mockResolvedValue({
+      ...aiGeneratedNote,
+      id: 401,
+      title: 'Project Note',
+      content: '<h1>Project Note</h1><p>核心内容</p><hr data-ai-chat-insert="true" /><p>这篇笔记主要讲项目内容。<span data-type="footnote" data-index="1" data-content="Project Note：核心内容"></span></p>',
+      properties: [],
+    })
+
+    render(<SidebarTree selectedNodeId="401" onNodeSelect={onNodeSelect} />)
+    openAiPanel()
+
+    expect(await screen.findByText('当前笔记问答')).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'ai-ask-scope-select' })).toBeTruthy()
+    expect(screen.getByText('Project Note')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'ask-suggested-总结核心要点' })).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('ask-import-batch-input'), { target: { value: '这篇讲了什么？' } })
+    fireEvent.click(screen.getByRole('button', { name: 'ask-import-batch' }))
+
+    await waitFor(() => {
+      expect(api.askNote).toHaveBeenCalledWith('401', '这篇讲了什么？')
+    })
+    expect(await screen.findByText('这篇笔记主要讲项目内容。[1]')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /insert-ai-answer-/ }))
+    await waitFor(() => {
+      expect(api.updateNote).toHaveBeenCalledWith(401, expect.objectContaining({
+        content: expect.stringContaining('data-type="footnote"'),
+      }))
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'open-import-citation-401' }))
+    expect(onNodeSelect).toHaveBeenCalledWith('401')
+  })
+
+  it('runs a writing action and inserts the result into the selected note', async () => {
+    const onNodeSelect = vi.fn()
+    useNoteStore.getState().setNotes([
+      {
+        ...aiGeneratedNote,
+        id: 501,
+        title: 'Writing Note',
+        content: '<h1>Writing Note</h1><p>核心内容</p>',
+        properties: [],
+      },
+    ])
+    vi.spyOn(api, 'streamInlineAI').mockImplementation(async (_payload, onChunk) => {
+      onChunk('## 摘要\n')
+      onChunk('核心内容总结')
+    })
+    vi.spyOn(api, 'updateNote').mockResolvedValue({
+      ...aiGeneratedNote,
+      id: 501,
+      title: 'Writing Note',
+      content: '<h1>Writing Note</h1><p>核心内容</p><hr data-ai-write-insert="true" /><h2>摘要</h2><p>核心内容总结</p>',
+      properties: [],
+    })
+
+    render(<SidebarTree selectedNodeId="501" onNodeSelect={onNodeSelect} />)
+    openAiPanel()
+
+    fireEvent.click(screen.getByRole('button', { name: 'ai-workbench-mode-write' }))
+    fireEvent.click(screen.getByRole('button', { name: 'run-ai-write-summarize' }))
+
+    await waitFor(() => {
+      expect(api.streamInlineAI).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'summarize',
+          context: expect.stringContaining('核心内容'),
+        }),
+        expect.any(Function),
+      )
+    })
+    expect((await screen.findByTestId('ai-write-result')).textContent).toContain('核心内容总结')
+
+    fireEvent.click(screen.getByRole('button', { name: 'insert-ai-write-result' }))
+    await waitFor(() => {
+      expect(api.updateNote).toHaveBeenCalledWith(501, expect.objectContaining({
+        content: expect.stringContaining('data-ai-write-insert="true"'),
+      }))
+    })
+    expect(onNodeSelect).toHaveBeenCalledWith('501')
   })
 })
