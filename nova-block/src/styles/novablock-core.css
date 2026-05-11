@@ -556,6 +556,59 @@ textarea {
   border-radius: 1rem;
 }
 
+.tiptap-editor figure[data-ai-source-card],
+.tiptap-preview figure[data-ai-source-card],
+.novablock-editor figure[data-ai-source-card] {
+  margin: 1.25rem 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border, #d1d5db) 76%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--background, #ffffff) 86%, var(--foreground, #111827) 14%);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.dark .tiptap-editor figure[data-ai-source-card],
+.dark .tiptap-preview figure[data-ai-source-card],
+.dark .novablock-editor figure[data-ai-source-card] {
+  background: color-mix(in srgb, var(--background, #111827) 84%, var(--foreground, #f9fafb) 16%);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+}
+
+.tiptap-editor figure[data-ai-source-card] iframe,
+.tiptap-preview figure[data-ai-source-card] iframe,
+.novablock-editor figure[data-ai-source-card] iframe {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  min-height: 220px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: #050505;
+}
+
+.tiptap-editor figure[data-ai-source-card] figcaption,
+.tiptap-preview figure[data-ai-source-card] figcaption,
+.novablock-editor figure[data-ai-source-card] figcaption {
+  padding: 0.75rem 0.9rem 0.9rem;
+  color: var(--foreground, #111827);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.tiptap-editor blockquote[data-ai-source-card],
+.tiptap-preview blockquote[data-ai-source-card],
+.novablock-editor blockquote[data-ai-source-card] {
+  border: 1px solid color-mix(in srgb, var(--border, #d1d5db) 72%, transparent) !important;
+  border-left: 4px solid color-mix(in srgb, var(--foreground, #111827) 26%, #2563eb 74%) !important;
+  border-radius: 0.65rem;
+  padding: 0.8rem 0.95rem !important;
+  background: color-mix(in srgb, var(--background, #ffffff) 88%, #2563eb 12%) !important;
+  color: var(--foreground, #111827) !important;
+  font-style: normal !important;
+  overflow-wrap: anywhere;
+}
+
 .media-node-resize {
   position: absolute;
   right: 0.25rem;
@@ -839,16 +892,31 @@ textarea {
   line-height: 1.625;
 }
 
-.tiptap-editor a {
-  color: #2563eb;
+.tiptap-editor a,
+.tiptap-preview a,
+.novablock-editor a {
+  color: color-mix(in srgb, var(--foreground, #111827) 34%, #005fcc 66%);
   text-decoration: none;
-  border-bottom: 1px solid rgba(37, 99, 235, 0.3);
+  border-bottom: 1px solid color-mix(in srgb, currentColor 42%, transparent);
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  border-radius: 4px;
+  padding: 0 2px;
   transition: all 0.2s;
+  overflow-wrap: anywhere;
 }
 
-.tiptap-editor a:hover {
-  background-color: rgba(37, 99, 235, 0.1);
-  border-bottom-color: rgba(37, 99, 235, 0.8);
+.dark .tiptap-editor a,
+.dark .tiptap-preview a,
+.dark .novablock-editor a {
+  color: color-mix(in srgb, var(--foreground, #f9fafb) 28%, #8ab4ff 72%);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.tiptap-editor a:hover,
+.tiptap-preview a:hover,
+.novablock-editor a:hover {
+  background-color: color-mix(in srgb, currentColor 16%, transparent);
+  border-bottom-color: color-mix(in srgb, currentColor 82%, transparent);
 }
 
 .notion-blockquote {
@@ -897,6 +965,38 @@ textarea {
 
 .novablock-editor blockquote p {
   margin: 0;
+}
+
+.tiptap-editor blockquote[data-ai-source-card],
+.tiptap-preview blockquote[data-ai-source-card],
+.tiptap-notion blockquote[data-ai-source-card],
+.novablock-editor blockquote[data-ai-source-card] {
+  border: 1px solid color-mix(in srgb, var(--border, #d1d5db) 72%, transparent) !important;
+  border-left: 4px solid color-mix(in srgb, var(--foreground, #111827) 26%, #2563eb 74%) !important;
+  border-radius: 0.65rem !important;
+  padding: 0.8rem 0.95rem !important;
+  margin: 1.25rem 0 !important;
+  background: color-mix(in srgb, var(--background, #ffffff) 88%, #2563eb 12%) !important;
+  color: var(--foreground, #111827) !important;
+  font-style: normal !important;
+  overflow-wrap: anywhere;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.07);
+}
+
+.dark .tiptap-editor blockquote[data-ai-source-card],
+.dark .tiptap-preview blockquote[data-ai-source-card],
+.dark .tiptap-notion blockquote[data-ai-source-card],
+.dark .novablock-editor blockquote[data-ai-source-card] {
+  background: color-mix(in srgb, var(--background, #111827) 82%, #60a5fa 18%) !important;
+  color: var(--foreground, #f9fafb) !important;
+}
+
+.tiptap-editor blockquote[data-ai-source-card] p,
+.tiptap-preview blockquote[data-ai-source-card] p,
+.tiptap-notion blockquote[data-ai-source-card] p,
+.novablock-editor blockquote[data-ai-source-card] p {
+  color: inherit !important;
+  font-style: normal !important;
 }
 
 .notion-code-block,
@@ -1335,4 +1435,3 @@ input {
   background: linear-gradient(transparent 60%, rgba(250, 204, 21, 0.14) 60%);
   border-bottom-color: rgba(251, 146, 60, 0.7);
 }
-

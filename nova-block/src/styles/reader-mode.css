@@ -88,11 +88,61 @@ body.reader-mode [data-reader-hide="true"] {
   display: block;
 }
 
+.nv-reader-column figure[data-ai-source-card] {
+  margin: 1.8em 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--nv-color-border, #d6ddd7) 78%, transparent);
+  border-radius: var(--nv-radius-md);
+  background: color-mix(in srgb, var(--nv-reader-bg, #f7faf5) 82%, var(--nv-reader-fg, #17231f) 18%);
+  box-shadow: var(--nv-shadow-2);
+}
+
+.nv-reader-column figure[data-ai-source-card] iframe {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 240px;
+  height: auto;
+  margin: 0;
+  border: 0;
+  background: #050505;
+}
+
+.nv-reader-column figure[data-ai-source-card] figcaption {
+  padding: 0.85rem 1rem 1rem;
+  color: var(--nv-reader-fg);
+  font-family: var(--nv-font-sans);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.nv-reader-column blockquote[data-ai-source-card] {
+  border: 1px solid color-mix(in srgb, var(--nv-color-border, #d6ddd7) 74%, transparent);
+  border-left: 4px solid color-mix(in srgb, var(--nv-color-accent, #0f766e) 80%, var(--nv-reader-fg, #17231f) 20%);
+  border-radius: var(--nv-radius-sm);
+  padding: 0.75rem 0.9rem;
+  background: color-mix(in srgb, var(--nv-reader-bg, #f7faf5) 84%, var(--nv-color-accent, #0f766e) 16%);
+  color: var(--nv-reader-fg);
+  font-family: var(--nv-font-sans);
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
 .nv-reader-column a {
-  color: var(--nv-color-accent);
+  color: color-mix(in srgb, var(--nv-color-fg, #17231f) 34%, var(--nv-color-accent, #0f766e) 66%);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  border-radius: 5px;
+  padding: 0 3px;
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+:root[data-theme="dark"] .nv-reader-column a,
+.dark .nv-reader-column a {
+  color: color-mix(in srgb, var(--nv-color-fg, #f4f7f2) 28%, #8fe3d0 72%);
+  background: color-mix(in srgb, currentColor 14%, transparent);
 }
 
 /* 阅读模式浮动工具条

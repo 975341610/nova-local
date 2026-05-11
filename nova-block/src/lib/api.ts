@@ -1,6 +1,12 @@
 import type { 
-  AskResponse, 
-  ModelConfig, 
+  AskResponse,
+  GeneratedNotePersistResponse,
+  GeneratedNoteResponse,
+  ImportPreviewResponse,
+  ImportTemplateId,
+  ModelConfig,
+  NormalizedContentPayload,
+  AIEngineMode,
   Note, 
   NoteRevision,
   NoteTemplate,
@@ -11,6 +17,7 @@ import type {
   TrashState, 
   UserStats,
   UserAchievement,
+  UploadResponse,
   VaultHealthReport,
 } from './types';
 import { getApiBase } from './apiUrl';
@@ -34,7 +41,7 @@ type NoteWritePayload = {
   sort_key?: string | null;
   stickers?: Note['stickers'];
   sticky_notes?: Note['sticky_notes'];
-  properties?: NoteProperty[];
+  properties?: Array<Pick<NoteProperty, 'name' | 'type' | 'value'>>;
   rename_file?: boolean;
 };
 
@@ -145,14 +152,9 @@ export const api = {
   ask: (payload: { question: string; mode: 'chat' | 'rag' | 'agent' }) =>
     invoke<AskResponse>('ai:ask', '/ask', { method: 'POST', body: JSON.stringify(payload) }),
   streamInlineAI: async (payload: { prompt: string; context: string; action: string }, onChunk: (chunk: string) => void) => {
-    if (window.electron?.ipcInvoke) {
-      try {
-        await window.electron.ipcInvoke('ai:stream-inline', payload, (chunk: string) => onChunk(chunk));
-        return;
-      } catch (e) {
-        console.warn('IPC inline streaming failed, falling back to fetch', e);
-      }
-    }
+    // Streaming endpoints must use fetch so the renderer can read the response body.
+    // The generic Electron IPC bridge only supports request/response invocations and
+    // intentionally does not expose ai:stream-inline.
     const API_BASE = getApiBase();
     const response = await fetch(`${API_BASE}/ai/inline`, {
       method: 'POST',
@@ -162,29 +164,49 @@ export const api = {
     });
     if (!response.ok) throw new Error(await response.text());
     const reader = response.body?.getReader();
-    if (!reader) return;
+    if (!reader) throw new Error('Inline AI response body is empty');
     const decoder = new TextDecoder();
     let buffer = '';
+    let gotChunk = false;
+
+    const processLine = (line: string) => {
+      const normalized = line.trimEnd();
+      if (!normalized.startsWith('data:')) return;
+      const data = normalized.slice(5).trimStart();
+      if (!data || data === '[DONE]') return;
+      let parsed: { text?: string; error?: unknown };
+      try {
+        parsed = JSON.parse(data);
+      } catch (e) {
+        console.error('Failed to parse SSE line:', data, e);
+        return;
+      }
+      if (parsed.error) {
+        throw new Error(String(parsed.error));
+      }
+      if (parsed.text) {
+        gotChunk = true;
+        onChunk(parsed.text);
+      }
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
+      const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.text) {
-              onChunk(parsed.text);
-            }
-          } catch (e) {
-            console.error('Failed to parse SSE line:', data, e);
-          }
-        }
+        processLine(line);
       }
+    }
+
+    const trailing = buffer + decoder.decode();
+    if (trailing.trim()) {
+      processLine(trailing);
+    }
+    if (!gotChunk) {
+      throw new Error('Inline AI returned no content');
     }
   },
   getModelConfig: () => invoke<ModelConfig>('config:get-model', '/model-config'),
@@ -221,6 +243,98 @@ export const api = {
     }
   },
   upload: uploadFiles,
+  importDocuments: async (files: File[]) => {
+    const API_BASE = getApiBase();
+    const form = new FormData();
+    files.forEach((file) => form.append('files', file));
+    const response = await fetch(`${API_BASE}/upload`, {
+      method: 'POST',
+      cache: 'no-store',
+      body: form,
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<UploadResponse>;
+  },
+  previewImportFiles: async (files: File[]) => {
+    const API_BASE = getApiBase();
+    const form = new FormData();
+    files.forEach((file) => form.append('files', file));
+    const response = await fetch(`${API_BASE}/import/preview`, {
+      method: 'POST',
+      cache: 'no-store',
+      body: form,
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<ImportPreviewResponse>;
+  },
+  previewImportUrls: async (urls: string[]) => {
+    const API_BASE = getApiBase();
+    const response = await fetch(`${API_BASE}/import/url/preview`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<ImportPreviewResponse>;
+  },
+  importAndGenerateNote: async (files: File[], options: { templateId?: ImportTemplateId } = {}) => {
+    const API_BASE = getApiBase();
+    const form = new FormData();
+    files.forEach((file) => form.append('files', file));
+    form.append('template_id', options.templateId || 'general');
+    const response = await fetch(`${API_BASE}/import/generate-note`, {
+      method: 'POST',
+      cache: 'no-store',
+      body: form,
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<GeneratedNoteResponse>;
+  },
+  importUrlsAndGenerateNote: async (urls: string[], options: { templateId?: ImportTemplateId } = {}) => {
+    const API_BASE = getApiBase();
+    const response = await fetch(`${API_BASE}/import/url/generate-note`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls, template_id: options.templateId || 'general' }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<GeneratedNoteResponse>;
+  },
+  askImportBatch: async (batchId: string, question: string) => {
+    const API_BASE = getApiBase();
+    const response = await fetch(`${API_BASE}/import/batches/${encodeURIComponent(batchId)}/ask`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<AskResponse>;
+  },
+  generateNoteFromContent: async (payload: NormalizedContentPayload) => {
+    const API_BASE = getApiBase();
+    const response = await fetch(`${API_BASE}/ai/generate-note-from-content`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<GeneratedNoteResponse>;
+  },
+  generateAndPersistNoteFromContent: async (payload: NormalizedContentPayload) => {
+    const API_BASE = getApiBase();
+    const response = await fetch(`${API_BASE}/ai/generate-note-from-content/persist`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<GeneratedNotePersistResponse>;
+  },
   getUserStats: async () => {
     const res = await invoke<any>('user:get-stats', '/user/stats');
     if (!res || Array.isArray(res)) return { exp: 0, level: 1, total_captures: 0, current_theme: 'dark' };
@@ -257,9 +371,9 @@ export const api = {
   uploadMusic: uploadMusicFile,
   
   // AI Plugin status and hardware check
-  getAIPluginStatus: () => invoke<{ enabled: boolean }>('ai:plugin-status', '/ai/plugin-status'),
-  updateAIPluginConfig: (payload: { enabled?: boolean; num_ctx?: number }) => 
-    invoke<{ enabled: boolean; num_ctx: number }>('ai:toggle-plugin', '/ai/toggle-plugin', { method: 'POST', body: JSON.stringify(payload) }),
+  getAIPluginStatus: () => invoke<{ enabled: boolean; ai_mode: AIEngineMode; num_ctx?: number }>('ai:plugin-status', '/ai/plugin-status'),
+  updateAIPluginConfig: (payload: { enabled?: boolean; ai_mode?: AIEngineMode; num_ctx?: number }) => 
+    invoke<{ enabled: boolean; ai_mode: AIEngineMode; num_ctx: number }>('ai:toggle-plugin', '/ai/toggle-plugin', { method: 'POST', body: JSON.stringify(payload) }),
   updateOllama: () => invoke<{ status: string; output?: string; message?: string }>('ai:update-ollama', '/ai/update-ollama', { method: 'POST' }),
   checkAIHardware: () => invoke<{ compatible: boolean; details: string }>('ai:hardware-check', '/ai/hardware-check'),
   spellcheck: (text: string) =>

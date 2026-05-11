@@ -29,6 +29,12 @@ from backend.models.schemas import (
     AskResponse,
     BulkNoteAction,
     Citation,
+    GeneratedNotePersistResponse,
+    GeneratedNoteResponse,
+    ImportPreviewItem,
+    ImportPreviewResponse,
+    ImportBatchAskRequest,
+    ImportUrlRequest,
     InlineAIRequest,
     ModelConfigPayload,
     NotebookCreate,
@@ -45,6 +51,7 @@ from backend.models.schemas import (
     NoteTemplateUpdate,
     NoteListItemResponse,
     NoteTreeResponse,
+    NormalizedContentPayload,
     NoteUpdate,
     QuickCaptureRequest,
     QuickCaptureResponse,
@@ -68,7 +75,10 @@ import json
 from backend.config import get_settings, get_custom_config_path, PROJECT_DIR
 from backend.rag.pipeline import citations_from_results, cosine_similarity, search_knowledge
 from backend.services.ai_client import AIClient
-from backend.services.document_service import chunk_text, parse_document
+from backend.services.ai_mode import AI_MODE_LOCAL, AI_MODE_REMOTE, normalize_ai_mode, read_ai_runtime_config, should_run_remote_ai_indexing
+from backend.services.document_service import build_import_preview_item, build_url_preview_item, chunk_text, combine_imported_documents_for_note_generation, combine_imported_urls_for_note_generation, fetch_url_article, parse_document
+from backend.services.import_generation import generate_note_from_imported_documents
+from backend.services.note_generation import generate_structured_note
 from backend.services.note_indexing_queue import NoteIndexingQueue
 from backend.services.template_files import delete_template_file, mirror_template_to_vault
 from backend.services.vault_health import scan_vault_health
@@ -135,6 +145,7 @@ import psutil
 
 # AI 插件状态全局变量
 ai_enabled = True
+ai_mode = AI_MODE_REMOTE
 UPLOAD_SESSION_TTL_SECONDS = 30 * 60
 
 
@@ -157,16 +168,16 @@ def cleanup_expired_upload_sessions(now: float | None = None, ttl_seconds: int =
             continue
 
 def load_ai_status():
-    """从 ai_config.json 加载 AI 启用状态"""
-    global ai_enabled
-    config_path = Path(settings.data_root) / "ai_config.json"
-    if config_path.exists():
-        try:
-            with open(config_path, "r") as f:
-                config = json.load(f)
-                ai_enabled = config.get("enabled", True)
-        except Exception as e:
-            print(f"[!] Error loading AI status: {e}")
+    """从 ai_config.json 加载 AI 启用状态与引擎模式。"""
+    global ai_enabled, ai_mode
+    try:
+        config = read_ai_runtime_config(settings.data_root)
+        ai_enabled = config["enabled"]
+        ai_mode = config["ai_mode"]
+    except Exception as e:
+        ai_enabled = True
+        ai_mode = AI_MODE_REMOTE
+        print(f"[!] Error loading AI status: {e}")
 
 # 初始化加载
 load_ai_status()
@@ -194,9 +205,7 @@ def extract_manual_links(content: str) -> list[int]:
 
 
 def should_run_ai_indexing(llm_config: dict[str, str] | None) -> bool:
-    if not ai_enabled or not llm_config:
-        return False
-    return bool(llm_config.get("api_key") and llm_config.get("base_url"))
+    return should_run_remote_ai_indexing(ai_enabled, ai_mode, llm_config)
 
 
 def spawn_note_indexing(*args, **kwargs) -> None:
@@ -399,6 +408,7 @@ def persist_note_sync(
     sort_key: str | None = None,
     stickers: list[dict] | None = None,
     sticky_notes: list[dict] | None = None,
+    properties: list | None = None,
 ) -> NoteResponse:
     # 1. 快速创建数据库记录
     from backend.database import with_db_retry
@@ -422,6 +432,7 @@ def persist_note_sync(
             sort_key=sort_key,
             stickers=stickers,
             sticky_notes=sticky_notes,
+            properties=properties,
         )
     
     note = do_create()
@@ -705,6 +716,124 @@ async def upload_media_complete(
         "type": content_type
     }
 
+@router.post("/import/preview", response_model=ImportPreviewResponse)
+async def preview_import_files(files: list[UploadFile] = File(...)) -> ImportPreviewResponse:
+    items: list[ImportPreviewItem] = []
+    for file in files:
+        content = await file.read()
+        items.append(ImportPreviewItem(**build_import_preview_item(file.filename, content)))
+    return ImportPreviewResponse(items=items)
+
+
+@router.post("/import/url/preview", response_model=ImportPreviewResponse)
+async def preview_import_urls(payload: ImportUrlRequest) -> ImportPreviewResponse:
+    items: list[ImportPreviewItem] = []
+    for url in payload.urls:
+        try:
+            article = await fetch_url_article(url)
+            items.append(ImportPreviewItem(**build_url_preview_item(article["url"], article["html"])))
+        except Exception as error:
+            items.append(
+                ImportPreviewItem(
+                    file_name=url,
+                    file_type="url",
+                    size=0,
+                    title=url,
+                    status="error",
+                    message=str(error),
+                    summary="",
+                    block_count=0,
+                )
+            )
+    return ImportPreviewResponse(items=items)
+
+
+@router.post("/import/generate-note", response_model=GeneratedNoteResponse)
+async def import_and_generate_note(
+    files: list[UploadFile] = File(...),
+    template_id: str = Form("general"),
+    db: Session = Depends(get_db),
+) -> GeneratedNoteResponse:
+    documents: list[dict[str, str]] = []
+    for file in files:
+        content = await file.read()
+        title, parsed = parse_document(file.filename, content)
+        documents.append({"file_name": file.filename, "title": title, "content": parsed})
+
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    result = await generate_note_from_imported_documents(
+        documents=documents,
+        template_id=template_id,
+        ai_client=ai_client,
+        llm_config=llm_config,
+    )
+    return GeneratedNoteResponse(**result)
+
+
+@router.post("/import/url/generate-note", response_model=GeneratedNoteResponse)
+async def import_urls_and_generate_note(payload: ImportUrlRequest, db: Session = Depends(get_db)) -> GeneratedNoteResponse:
+    documents: list[dict[str, str]] = []
+    for url in payload.urls:
+        article = await fetch_url_article(url)
+        documents.append({"url": article["url"], "title": article["title"], "content": article["content"]})
+
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    normalized = combine_imported_urls_for_note_generation(documents, template_id=payload.template_id)
+    result = await generate_structured_note(normalized, ai_client, llm_config)
+    return GeneratedNoteResponse(**result)
+
+
+@router.post("/ai/generate-note-from-content", response_model=GeneratedNoteResponse)
+async def generate_note_from_content(payload: NormalizedContentPayload, db: Session = Depends(get_db)) -> GeneratedNoteResponse:
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    result = await generate_structured_note(payload.model_dump(), ai_client, llm_config)
+    return GeneratedNoteResponse(**result)
+
+
+@router.post("/ai/generate-note-from-content/persist", response_model=GeneratedNotePersistResponse)
+async def generate_and_persist_note_from_content(
+    payload: NormalizedContentPayload,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> GeneratedNotePersistResponse:
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    result = await generate_structured_note(payload.model_dump(), ai_client, llm_config)
+    generated = GeneratedNoteResponse(**result)
+    note = persist_note_sync(
+        db,
+        generated.title,
+        generated.markdown,
+        background_tasks,
+        icon="🤖",
+        tags=["AI整理"],
+    )
+    return GeneratedNotePersistResponse(generated=generated, note=note)
+
+
 @router.post("/ask", response_model=AskResponse)
 async def ask_question(payload: AskRequest, db: Session = Depends(get_db)) -> AskResponse:
     if not ai_enabled:
@@ -730,6 +859,47 @@ async def ask_question(payload: AskRequest, db: Session = Depends(get_db)) -> As
         answer = await ai_client.answer(payload.question, citations, llm_config)
         return AskResponse(answer=answer, citations=[Citation(**item) for item in citations], mode="rag")
 
+
+def build_import_batch_citations(notes) -> list[dict]:
+    citations: list[dict] = []
+    for note in notes:
+        content = getattr(note, "content", "") or ""
+        if not content.strip():
+            continue
+        citations.append(
+            {
+                "note_id": int(note.id),
+                "title": note.title,
+                "chunk_id": f"import-batch-{note.id}",
+                "score": 1.0,
+                "excerpt": content[:1200],
+            }
+        )
+    return citations
+
+
+@router.post("/import/batches/{batch_id}/ask", response_model=AskResponse)
+async def ask_import_batch(batch_id: str, payload: ImportBatchAskRequest, db: Session = Depends(get_db)) -> AskResponse:
+    if not ai_enabled:
+        return AskResponse(answer="AI is disabled in settings.", citations=[], mode="import_batch")
+
+    property_filter = {"import_batch_id": batch_id}
+    notes = list_notes(db, property_filter, include_content=True)
+    citations = build_import_batch_citations(notes)
+    if not citations:
+        return AskResponse(answer="No notes were found for this import batch.", citations=[], mode="import_batch")
+
+    model_config = await run_in_threadpool(get_or_create_model_config, db)
+    llm_config = {
+        "provider": model_config.provider,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "model_name": model_config.model_name,
+    }
+    answer = await ai_client.answer(payload.question, citations, llm_config)
+    return AskResponse(answer=answer, citations=[Citation(**item) for item in citations], mode="import_batch")
+
+
 @router.post("/search")
 async def search_api(payload: SearchRequest, db: Session = Depends(get_db)) -> dict:
     if not ai_enabled:
@@ -744,6 +914,12 @@ async def inline_ai(payload: InlineAIRequest, db: Session = Depends(get_db)):
     if not ai_enabled:
         return StreamingResponse(iter([f"data: {{\"error\": \"AI is disabled in settings.\"}}\n\n"]), media_type="text/event-stream")
         
+    markdown_output_rules = (
+        "\n\nOutput format rules: Return only clean Markdown content that can be inserted into a note editor. "
+        "Do not explain the format. Do not wrap the whole answer in a Markdown code fence. "
+        "Use headings, bullet lists, numbered lists, bold text, blockquotes, inline code and code blocks only when helpful. "
+        "Do not output raw HTML unless the user explicitly asks for HTML."
+    )
     system_prompts = {
         "continue": "You are a writing assistant. Continue writing the following text naturally. Return only the new text.",
         "expand": "You are a writing assistant. Expand the following text with more details and depth. Return only the expanded version.",
@@ -754,16 +930,11 @@ async def inline_ai(payload: InlineAIRequest, db: Session = Depends(get_db)):
         "ask": "You are a note-taking and personal knowledge base assistant. Based on the selected text and context, answer the user's intent or improve the text accordingly. Return only the result.",
     }
     messages = [
-        {"role": "system", "content": system_prompts.get(payload.action, "You are a helpful writing assistant.")},
+        {"role": "system", "content": system_prompts.get(payload.action, "You are a helpful writing assistant.") + markdown_output_rules},
         {"role": "user", "content": f"Context: {payload.context or ''}\n\nInput: {payload.prompt}"}
     ]
 
-    # check local ai plugin first
-    import logging
-    logging.warning(f"[DEBUG] inline_ai called. ai_enabled={ai_enabled}")
-    if ai_enabled:
-        logging.warning(f"[DEBUG] inline_ai local_ai_manager id: {id(local_ai_manager)}")
-        logging.warning(f"[DEBUG] local_ai_manager.is_ready={local_ai_manager.is_ready}")
+    if ai_mode == AI_MODE_LOCAL:
         if not local_ai_manager.is_ready:
             await local_ai_manager.initialize_model()
         if local_ai_manager.is_ready:
@@ -782,6 +953,12 @@ async def inline_ai(payload: InlineAIRequest, db: Session = Depends(get_db)):
                 }
             )
 
+        status = local_ai_manager.get_status()
+        if status.get("is_loading"):
+            return StreamingResponse(iter(['data: {"text": "Local AI model is still loading, please wait..."}\n\n']), media_type="text/event-stream")
+        error_msg = status.get("error") or "Local AI model is not ready."
+        return StreamingResponse(iter([f'data: {json.dumps({"error": error_msg}, ensure_ascii=False)}\n\n']), media_type="text/event-stream")
+
     model_config = await run_in_threadpool(get_or_create_model_config, db)
     if not model_config.api_key or not model_config.base_url:
         return StreamingResponse(iter([f"data: {{\"error\": \"AI Config missing (API Key or Base URL is empty). Please check your settings.\"}}\n\n"]), media_type="text/event-stream")
@@ -794,32 +971,17 @@ async def inline_ai(payload: InlineAIRequest, db: Session = Depends(get_db)):
     
     async def generate():
         try:
-            # 如果本地 AI 插件已启用，则优先使用本地模型
-            if ai_enabled:
-                status = local_ai_manager.get_status()
-                if status["is_ready"]:
-                    async for chunk in local_ai_manager.generate_chat_stream_messages(messages):
-                        yield chunk
-                    return
-                elif status["is_loading"]:
-                    yield "Local AI model is still loading, please wait..."
-                    return
-                else:
-                    if status.get("error"):
-                        import json
-                        error_msg = status.get('error', 'Unknown Error')
-                        yield f'data: {json.dumps({"error": f"Local AI Error: {error_msg}. Please check your model file or disable Local AI."})}\n\n'
-                        return
-                    pass
-
             async for chunk in ai_client.stream_chat(messages, llm_config):
+                if isinstance(chunk, str) and chunk.lstrip().startswith("data:"):
+                    yield chunk
+                    if '"error"' in chunk:
+                        return
+                    continue
                 yield f'data: {json.dumps({"text": chunk}, ensure_ascii=False)}\n\n'
             yield 'data: [DONE]\n\n'
         except Exception as e:
-            import json
             error_msg = f"Inline AI Error: {str(e)}"
             yield f'data: {json.dumps({"error": error_msg})}\n\n'
-    
     return StreamingResponse(
         generate(), 
         media_type="text/event-stream", 
@@ -865,6 +1027,12 @@ async def global_chat(payload: AskRequest, db: Session = Depends(get_db)):
             if payload.mode == "rag":
                 import json
                 yield f"__CITATIONS__:{json.dumps(citations)}\n"
+            if ai_mode == AI_MODE_LOCAL:
+                if not local_ai_manager.is_ready:
+                    await local_ai_manager.initialize_model()
+                async for chunk in local_ai_manager.generate_chat_stream_messages(messages):
+                    yield chunk
+                return
             async for chunk in ai_client.stream_chat(messages, llm_config):
                 yield chunk
         except Exception as e:
@@ -1113,6 +1281,7 @@ def create_note_api(payload: NoteCreate, background_tasks: BackgroundTasks, db: 
         payload.sort_key,
         payload.stickers,
         payload.sticky_notes,
+        payload.properties,
     )
 
 @router.put("/notes/{note_id}", response_model=NoteResponse)
@@ -2307,15 +2476,18 @@ async def import_data(payload: dict):
 @router.post("/ai/toggle-plugin")
 async def toggle_ai_plugin(payload: dict, background_tasks: BackgroundTasks):
     """切换 AI 插件启用状态或更新配置 (集成预置模型，实现瞬间就绪)"""
-    global ai_enabled
+    global ai_enabled, ai_mode
     enabled = payload.get("enabled", ai_enabled)
+    requested_mode = payload.get("ai_mode")
+    next_ai_mode = normalize_ai_mode(requested_mode) if requested_mode is not None else ai_mode
     num_ctx = payload.get("num_ctx")
     
     ai_enabled = enabled
+    ai_mode = next_ai_mode
     
     # 持久化到 ai_config.json
     config_path = Path(settings.data_root) / "ai_config.json"
-    config = {"enabled": ai_enabled, "preferred_engine": "auto", "num_ctx": 8192}
+    config = {"enabled": ai_enabled, "ai_mode": AI_MODE_REMOTE, "preferred_engine": "auto", "num_ctx": 8192}
     if config_path.exists():
         try:
             with open(config_path, "r") as f:
@@ -2325,6 +2497,7 @@ async def toggle_ai_plugin(payload: dict, background_tasks: BackgroundTasks):
             pass
     
     config["enabled"] = ai_enabled
+    config["ai_mode"] = ai_mode
     if num_ctx is not None:
         config["num_ctx"] = num_ctx
     
@@ -2332,9 +2505,9 @@ async def toggle_ai_plugin(payload: dict, background_tasks: BackgroundTasks):
         json.dump(config, f, indent=2)
 
     import logging
-    logging.warning(f"[DEBUG] toggle_ai_plugin called. ai_enabled={ai_enabled}, num_ctx={num_ctx}")
+    logging.warning(f"[DEBUG] toggle_ai_plugin called. ai_enabled={ai_enabled}, ai_mode={ai_mode}, num_ctx={num_ctx}")
     
-    if ai_enabled:
+    if ai_enabled and ai_mode == AI_MODE_LOCAL:
         # 如果只是更新 num_ctx，我们也需要重新初始化模型以使配置生效
         if num_ctx is not None:
             await local_ai_manager.stop_ollama_server() # 重启以应用新配置
@@ -2361,11 +2534,11 @@ async def toggle_ai_plugin(payload: dict, background_tasks: BackgroundTasks):
         # 3) 初始化本地 AI
         await local_ai_manager.initialize_model()
     else:
-        # 物理级解耦：如果关闭，则彻底停止后端 AI 进程
-        print("[*] AI Plugin disabled. Killing AI processes for physical decoupling...")
+        # 物理级解耦：如果关闭 AI 或切换到远程，则彻底停止后端本地 AI 进程
+        print("[*] Local AI disabled or remote mode selected. Killing local AI processes for physical decoupling...")
         await local_ai_manager.stop_ollama_server()
             
-    return {"status": "success", "enabled": ai_enabled, "num_ctx": config.get("num_ctx", 8192)}
+    return {"status": "success", "enabled": ai_enabled, "ai_mode": ai_mode, "num_ctx": config.get("num_ctx", 8192)}
 
 @router.post("/ai/toggle")
 async def ai_toggle_api(payload: dict, background_tasks: BackgroundTasks):
@@ -2402,19 +2575,22 @@ async def get_ai_plugin_status():
     """获取 AI 插件启用状态"""
     local_status = local_ai_manager.get_status()
     
-    # 读取 num_ctx
+    # 读取 ai_mode / num_ctx
+    current_ai_mode = ai_mode
     num_ctx = 8192
     config_path = Path(settings.data_root) / "ai_config.json"
     if config_path.exists():
         try:
             with open(config_path, "r") as f:
                 config = json.load(f)
+                current_ai_mode = normalize_ai_mode(config.get("ai_mode", ai_mode))
                 num_ctx = config.get("num_ctx", 8192)
         except:
             pass
             
     return {
         "enabled": ai_enabled,
+        "ai_mode": current_ai_mode,
         "num_ctx": num_ctx,
         "local_ai_ready": local_status["is_ready"],
         "local_ai_loading": local_status["is_loading"],

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -22,10 +22,17 @@ vi.mock('../lib/api', () => ({
   api: apiMock,
 }))
 
+const { setIsAiEnabledMock, setAiModeMock } = vi.hoisted(() => ({
+  setIsAiEnabledMock: vi.fn(),
+  setAiModeMock: vi.fn(),
+}))
+
 vi.mock('../contexts/AIContext', () => ({
   useAI: () => ({
     isAiEnabled: true,
-    setIsAiEnabled: vi.fn(),
+    setIsAiEnabled: setIsAiEnabledMock,
+    aiMode: 'remote',
+    setAiMode: setAiModeMock,
     contextLength: 8192,
     setContextLength: vi.fn(),
     refreshAiStatus: vi.fn().mockResolvedValue(undefined),
@@ -33,6 +40,10 @@ vi.mock('../contexts/AIContext', () => ({
 }))
 
 import { SettingsDialog } from '../components/SettingsDialog'
+
+afterEach(() => {
+  cleanup()
+})
 
 describe('SettingsDialog AI config', () => {
   beforeEach(() => {
@@ -45,6 +56,10 @@ describe('SettingsDialog AI config', () => {
     apiMock.getVaultHealth.mockReset()
     apiMock.getRevisionSettings.mockReset()
     apiMock.updateRevisionSettings.mockReset()
+    setIsAiEnabledMock.mockReset()
+    setAiModeMock.mockReset()
+    apiMock.getAIPluginStatus.mockResolvedValue({ enabled: true, ai_mode: 'remote', num_ctx: 8192 })
+    apiMock.updateAIPluginConfig.mockResolvedValue({ enabled: true, ai_mode: 'remote', num_ctx: 8192 })
     apiMock.getVaultHealth.mockResolvedValue({ summary: { total_issues: 0 }, issues: [] })
     apiMock.getRevisionSettings.mockResolvedValue({ debounce_seconds: 120, max_keep: 30 })
   })
@@ -90,3 +105,25 @@ describe('SettingsDialog AI config', () => {
     })
   })
 })
+
+  it('switches AI engine mode from settings', async () => {
+    apiMock.getModelConfig.mockResolvedValue({
+      provider: 'openai',
+      api_key_masked: 'sk-****test',
+      base_url: 'https://api.openai.com/v1',
+      model_name: 'gpt-4o-mini',
+    })
+    apiMock.updateAIPluginConfig.mockResolvedValue({ enabled: true, ai_mode: 'local', num_ctx: 8192 })
+
+    render(<SettingsDialog isOpen onClose={() => {}} />)
+
+    const localModeButton = await screen.findByTestId('ai-mode-local')
+    fireEvent.click(localModeButton)
+
+    await waitFor(() => {
+      expect(apiMock.updateAIPluginConfig).toHaveBeenCalledWith({ enabled: true, ai_mode: 'local' })
+      expect(setIsAiEnabledMock).toHaveBeenCalledWith(true)
+      expect(setAiModeMock).toHaveBeenCalledWith('local')
+    })
+  })
+

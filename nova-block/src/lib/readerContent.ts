@@ -16,6 +16,7 @@
  */
 
 import DOMPurify from 'dompurify'
+import { aiMarkdownToHtml, shouldRenderAIMarkdown } from './aiMarkdown'
 
 function looksLikeHtml(text: string): boolean {
   const sample = text.slice(0, 200).toLowerCase()
@@ -288,6 +289,24 @@ function transformWidgets(html: string): string {
   return doc.body.innerHTML
 }
 
+function maybeConvertLegacyAiMarkdownHtml(html: string): string {
+  if (!looksLikeHtml(html)) return html
+  if (!/^\s*<p[\s>]/i.test(html)) return html
+  if (/<(h[1-6]|ul|ol|li|blockquote|pre|table|figure|img|div)\b/i.test(html)) return html
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, 'text/html')
+  const blocks = Array.from(doc.body.children)
+  if (!blocks.length || blocks.some((el) => el.tagName.toLowerCase() !== 'p')) return html
+
+  const text = blocks
+    .map((el) => el.textContent || '')
+    .join('\n\n')
+    .trim()
+
+  return shouldRenderAIMarkdown(text) ? aiMarkdownToHtml(text) : html
+}
+
 export function renderReaderHtml(rawContent: string): string {
   if (!rawContent || !rawContent.trim()) {
     return '<p style="color: var(--nv-color-fg-subtle); font-style: italic;">这篇笔记还没有内容。</p>'
@@ -306,7 +325,7 @@ export function renderReaderHtml(rawContent: string): string {
     }
   }
 
-  const html = looksLikeHtml(trimmed) ? trimmed : lightMarkdownToHtml(trimmed)
+  const html = looksLikeHtml(trimmed) ? maybeConvertLegacyAiMarkdownHtml(trimmed) : lightMarkdownToHtml(trimmed)
   const widgetized = transformWidgets(html)
 
   return DOMPurify.sanitize(widgetized, {
@@ -318,6 +337,7 @@ export function renderReaderHtml(rawContent: string): string {
       'data-target-date', 'data-title', 'data-show-bubble',
       'data-timeline', 'data-timeline-item', 'data-date',
       'data-images', 'data-upload-id',
+      'data-ai-source-card', 'data-embed',
       'data-list-style',
       // v0.19.5 · video / audio 播放控件
       'controls', 'muted', 'playsinline', 'autoplay', 'loop', 'preload', 'poster',

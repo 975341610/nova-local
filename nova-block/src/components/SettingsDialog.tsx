@@ -4,7 +4,7 @@ import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Se
 import { api } from '../lib/api';
 import { useAI } from '../contexts/AIContext';
 import { getThemeConfig, saveThemeConfig, exportThemeConfig, validateThemeConfig, applyThemeConfig } from '../lib/themeUtils';
-import type { ThemeConfig, VaultHealthReport } from '../lib/types';
+import type { AIEngineMode, ThemeConfig, VaultHealthReport } from '../lib/types';
 import { isSpellcheckFeatureEnabled, saveSpellcheckFeatureEnabled } from '../lib/spellcheckSettings';
 import { UpdaterPanel } from './UpdaterPanel';
 
@@ -14,7 +14,7 @@ interface SettingsDialogProps {
 }
 
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
-  const { isAiEnabled, setIsAiEnabled, contextLength, setContextLength, refreshAiStatus } = useAI();
+  const { isAiEnabled, setIsAiEnabled, aiMode, setAiMode, contextLength, setContextLength, refreshAiStatus } = useAI();
   const [hwStatus, setHwStatus] = useState<{ compatible: boolean; details: string } | null>(null);
   const [checking, setChecking] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -184,8 +184,22 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     try {
       const res = await api.updateAIPluginConfig({ enabled: !isAiEnabled });
       setIsAiEnabled(res.enabled);
+      setAiMode(res.ai_mode === 'local' ? 'local' : 'remote');
     } catch (err) {
       console.error('Failed to toggle AI plugin:', err);
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const handleAiModeChange = async (nextMode: AIEngineMode) => {
+    setToggling(true);
+    try {
+      const res = await api.updateAIPluginConfig({ enabled: true, ai_mode: nextMode });
+      setIsAiEnabled(res.enabled);
+      setAiMode(res.ai_mode === 'local' ? 'local' : 'remote');
+    } catch (err) {
+      console.error('Failed to switch AI mode:', err);
     } finally {
       setToggling(false);
     }
@@ -491,11 +505,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                         <Cpu className="w-5 h-5 text-primary" />
                       </div>
                       <div>
-                        <h3 className="text-sm font-bold">本地 AI 引擎 (Local AI Plugin)</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">启用本地 LLM 进行隐私优先的智能处理</p>
+                        <h3 className="text-sm font-bold">AI 功能</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">默认使用远程 AI；需要隐私优先或离线处理时可切换本地 AI。</p>
                       </div>
                     </div>
                     <button
+                      data-testid="ai-enabled-toggle"
                       onClick={handleToggle}
                       disabled={toggling}
                       className="p-1 hover:scale-110 transition-transform disabled:opacity-50 relative"
@@ -510,13 +525,38 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                     </button>
                   </div>
 
+                  <div className="p-4 bg-accent/10 rounded-2xl border border-border/20 space-y-3">
+                    <div>
+                      <h3 className="text-sm font-bold">AI 引擎模式</h3>
+                      <p className="text-[10px] text-muted-foreground mt-1">远程 AI 为默认模式；本地 AI 只在显式选择后启动，避免两套引擎互相抢占。</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        data-testid="ai-mode-remote"
+                        onClick={() => handleAiModeChange('remote')}
+                        disabled={toggling}
+                        className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${aiMode === 'remote' ? 'bg-primary text-primary-foreground border-primary' : 'bg-accent/20 border-border/30 text-muted-foreground'}`}
+                      >
+                        远程 AI（默认）
+                      </button>
+                      <button
+                        data-testid="ai-mode-local"
+                        onClick={() => handleAiModeChange('local')}
+                        disabled={toggling}
+                        className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${aiMode === 'local' ? 'bg-primary text-primary-foreground border-primary' : 'bg-accent/20 border-border/30 text-muted-foreground'}`}
+                      >
+                        本地 AI
+                      </button>
+                    </div>
+                  </div>
+
                   {toggling && (
                     <motion.div
                       initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
                       className="text-[10px] text-center text-primary/60 font-medium bg-primary/5 py-2 rounded-xl border border-primary/10"
                     >
-                      {isAiEnabled ? "正在释放显存并停止 AI 服务进程..." : "正在拉起本地 AI 服务环境..."}
+                      {aiMode === 'local' ? "正在处理本地 AI 服务状态..." : "正在保存 AI 设置..."}
                     </motion.div>
                   )}
 
@@ -580,7 +620,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
 
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        建议填写 OpenAI 兼容的 Base URL。开启上面的 AI 开关后，编辑器中的 AI 写作会直接走这里的配置。
+                        建议填写 OpenAI 兼容的 Base URL。选择“远程 AI”后，编辑器中的 AI 写作会直接走这里的配置。
                       </p>
                       <button
                         data-testid="ai-model-save"

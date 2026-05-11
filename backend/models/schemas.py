@@ -45,6 +45,7 @@ class NoteCreate(NoteBase):
     notebook_id: int | None = None
     parent_id: int | None = None
     tags: list[str] | None = None
+    properties: list[NotePropertyBase] | None = None
 
 
 class NoteUpdate(BaseModel):
@@ -165,6 +166,10 @@ class AskRequest(BaseModel):
     stream: bool = False
 
 
+class ImportBatchAskRequest(BaseModel):
+    question: str
+
+
 class InlineAIRequest(BaseModel):
     prompt: str
     context: str | None = None
@@ -213,6 +218,52 @@ class ModelConfigPayload(BaseModel):
 
 class UploadResponse(BaseModel):
     imported_notes: list[NoteResponse]
+
+
+class NormalizedBlockPayload(BaseModel):
+    type: str
+    text: str = ""
+    metadata: dict = Field(default_factory=dict)
+
+
+class NormalizedContentPayload(BaseModel):
+    source_type: str = "unknown"
+    title: str = "Untitled Import"
+    blocks: list[NormalizedBlockPayload] = Field(default_factory=list)
+    plain_text: str = ""
+    metadata: dict = Field(default_factory=dict)
+
+
+class GeneratedNoteResponse(BaseModel):
+    title: str
+    markdown: str
+    source_type: str = "unknown"
+    metadata: dict = Field(default_factory=dict)
+
+
+class GeneratedNotePersistResponse(BaseModel):
+    generated: GeneratedNoteResponse
+    note: NoteResponse
+
+
+class ImportPreviewItem(BaseModel):
+    file_name: str
+    file_type: str
+    size: int
+    title: str
+    status: str
+    message: str = ""
+    summary: str = ""
+    block_count: int = 0
+
+
+class ImportPreviewResponse(BaseModel):
+    items: list[ImportPreviewItem]
+
+
+class ImportUrlRequest(BaseModel):
+    urls: list[str]
+    template_id: str = "general"
 
 
 class NotebookCreate(BaseModel):

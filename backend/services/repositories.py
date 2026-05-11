@@ -109,7 +109,16 @@ def create_note(
     sort_key: str | None = None,
     stickers: list[dict] | None = None,
     sticky_notes: list[dict] | None = None,
+    properties: list[NotePropertyBase] | None = None,
 ) -> VaultNote:
+    payload_properties = None
+    if properties is not None:
+        payload_properties = [
+            {"name": prop.get("name") if isinstance(prop, dict) else prop.name,
+             "type": prop.get("type") if isinstance(prop, dict) else prop.type,
+             "value": prop.get("value") if isinstance(prop, dict) else prop.value}
+            for prop in properties
+        ]
     store = get_vault_store()
     note = store.create_note(
         title=title,
@@ -125,6 +134,7 @@ def create_note(
         sort_key=sort_key,
         stickers=stickers,
         sticky_notes=sticky_notes,
+        properties=payload_properties,
     )
     note.summary = summary
     if summary and not note.is_folder:

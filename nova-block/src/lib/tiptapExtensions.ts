@@ -52,6 +52,18 @@ export { AISpellcheck, spellcheckPluginKey } from '../components/novablock/exten
 export { Heading };
 
 export const Blockquote = BaseBlockquote.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      aiSourceCard: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-ai-source-card'),
+        renderHTML: (attributes) => (
+          attributes.aiSourceCard ? { 'data-ai-source-card': attributes.aiSourceCard } : {}
+        ),
+      },
+    };
+  },
   renderHTML({ HTMLAttributes }) {
     return ['blockquote', mergeAttributes(HTMLAttributes, { 
       class: 'border-l-4 border-stone-200 pl-4 py-1 my-4' 

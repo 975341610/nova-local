@@ -173,10 +173,46 @@ const normalizeLegacyApiPath = (rawUrl: string) => {
 const HTML_URL_ATTR_PATTERN = /(\b(?:src|href)\s*=\s*)(["'])([^"']+)\2/gi
 const CSS_URL_PATTERN = /url\(\s*(["']?)([^"')]+)\1\s*\)/gi
 
+const isTrustedVideoEmbedUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return (
+      (host === 'www.youtube.com' && url.pathname.startsWith('/embed/')) ||
+      (host === 'youtube.com' && url.pathname.startsWith('/embed/')) ||
+      host === 'player.bilibili.com'
+    );
+  } catch {
+    return false;
+  }
+}
+
+const stripUnsafeIframes = (html: string) => {
+  if (!/<iframe[\s>]/i.test(html) || typeof DOMParser === 'undefined') {
+    return html;
+  }
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('iframe').forEach((iframe) => {
+    const src = iframe.getAttribute('src') || '';
+    if (!isTrustedVideoEmbedUrl(src)) {
+      iframe.remove();
+      return;
+    }
+    iframe.setAttribute('data-embed', 'true');
+    iframe.setAttribute('loading', 'lazy');
+    iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+    iframe.setAttribute('allowfullscreen', 'true');
+  });
+  return doc.body.innerHTML;
+}
+
 const sanitizeEditorHtml = (html: string) => {
-  return DOMPurify.sanitize(html, {
+  return DOMPurify.sanitize(stripUnsafeIframes(html), {
     USE_PROFILES: { html: true },
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'meta', 'link'],
+    ADD_TAGS: ['iframe', 'figure', 'figcaption'],
+    ADD_ATTR: ['data-ai-source-card', 'data-embed', 'allow', 'allowfullscreen', 'referrerpolicy', 'loading'],
+    ALLOW_DATA_ATTR: true,
+    FORBID_TAGS: ['script', 'object', 'embed', 'meta', 'link'],
   })
 }
 

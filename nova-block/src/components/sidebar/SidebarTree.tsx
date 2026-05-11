@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Layers, Settings, ChevronLeft, ChevronRight, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout } from 'lucide-react';
+import { Search, Layers, Settings, ChevronLeft, ChevronRight, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout, Sparkles } from 'lucide-react';
 import { buildTree, moveNode, isDescendant, flattenTree } from '../../lib/novablock/treeUtils';
 import type { TreeNode } from '../../lib/novablock/treeUtils';
 import { TreeNodeItem } from './TreeNodeItem';
 import GlobalSearchPanel from './GlobalSearchPanel';
 import BacklinksPanel from './BacklinksPanel';
+import AIImportPanel from './AIImportPanel';
 import { useNoteStore } from '../../store/useNoteStore';
 
 interface SidebarTreeProps {
@@ -88,7 +89,7 @@ export const SidebarTree = ({
     }
   };
 
-  const [activeTab, setActiveTab] = useState<'tree' | 'search' | 'backlinks'>('tree');
+  const [activeTab, setActiveTab] = useState<'tree' | 'search' | 'backlinks' | 'ai'>('tree');
   
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, node: TreeNode } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -284,6 +285,20 @@ export const SidebarTree = ({
             双向链接
           </div>
         </button>
+        <button
+          type="button"
+          aria-label="open-ai-panel"
+          onClick={() => setActiveTab('ai')}
+          title="AI"
+          className={`relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
+            activeTab === 'ai' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent/50'
+          }`}
+        >
+          <Sparkles size={18} />
+          <div className="absolute left-full ml-2 px-2 py-1 bg-foreground text-background text-[10px] rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50">
+            AI
+          </div>
+        </button>
       </motion.div>
 
       {activeTab === 'search' && (
@@ -306,17 +321,29 @@ export const SidebarTree = ({
         </div>
       )}
 
+      {activeTab === 'ai' && (
+        <div className="flex-1 overflow-hidden">
+          <AIImportPanel
+            selectedNoteId={selectedNodeId ?? selectedId ?? null}
+            onSelectNoteId={(noteId) => {
+              setSelectedId(noteId);
+              onNodeSelect?.(noteId);
+            }}
+          />
+        </div>
+      )}
+
       {activeTab === 'tree' && (
         <>
           {/* Quick Actions */}
           <div className="px-3 pb-4 space-y-2">
-            <button 
+            <button
               onClick={onQuickSearchOpen}
               className="flex items-center h-11 w-full text-xs font-medium text-muted-foreground bg-accent/30 hover:bg-accent/60 border border-border/20 rounded-2xl transition-all duration-300 group overflow-hidden"
               title={isCollapsed ? "快速搜索 (⌘K)" : undefined}
             >
-              <motion.div 
-                animate={{ 
+              <motion.div
+                animate={{
                   width: isCollapsed ? 40 : 44,
                   marginLeft: isCollapsed ? 0 : 4,
                   marginRight: isCollapsed ? 0 : 4

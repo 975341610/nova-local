@@ -175,6 +175,49 @@ describe('api browser fallback', () => {
     )
   })
 
+
+  it('parses SSE error frames from inline AI fetch fallback and rejects instead of hanging', async () => {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"error":"Remote AI failed"}\n\n'))
+        controller.close()
+      },
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      }),
+    )
+    const onChunk = vi.fn()
+
+    await expect(api.streamInlineAI({ prompt: 'p', context: 'c', action: 'ask' }, onChunk)).rejects.toThrow('Remote AI failed')
+    expect(onChunk).not.toHaveBeenCalled()
+  })
+
+  it('flushes the final unterminated SSE frame from inline AI fetch fallback', async () => {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"text":"hello"}\n\n'))
+        controller.enqueue(encoder.encode('data: {"text":" world"}'))
+        controller.close()
+      },
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      }),
+    )
+    const chunks: string[] = []
+
+    await api.streamInlineAI({ prompt: 'p', context: 'c', action: 'ask' }, (chunk) => chunks.push(chunk))
+
+    expect(chunks).toEqual(['hello', ' world'])
+  })
+
   it('uses real note property API endpoints instead of dummy local implementations', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
       new Response(JSON.stringify({ id: 2, name: 'Status', type: 'select', value: 'Doing' }), {
@@ -270,6 +313,25 @@ describe('api browser fallback', () => {
     expect(sanitized).toContain('click')
     expect(sanitized.toLowerCase()).not.toContain('java\nscript:')
     expect(sanitized.toLowerCase()).not.toContain('alert(1)')
+  })
+
+  it('keeps trusted video iframe cards in stored editor HTML', () => {
+    const content = '<figure data-ai-source-card="video"><iframe src="https://player.bilibili.com/player.html?bvid=BV1xx411c7mD" data-embed="true"></iframe><figcaption>B站</figcaption></figure>'
+    const sanitized = sanitizeLegacyApiUrlsInHtml(content)
+
+    expect(sanitized).toContain('<iframe')
+    expect(sanitized).toContain('https://player.bilibili.com/player.html?bvid=BV1xx411c7mD')
+    expect(sanitized).toContain('data-ai-source-card="video"')
+    expect(sanitized).toContain('data-embed="true"')
+  })
+
+  it('removes untrusted iframe cards from stored editor HTML', () => {
+    const content = '<p>safe</p><iframe src="https://evil.example/embed"></iframe>'
+    const sanitized = sanitizeLegacyApiUrlsInHtml(content)
+
+    expect(sanitized).toContain('<p>safe</p>')
+    expect(sanitized).not.toContain('<iframe')
+    expect(sanitized).not.toContain('evil.example')
   })
 
   it('requests vault health reports from the backend system endpoint', async () => {

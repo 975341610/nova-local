@@ -151,6 +151,55 @@ export type ChatSession = {
   updated_at: string;
 };
 
+export type AIEngineMode = 'remote' | 'local';
+
+export type UploadResponse = {
+  imported_notes: Note[];
+};
+
+export type NormalizedBlockPayload = {
+  type: string;
+  text: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type NormalizedContentPayload = {
+  source_type: string;
+  title: string;
+  blocks: NormalizedBlockPayload[];
+  plain_text: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type GeneratedNoteResponse = {
+  title: string;
+  markdown: string;
+  source_type: string;
+  metadata: Record<string, unknown>;
+};
+
+export type GeneratedNotePersistResponse = {
+  generated: GeneratedNoteResponse;
+  note: Note;
+};
+
+export type ImportTemplateId = 'general' | 'meeting' | 'study' | 'paper' | 'table' | 'video';
+
+export type ImportPreviewItem = {
+  file_name: string;
+  file_type: string;
+  size: number;
+  title: string;
+  status: 'ok' | 'empty' | 'error' | string;
+  message: string;
+  summary: string;
+  block_count: number;
+};
+
+export type ImportPreviewResponse = {
+  items: ImportPreviewItem[];
+};
+
 export type ModelConfig = {
   provider: string;
   api_key?: string;

@@ -65,6 +65,16 @@ import { getSuggestionConfig } from '../notion/SlashMenuConfig';
 import { getNoteLinkSuggestionConfig } from './extensions/NoteLinkConfig';
 import { buildPendingSwitchSavePayload, shouldApplySavedDraftToCurrentNote, syncLatestDraftWithIncomingNote } from '../../lib/editorDraftSync';
 import { extractLeadingNoteTitle } from '../../lib/noteTitle';
+import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
+import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
+import {
+  AIStreamingPreviewNode,
+  findAIStreamingPreview,
+  insertAIStreamingPreview,
+  removeAIStreamingPreview,
+  replaceAIStreamingPreviewWithContent,
+  updateAIStreamingPreview,
+} from '../../lib/aiStreamingPreview';
 import { promptCompat } from '../../lib/promptCompat';
 import { useAI } from '../../contexts/AIContext';
 import { TableOfContents } from './components/TableOfContents';
@@ -765,6 +775,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       dropcursor: false,
     }),
     AILoadingNode,
+    AIStreamingPreviewNode,
     Dropcursor.configure({
       color: 'hsl(var(--primary))',
       width: 2,
@@ -1115,16 +1126,28 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         //   — 消除 [INEFFECTIVE_DYNAMIC_IMPORT] 告警并让 api 进入同一 chunk.
 
         let streamBuffer = '';
+        let plainMarkdownBuffer = '';
         let isFirstToken = true;
-        
+
         // --- 实时流式解析状态 ---
         let currentStreamingAction: { type: string; language?: string; startPos: number } | null = null;
         let lastActionValue = ''; // 记录上一次 Action 累积的内容，用于增量插入
 
         const flushText = (text: string) => {
-          if (text && editor) {
-            editor.chain().focus().insertContent(text).run();
+          if (text) {
+            plainMarkdownBuffer += text;
+            if (findAIStreamingPreview(editor)) {
+              updateAIStreamingPreview(editor, plainMarkdownBuffer);
+            }
           }
+        };
+
+        const insertAccumulatedAIText = () => {
+          if (!plainMarkdownBuffer || !editor) return;
+          const text = plainMarkdownBuffer;
+          plainMarkdownBuffer = '';
+          const content = shouldRenderAIMarkdown(text) ? aiMarkdownToHtml(text) : text;
+          replaceAIStreamingPreviewWithContent(editor, content);
         };
 
         await api.streamInlineAI(
@@ -1146,6 +1169,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               if (foundPos !== -1) {
                 editor.chain().deleteRange({ from: foundPos, to: foundPos + 1 }).focus().run();
               }
+              insertAIStreamingPreview(editor);
             }
             streamBuffer += chunk;
             
@@ -1284,6 +1308,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         if (streamBuffer) {
           flushText(streamBuffer);
         }
+        insertAccumulatedAIText();
       } catch (err: any) {
         console.error(err);
 
@@ -1300,6 +1325,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         if (foundPos !== -1) {
           editor.chain().deleteRange({ from: foundPos, to: foundPos + 1 }).run();
         }
+        removeAIStreamingPreview(editor);
 
         editor.chain().focus().insertContent(`\n[AI 生成失败: ${err.message}]`).run();
       }
@@ -1815,7 +1841,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         });
       }
 
-      editor.commands.setContent(sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>', { emitUpdate: false });
+      replaceEditorContentWithoutHistory(editor, sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>');
       // 鍒囨崲鍐呭鍚庯紝寮哄埗琛ラ綈 ID 骞舵洿鏂板ぇ绾?
       // @ts-ignore
       editor.commands.ensureHeadingIds();
@@ -2899,9 +2925,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
             }
             cleanContent = cleanContent.replace(/^\n+/, '');
             const patched: any = { ...updated, content: cleanContent };
-            editor.commands.setContent(
+            replaceEditorContentWithoutHistory(
+              editor,
               sanitizeLegacyApiUrlsInHtml(cleanContent) || '<p></p>',
-              { emitUpdate: false },
             );
             latestNoteRef.current = { ...latestNoteRef.current, ...patched } as Note;
             setIsDirty(false);
