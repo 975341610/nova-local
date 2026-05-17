@@ -1,0 +1,211 @@
+/* =====================================================================
+ * Qingzhi (清知) — Water-ink Chinese aesthetic theme
+ * Append-only block. Append the entire content below to src/styles/themes.css
+ * Activate via: <html data-nv-theme="qingzhi">
+ * ===================================================================== */
+
+/* ---------- 1. Token layer (mapped onto existing --nv-* shell) ---------- */
+:root[data-nv-theme="qingzhi"] {
+  /* Brand palette */
+  --qz-jade:    #80A89C;   /* 玉 — 主色 */
+  --qz-jade-2:  #6E9389;   /* 玉深 */
+  --qz-jade-3:  #B6CFC7;   /* 玉浅 */
+  --qz-mist:    #F4F1EA;   /* 雾米 — bg */
+  --qz-paper:   #FBF8F1;   /* 纸 — surface */
+  --qz-ink:     #2B2B2B;   /* 墨 */
+  --qz-ink-2:   #5A5754;   /* 墨次 */
+  --qz-ink-3:   #8C8783;   /* 墨弱 */
+  --qz-gold:    #C8A873;   /* 金 — accent */
+  --qz-gold-2:  #B89761;   /* 金深 */
+  --qz-rouge:   #B85B5B;   /* 胭脂 */
+  --qz-stone:   #A8B0A8;   /* 石 */
+
+  /* Map onto the project-level --nv-* tokens */
+  --nv-color-bg:           var(--qz-mist);
+  --nv-color-bg-elev:      var(--qz-paper);
+  --nv-color-surface:      var(--qz-paper);
+  --nv-color-surface-2:    #F0EBDF;
+  --nv-color-fg:           var(--qz-ink);
+  --nv-color-fg-muted:     var(--qz-ink-2);
+  --nv-color-fg-subtle:    var(--qz-ink-3);
+  --nv-color-border:       #E2DCCD;
+  --nv-color-border-soft:  #ECE6D6;
+  --nv-color-accent:       var(--qz-jade);
+  --nv-color-accent-2:     var(--qz-gold);
+  --nv-color-danger:       var(--qz-rouge);
+
+  /* Typography */
+  --nv-font-serif: "Noto Serif SC", "Source Han Serif SC", "PingFang SC", serif;
+  --nv-font-sans:  "Noto Sans SC",  "Source Han Sans SC",  "PingFang SC", sans-serif;
+  --nv-font-body:  var(--nv-font-serif);
+  --nv-font-ui:    var(--nv-font-sans);
+
+  /* Mascot opacity (driven by SettingsDialog slider) */
+  --qz-mascot-opacity: 0.18;
+}
+
+/* ---------- 2. Base typography ---------- */
+:root[data-nv-theme="qingzhi"] body {
+  background: var(--nv-color-bg);
+  color: var(--nv-color-fg);
+  font-family: var(--nv-font-body);
+}
+
+:root[data-nv-theme="qingzhi"] button,
+:root[data-nv-theme="qingzhi"] input,
+:root[data-nv-theme="qingzhi"] select { font-family: var(--nv-font-ui); }
+
+/* ---------- 3. Topbar ---------- */
+:root[data-nv-theme="qingzhi"] .qz-topbar {
+  height: 48px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 12px;
+  background: var(--qz-paper);
+  border-bottom: 1px solid var(--nv-color-border-soft);
+  -webkit-app-region: drag;
+  position: relative; z-index: 10;
+}
+:root[data-nv-theme="qingzhi"] .qz-topbar button,
+:root[data-nv-theme="qingzhi"] .qz-topbar .qz-avatar {
+  -webkit-app-region: no-drag;
+}
+:root[data-nv-theme="qingzhi"] .qz-logo {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--nv-font-serif);
+  font-size: 18px; color: var(--qz-ink); letter-spacing: 0.08em;
+}
+:root[data-nv-theme="qingzhi"] .qz-logo-stamp { width: 22px; height: 22px; }
+:root[data-nv-theme="qingzhi"] .qz-logo-flower { width: 12px; height: 12px; opacity: 0.7; }
+:root[data-nv-theme="qingzhi"] .qz-iconbtn {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; color: var(--qz-ink-2);
+  cursor: pointer; transition: background .15s, color .15s;
+}
+:root[data-nv-theme="qingzhi"] .qz-iconbtn:hover {
+  background: rgba(128,168,156,0.10); color: var(--qz-jade);
+}
+:root[data-nv-theme="qingzhi"] .qz-iconbtn.active { color: var(--qz-jade); }
+:root[data-nv-theme="qingzhi"] .qz-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1.5px solid var(--qz-gold); overflow: hidden;
+  margin: 0 4px 0 6px;
+}
+:root[data-nv-theme="qingzhi"] .qz-avatar img { width: 100%; height: 100%; object-fit: cover; }
+:root[data-nv-theme="qingzhi"] .qz-topbar-divider {
+  width: 1px; height: 18px; background: var(--nv-color-border); margin: 0 6px;
+}
+:root[data-nv-theme="qingzhi"] .qz-syscontrols { display: inline-flex; gap: 2px; }
+:root[data-nv-theme="qingzhi"] .qz-sysbtn {
+  width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; color: var(--qz-ink-3); cursor: pointer;
+}
+:root[data-nv-theme="qingzhi"] .qz-sysbtn:hover { background: rgba(0,0,0,0.05); color: var(--qz-ink); }
+:root[data-nv-theme="qingzhi"] .qz-sysbtn.close:hover { background: var(--qz-rouge); color: #fff; }
+
+/* ---------- 4. Sidebar with mascot watermark ---------- */
+:root[data-nv-theme="qingzhi"] .app-sidebar {
+  position: relative;
+  background: linear-gradient(180deg, var(--qz-paper) 0%, var(--qz-mist) 100%);
+  border-right: 1px solid var(--nv-color-border-soft);
+}
+:root[data-nv-theme="qingzhi"] .qz-mascot-backdrop {
+  position: absolute; inset: 0;
+  pointer-events: none; z-index: 0;
+  background-image: url("/assets/qingzhi/mascot/sidebar-standing.webp");
+  background-repeat: no-repeat;
+  background-position: bottom center;
+  background-size: 220px auto;
+  opacity: var(--qz-mascot-opacity);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, transparent 25%, #000 100%);
+          mask-image: linear-gradient(180deg, transparent 0%, transparent 25%, #000 100%);
+}
+:root[data-nv-theme="qingzhi"] .app-sidebar > * { position: relative; z-index: 1; }
+
+/* ---------- 5. Editor toolbar ---------- */
+:root[data-nv-theme="qingzhi"] .qz-editor-toolbar {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--nv-color-border-soft);
+}
+:root[data-nv-theme="qingzhi"] .qz-save-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--qz-jade); margin-right: 8px;
+}
+:root[data-nv-theme="qingzhi"] .qz-save-dot.dirty { background: var(--qz-gold); }
+:root[data-nv-theme="qingzhi"] .qz-toolbar-spacer { flex: 1; }
+:root[data-nv-theme="qingzhi"] .qz-toolbar-sep {
+  width: 1px; height: 16px; background: var(--nv-color-border); margin: 0 4px;
+}
+
+/* ---------- 6. Empty states ---------- */
+:root[data-nv-theme="qingzhi"] .qz-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 24px;
+}
+:root[data-nv-theme="qingzhi"] .qz-empty-mascot {
+  width: 160px; height: 160px; object-fit: contain;
+}
+:root[data-nv-theme="qingzhi"] .qz-empty-title {
+  font-family: var(--nv-font-serif);
+  font-size: 16px; color: var(--qz-ink);
+}
+:root[data-nv-theme="qingzhi"] .qz-empty-hint {
+  font-size: 12px; color: var(--qz-ink-3);
+}
+
+/* ---------- 7. Buttons / inputs ---------- */
+:root[data-nv-theme="qingzhi"] .qz-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 8px;
+  border: 1px solid var(--nv-color-border);
+  background: var(--qz-paper); color: var(--qz-ink);
+  font-family: var(--nv-font-ui); font-size: 13px;
+  cursor: pointer; transition: all .15s;
+}
+:root[data-nv-theme="qingzhi"] .qz-btn:hover {
+  border-color: var(--qz-jade); color: var(--qz-jade);
+}
+:root[data-nv-theme="qingzhi"] .qz-btn-primary {
+  background: var(--qz-jade); color: #fff; border-color: var(--qz-jade);
+}
+:root[data-nv-theme="qingzhi"] .qz-btn-primary:hover {
+  background: var(--qz-jade-2); border-color: var(--qz-jade-2); color: #fff;
+}
+
+/* ---------- 8. Tags ---------- */
+:root[data-nv-theme="qingzhi"] .qz-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px;
+  background: rgba(128,168,156,0.12); color: var(--qz-jade-2);
+  font-size: 12px; font-family: var(--nv-font-ui);
+}
+
+/* ---------- 9. Gold rule ---------- */
+:root[data-nv-theme="qingzhi"] .qz-gold-rule {
+  height: 1px; background: linear-gradient(
+    to right, transparent, var(--qz-gold) 30%, var(--qz-gold) 70%, transparent);
+  margin: 8px 0;
+}
+
+/* ---------- 10. ⋯ pool menu ---------- */
+:root[data-nv-theme="qingzhi"] .qz-pool {
+  background: var(--qz-paper);
+  border: 1px solid var(--nv-color-border);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 6px 24px rgba(43,43,43,0.10);
+}
+:root[data-nv-theme="qingzhi"] .qz-pool-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  font-size: 13px; color: var(--qz-ink);
+}
+:root[data-nv-theme="qingzhi"] .qz-pool-item:hover { background: rgba(128,168,156,0.08); }
+:root[data-nv-theme="qingzhi"] .qz-pool-item svg { color: var(--qz-jade); flex-shrink: 0; }
+:root[data-nv-theme="qingzhi"] .qz-pool-item span { flex: 1; }
+:root[data-nv-theme="qingzhi"] .qz-pool-add {
+  border: 0; background: transparent; color: var(--qz-ink-3);
+  cursor: pointer; font-size: 16px; padding: 0 4px;
+}
+:root[data-nv-theme="qingzhi"] .qz-pool-add:hover { color: var(--qz-jade); }

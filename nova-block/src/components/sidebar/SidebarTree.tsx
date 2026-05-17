@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Layers, Settings, ChevronLeft, ChevronRight, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout, Sparkles } from 'lucide-react';
+import { Search, Settings, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout, Sparkles } from 'lucide-react';
 import { buildTree, moveNode, isDescendant, flattenTree } from '../../lib/novablock/treeUtils';
 import type { TreeNode } from '../../lib/novablock/treeUtils';
 import { TreeNodeItem } from './TreeNodeItem';
@@ -9,6 +9,7 @@ import GlobalSearchPanel from './GlobalSearchPanel';
 import BacklinksPanel from './BacklinksPanel';
 import AIImportPanel from './AIImportPanel';
 import { useNoteStore } from '../../store/useNoteStore';
+import { QINGZHI_SETTINGS_EVENT, readQingzhiSettings } from '../../lib/qingzhiSettings';
 
 interface SidebarTreeProps {
   selectedNodeId?: string | null;
@@ -55,7 +56,6 @@ export const SidebarTree = ({
   onSettingsOpen,
   className = '',
   isCollapsed: externalIsCollapsed,
-  onToggleCollapse,
 }: SidebarTreeProps) => {
   const notes = useNoteStore((state) => state.notes);
   const updateNote = useNoteStore((state) => state.updateNote);
@@ -72,24 +72,12 @@ export const SidebarTree = ({
 
   const [selectedId, setSelectedId] = useState<string | undefined>(selectedNodeId ?? undefined);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['root']));
-  const [internalIsCollapsed, setInternalIsCollapsed] = useState(false);
-  const lastToggleTime = useRef(0);
-  
-  const isCollapsed = externalIsCollapsed !== undefined ? externalIsCollapsed : internalIsCollapsed;
-  const setIsCollapsed = (collapsed: boolean) => {
-    // 简单的冷却时间 (300ms)，防止高频点击导致的动画引擎死锁
-    const now = Date.now();
-    if (now - lastToggleTime.current < 300) return;
-    lastToggleTime.current = now;
+  const [internalIsCollapsed] = useState(false);
 
-    if (onToggleCollapse) {
-      onToggleCollapse(collapsed);
-    } else {
-      setInternalIsCollapsed(collapsed);
-    }
-  };
+  const isCollapsed = externalIsCollapsed !== undefined ? externalIsCollapsed : internalIsCollapsed;
 
   const [activeTab, setActiveTab] = useState<'tree' | 'search' | 'backlinks' | 'ai'>('tree');
+  const [mascotOpacity, setMascotOpacity] = useState(() => readQingzhiSettings().mascotOpacity);
   
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, node: TreeNode } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -127,6 +115,15 @@ export const SidebarTree = ({
       menuRef.current.style.opacity = '1';
     }
   }, [contextMenu]);
+
+  useEffect(() => {
+    const handleSettingsChange = () => {
+      setMascotOpacity(readQingzhiSettings().mascotOpacity);
+    };
+
+    window.addEventListener(QINGZHI_SETTINGS_EVENT, handleSettingsChange);
+    return () => window.removeEventListener(QINGZHI_SETTINGS_EVENT, handleSettingsChange);
+  }, []);
 
   const tree = useMemo(() => buildTree(nodes), [nodes]);
   const visibleNodes = useMemo(() => flattenTree(tree, expandedIds), [tree, expandedIds]);
@@ -188,56 +185,33 @@ export const SidebarTree = ({
         duration: 0.4, 
         ease: [0.32, 0.72, 0, 1] 
       }}
+      data-testid="qingzhi-real-sidebar"
       className={`
-        h-full border-r border-border/40 bg-background/60 backdrop-blur-2xl flex flex-col relative
+        qz-sidebar h-full border-r border-border/40 bg-background/60 backdrop-blur-2xl flex flex-col relative
         ${className}
       `}
     >
+      <div
+        data-testid="qingzhi-sidebar-mascot"
+        className="qz-mascot-backdrop"
+        style={{ opacity: mascotOpacity }}
+      />
       {/* Sidebar Header */}
-      <div className="flex items-center h-[72px] overflow-hidden">
-        <motion.div 
-          animate={{ 
-            paddingLeft: isCollapsed ? 0 : 24,
+      <div data-testid="qingzhi-sidebar-header" className="qz-sidebar-header relative z-10 flex items-center h-[72px] overflow-hidden px-4">
+        <motion.div
+          animate={{
             width: isCollapsed ? 64 : "auto",
             justifyContent: isCollapsed ? "center" : "flex-start"
           }}
           className={`flex items-center shrink-0 ${isCollapsed ? 'gap-0' : 'gap-3'}`}
         >
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-primary/80 to-primary shadow-soft flex items-center justify-center shrink-0">
-            <Layers size={16} className="text-primary-foreground" />
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl border border-[var(--nv-color-border)] bg-[var(--nv-color-surface-2)] text-sm font-bold text-[var(--nv-color-accent-fg)] shadow-[var(--nv-shadow-rest)]">
+            知
           </div>
           <AnimatedLabel isCollapsed={isCollapsed}>
-            <span className="text-sm font-bold text-foreground/80 tracking-tight">Nova Block</span>
+            <span className="text-sm font-bold text-foreground/80 tracking-[0.16em]">清知手账</span>
           </AnimatedLabel>
         </motion.div>
-        
-        <AnimatePresence>
-          {!isCollapsed && (
-            <motion.button 
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8 }}
-              onClick={() => setIsCollapsed(true)}
-              className="p-2 ml-auto mr-6 rounded-xl hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-all duration-300 shrink-0"
-            >
-              <ChevronLeft size={18} />
-            </motion.button>
-          )}
-        </AnimatePresence>
-
-        <AnimatePresence>
-          {isCollapsed && (
-             <motion.button 
-               initial={{ opacity: 0, x: 10 }}
-               animate={{ opacity: 1, x: 0 }}
-               exit={{ opacity: 0, x: 10 }}
-               onClick={() => setIsCollapsed(false)}
-               className="absolute right-2 top-7 w-6 h-6 rounded-full bg-background border border-border shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground hover:scale-110 transition-all z-30"
-             >
-               <ChevronRight size={14} />
-             </motion.button>
-          )}
-        </AnimatePresence>
       </div>
 
       <motion.div 
@@ -247,12 +221,13 @@ export const SidebarTree = ({
           paddingLeft: isCollapsed ? 12 : 16,
           paddingRight: isCollapsed ? 12 : 16
         }}
-        className="py-2 flex items-center justify-center border-b border-border/10 mb-2 min-h-[56px] overflow-hidden"
+        className="qz-sidebar-tab-strip py-2 flex items-center justify-center border-b border-border/10 mb-2 min-h-[56px] overflow-hidden"
+        data-testid="qingzhi-sidebar-tab-strip"
       >
         <button
           onClick={() => setActiveTab('tree')}
           title="文件树"
-          className={`relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
+          className={`qz-sidebar-tab relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
             activeTab === 'tree' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent/50'
           }`}
         >
@@ -264,7 +239,7 @@ export const SidebarTree = ({
         <button
           onClick={() => setActiveTab('search')}
           title="全局搜索"
-          className={`relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
+          className={`qz-sidebar-tab relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
             activeTab === 'search' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent/50'
           }`}
         >
@@ -276,7 +251,7 @@ export const SidebarTree = ({
         <button
           onClick={() => setActiveTab('backlinks')}
           title="双向链接"
-          className={`relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
+          className={`qz-sidebar-tab relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
             activeTab === 'backlinks' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent/50'
           }`}
         >
@@ -290,7 +265,7 @@ export const SidebarTree = ({
           aria-label="open-ai-panel"
           onClick={() => setActiveTab('ai')}
           title="AI"
-          className={`relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
+          className={`qz-sidebar-tab relative group flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 ${
             activeTab === 'ai' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent/50'
           }`}
         >
@@ -339,7 +314,8 @@ export const SidebarTree = ({
           <div className="px-3 pb-4 space-y-2">
             <button
               onClick={onQuickSearchOpen}
-              className="flex items-center h-11 w-full text-xs font-medium text-muted-foreground bg-accent/30 hover:bg-accent/60 border border-border/20 rounded-2xl transition-all duration-300 group overflow-hidden"
+              className="qz-sidebar-quick-search flex items-center h-11 w-full text-xs font-medium text-muted-foreground bg-accent/30 hover:bg-accent/60 border border-border/20 rounded-2xl transition-all duration-300 group overflow-hidden"
+              data-testid="qingzhi-sidebar-quick-search"
               title={isCollapsed ? "快速搜索 (⌘K)" : undefined}
             >
               <motion.div
@@ -365,7 +341,7 @@ export const SidebarTree = ({
           <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-1 custom-scrollbar px-3">
             {!isCollapsed && (
               <div className="flex items-center justify-between px-3 py-2 group/header">
-                <div className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest">我的手账</div>
+                <div data-testid="qingzhi-sidebar-section-title" className="qz-sidebar-section-title text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest">我的手账</div>
                 <div className="flex items-center gap-1 opacity-0 group-hover/header:opacity-100 transition-opacity duration-200">
                   <button 
                     onClick={() => onNodeAdd?.(null, 'file')}
@@ -467,7 +443,8 @@ export const SidebarTree = ({
           <div className="p-3 border-t border-border/20 flex justify-center overflow-hidden">
             <button 
               onClick={onSettingsOpen}
-              className="flex items-center h-11 w-full text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-xl transition-all duration-300 overflow-hidden"
+              className="qz-sidebar-footer-settings flex items-center h-11 w-full text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-xl transition-all duration-300 overflow-hidden"
+              data-testid="qingzhi-sidebar-footer-settings"
               title={isCollapsed ? "设置与空间管理" : undefined}
             >
               <motion.div 
@@ -653,7 +630,7 @@ export const SidebarTree = ({
                   }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 rounded-lg text-left"
                 >
-                  <Layers size={16} className="text-muted-foreground" /> 根目录
+                  <LayoutGrid size={16} className="text-muted-foreground" /> 根目录
                 </button>
                 {nodes
                   .filter(n => n.isFolder && n.id !== moveToModal.node.id && !isDescendant(nodes, n.id, moveToModal.node.id) && (n.title || '').toLowerCase().includes(moveToSearchQuery.toLowerCase()))

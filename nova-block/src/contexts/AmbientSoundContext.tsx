@@ -199,8 +199,8 @@ function buildScene(ctx: AudioContext, master: GainNode, id: AmbientId): () => v
 
   return () => {
     for (const n of nodes) {
-      try { (n as any).stop?.() } catch (_) {}
-      try { (n as any).disconnect?.() } catch (_) {}
+      try { (n as any).stop?.() } catch { /* ignore audio node cleanup errors */ }
+      try { (n as any).disconnect?.() } catch { /* ignore audio node cleanup errors */ }
     }
     for (const i of intervals) clearInterval(i)
   }
@@ -216,9 +216,9 @@ export function AmbientSoundProvider({ children }: { children: ReactNode }) {
   const stop = useCallback(() => {
     const s = sceneRef.current
     if (s) {
-      try { s.stop() } catch (_) {}
-      try { s.masterGain.disconnect() } catch (_) {}
-      try { s.ctx.close() } catch (_) {}
+      try { s.stop() } catch { /* ignore audio stop errors */ }
+      try { s.masterGain.disconnect() } catch { /* ignore gain cleanup errors */ }
+      try { s.ctx.close() } catch { /* ignore already-closed audio contexts */ }
       sceneRef.current = null
     }
     setActiveId(null)

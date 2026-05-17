@@ -5,6 +5,7 @@
 @import './styles/novablock-core.css';
 @import './styles/reader-mode.css';
 @import './styles/v019.css';
+@import './styles/qingzhi-refine-v34.css';
 @plugin "@tailwindcss/typography";
 
 
@@ -13,6 +14,18 @@
 
 
 :root {
+  /* QingZhi default palette */
+  --qz-jade: #80A89C;
+  --qz-jade-dark: #5F8F83;
+  --qz-mist: #DCE5DE;
+  --qz-ink: #2B2B2B;
+  --qz-gold: #C8A873;
+  --qz-blush: #F3DCD4;
+  --qz-stone: #F6F3EF;
+  --qz-paper: #FAF7F1;
+  --qz-mascot-opacity: .15;
+  --qz-texture-opacity: .38;
+
   /* Ink-on-Paper 浅色 · 象牙纸 + 朱砂 */
   --background: 38 32% 96%; /* 象牙纸 */
   --foreground: 222 20% 14%; /* 墨色 */
@@ -101,7 +114,7 @@
     background-image: var(--paper-texture);
     pointer-events: none;
     z-index: 50;
-    opacity: 0.4;
+    opacity: var(--qz-texture-opacity, 0.38);
   }
 }
 
@@ -400,3 +413,22 @@
   from, to { border-color: transparent }
   50% { border-color: currentColor }
 }
+
+/* QINGZHI_TITLE_DEDUPE_OPTIONAL_START */
+/* Optional visual-only duplicate-title guard. It hides the first H1 inside the editor body only. */
+.qz-editor-writing-surface h1:first-of-type,
+.qz-editor-writing-surface .ProseMirror > h1:first-of-type,
+.qz-editor-writing-surface .tiptap > h1:first-of-type,
+.qz-editor-writing-surface .novablock-editor > h1:first-of-type,
+.qz-editor-writing-surface .novablock-editor h1:first-of-type {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+/* QINGZHI_TITLE_DEDUPE_OPTIONAL_END */

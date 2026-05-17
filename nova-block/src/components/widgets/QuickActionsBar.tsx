@@ -81,9 +81,10 @@ export function QuickActionsBar({
       onMouseLeave={() => setExpanded(false)}
       onFocusCapture={() => setExpanded(true)}
       onBlurCapture={() => setExpanded(false)}
-      className="nv-glass-sm nv-dock"
+      data-testid="qingzhi-quick-actions"
+      className="nv-glass-sm nv-dock qz-quick-actions"
       role="toolbar"
-      aria-label="Nova 快速入口"
+      aria-label="清知快捷入口"
       style={{
         position: 'absolute',
         bottom: 22,
@@ -99,6 +100,7 @@ export function QuickActionsBar({
       }}
     >
       <DockBtn
+        actionId="command"
         label="命令面板"
         hint="⌘K"
         icon={<CommandIcon size={15} strokeWidth={2} />}
@@ -106,6 +108,7 @@ export function QuickActionsBar({
         onClick={() => onOpenCommand?.()}
       />
       <DockBtn
+        actionId="daily"
         label="Daily"
         hint="⌘⇧D"
         icon={<CalendarIcon size={15} strokeWidth={2} />}
@@ -113,6 +116,7 @@ export function QuickActionsBar({
         onClick={onOpenDaily}
       />
       <DockBtn
+        actionId="graph"
         label="图谱"
         hint="⌘⇧G"
         icon={<Share2 size={15} strokeWidth={2} />}
@@ -120,6 +124,7 @@ export function QuickActionsBar({
         onClick={onOpenGraph}
       />
       <DockBtn
+        actionId="reader"
         label="阅读"
         hint="⌘⇧R"
         icon={<BookOpen size={15} strokeWidth={2} />}
@@ -132,6 +137,7 @@ export function QuickActionsBar({
 
       {onOpenAsk && (
         <DockBtn
+          actionId="ask"
           label="Ask"
           hint="⌘⇧A"
           icon={<MessageSquare size={15} strokeWidth={2} />}
@@ -141,6 +147,7 @@ export function QuickActionsBar({
       )}
       {onOpenTaskMirror && (
         <DockBtn
+          actionId="task-mirror"
           label="任务"
           hint="⌘⇧M"
           icon={<CheckSquare size={15} strokeWidth={2} />}
@@ -150,6 +157,7 @@ export function QuickActionsBar({
       )}
       {onOpenRecap && (
         <DockBtn
+          actionId="recap"
           label="回顾"
           icon={<Activity size={15} strokeWidth={2} />}
           expanded={expanded}
@@ -158,6 +166,7 @@ export function QuickActionsBar({
       )}
       {onOpenTimeline && (
         <DockBtn
+          actionId="timeline"
           label="时间轴"
           hint="⌘⇧T"
           icon={<GitCommitHorizontal size={15} strokeWidth={2} />}
@@ -167,6 +176,7 @@ export function QuickActionsBar({
       )}
       {onOpenExport && (
         <DockBtn
+          actionId="export"
           label="导出"
           hint="⌘⇧E"
           icon={<Download size={15} strokeWidth={2} />}
@@ -191,6 +201,7 @@ export function QuickActionsBar({
       <Sep />
 
       <DockBtn
+        actionId="theme"
         label={THEME_META[theme].label}
         hint={THEME_META[theme].hint}
         icon={
@@ -212,6 +223,7 @@ export function QuickActionsBar({
       />
       {onOpenInspector && (
         <DockBtn
+          actionId="inspector"
           label="检视"
           hint="⌘."
           icon={<PanelRight size={15} strokeWidth={2} />}
@@ -254,7 +266,7 @@ function usePopoverAlign(btnRef: React.RefObject<HTMLElement | null>, open: bool
     const margin = 12
     let left: number | 'auto' = rect.width / 2 - width / 2
     let right: number | 'auto' = 'auto'
-    let transform = 'translateX(0)'
+    const transform = 'translateX(0)'
     const wouldLeftAbs = rect.left + left
     const wouldRightAbs = wouldLeftAbs + width
     if (wouldLeftAbs < margin) {
@@ -300,6 +312,7 @@ function PomodoroButton({
   return (
     <div ref={btnWrapRef} style={{ position: 'relative' }}>
       <DockBtn
+        actionId="pomodoro"
         label={label}
         hint="⌘⇧P"
         icon={
@@ -445,6 +458,7 @@ function AmbientButton({
   return (
     <div ref={btnWrapRef} style={{ position: 'relative' }}>
       <DockBtn
+        actionId="ambient"
         label={label}
         icon={active ? <Volume2 size={15} strokeWidth={2} /> : <VolumeX size={15} strokeWidth={2} />}
         expanded={expanded || active}
@@ -517,6 +531,7 @@ function AmbientButton({
 }
 
 function DockBtn({
+  actionId,
   label,
   hint,
   icon,
@@ -525,6 +540,7 @@ function DockBtn({
   disabled,
   ...rest
 }: {
+  actionId?: string
   label: string
   hint?: string
   icon: React.ReactNode
@@ -537,7 +553,8 @@ function DockBtn({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="nv-transition nv-focus-ring nv-dock-btn"
+      data-testid={actionId ? `qingzhi-quick-action-${actionId}` : undefined}
+      className="nv-transition nv-focus-ring nv-dock-btn qz-quick-action"
       title={hint ? `${label} (${hint})` : label}
       aria-label={label}
       {...rest}

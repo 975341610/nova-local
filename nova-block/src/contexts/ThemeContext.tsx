@@ -1,32 +1,20 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 
-export type NovaTheme = 'rice-paper' | 'ink-midnight' | 'bamboo'
+export type NovaTheme = 'qingzhi'
 
 const THEME_STORAGE_KEY = 'nv-theme-v2'
-const THEMES: NovaTheme[] = ['rice-paper', 'ink-midnight', 'bamboo']
+const THEMES: NovaTheme[] = ['qingzhi']
 
 function readSavedTheme(): NovaTheme {
-  if (typeof localStorage === 'undefined') return 'rice-paper'
-  const saved = localStorage.getItem(THEME_STORAGE_KEY)
-  if (saved && (THEMES as string[]).includes(saved)) return saved as NovaTheme
-  // migrate from v1 (dark / light)
-  const legacy = localStorage.getItem('nv-theme')
-  if (legacy === 'dark') return 'ink-midnight'
-  return 'rice-paper'
+  return 'qingzhi'
 }
 
 function applyThemeToDocument(theme: NovaTheme) {
   if (typeof document === 'undefined') return
   const html = document.documentElement
   html.dataset.nvTheme = theme
-  // keep `.dark` + `data-theme="dark"` compatibility with tailwind-dark utilities
-  if (theme === 'ink-midnight') {
-    html.classList.add('dark')
-    html.dataset.theme = 'dark'
-  } else {
-    html.classList.remove('dark')
-    html.dataset.theme = 'light'
-  }
+  html.classList.remove('dark')
+  html.dataset.theme = 'light'
 }
 
 /**
@@ -38,7 +26,7 @@ function pageFlipTransition(nextTheme: NovaTheme) {
     applyThemeToDocument(nextTheme)
     return
   }
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     applyThemeToDocument(nextTheme)
     return
   }
@@ -96,11 +84,9 @@ export function NovaThemeProvider({ children }: { children: ReactNode }) {
 
   const cycleTheme = useCallback(() => {
     setThemeState(prev => {
-      const idx = THEMES.indexOf(prev)
-      const next = THEMES[(idx + 1) % THEMES.length]
-      localStorage.setItem(THEME_STORAGE_KEY, next)
-      pageFlipTransition(next)
-      return next
+      localStorage.setItem(THEME_STORAGE_KEY, 'qingzhi')
+      applyThemeToDocument('qingzhi')
+      return prev
     })
   }, [])
 
@@ -116,7 +102,7 @@ export function useNovaTheme(): ThemeContextValue {
   if (!ctx) {
     // graceful fallback for components that mount before provider
     return {
-      theme: 'rice-paper',
+      theme: 'qingzhi',
       setTheme: () => {},
       cycleTheme: () => {},
     }
@@ -125,9 +111,7 @@ export function useNovaTheme(): ThemeContextValue {
 }
 
 export const THEME_META: Record<NovaTheme, { label: string; hint: string; icon: string }> = {
-  'rice-paper': { label: '宣纸', hint: '晴日 · 静', icon: '☀️' },
-  'ink-midnight': { label: '墨夜', hint: '深夜 · 思', icon: '🌙' },
-  'bamboo': { label: '青竹', hint: '雨天 · 润', icon: '🌿' },
+  qingzhi: { label: '清知', hint: '宣纸 · 玉色 · 暖金', icon: '知' },
 }
 
 export const THEME_LIST = THEMES

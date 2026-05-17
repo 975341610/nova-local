@@ -154,7 +154,6 @@ export function ConceptOrbit({
       ring1: build(ring1Ids, 1, r1),
       ring2: build(ring2Ids.map((x) => x[0]), 2, r2, ring2Counter),
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [center, adjacency, viewSize])
 
   const cx = viewSize.w / 2

@@ -81,7 +81,7 @@ export function ReaderMode({ note, isOpen, onClose }: ReaderModeProps) {
 
   const html = useMemo(() => {
     if (!note) return ''
-    return renderReaderHtml(note.content ?? '')
+    return removeDuplicateReaderTitle(renderReaderHtml(note.content ?? ''), note.title)
   }, [note])
 
   // 命令式写入 HTML,避免 React 在 scroll/resize 导致的 re-render 中重置 <video>
@@ -389,6 +389,31 @@ function hashStr(s: string): string {
     h = Math.imul(h, 16777619)
   }
   return (h >>> 0).toString(36) + ':' + s.length
+}
+
+function normalizeHeadingText(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+export function removeDuplicateReaderTitle(html: string, title: string | null | undefined): string {
+  const normalizedTitle = normalizeHeadingText(title)
+  if (!html || !normalizedTitle) return html
+
+  if (typeof DOMParser !== 'undefined') {
+    const document = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html')
+    const container = document.body.firstElementChild
+    const firstElement = container?.firstElementChild
+    if (firstElement?.tagName.toLowerCase() === 'h1' && normalizeHeadingText(firstElement.textContent) === normalizedTitle) {
+      firstElement.remove()
+      return container?.innerHTML ?? html
+    }
+    return html
+  }
+
+  return html.replace(/^\s*<h1\b[^>]*>([\s\S]*?)<\/h1>\s*/i, (match, heading) => {
+    const plain = String(heading).replace(/<[^>]+>/g, '')
+    return normalizeHeadingText(plain) === normalizedTitle ? '' : match
+  })
 }
 
 export default ReaderMode

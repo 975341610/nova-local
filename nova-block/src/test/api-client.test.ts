@@ -390,12 +390,12 @@ describe('api browser fallback', () => {
 
   it('downloads the full data export as a zip blob', async () => {
     const zipBlob = new Blob(['zip'], { type: 'application/zip' })
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(zipBlob, {
-        status: 200,
-        headers: { 'Content-Type': 'application/zip' },
-      }),
-    )
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'Content-Type': 'application/zip' }),
+      blob: async () => zipBlob,
+    } as Response)
 
     const result = await api.exportAllData({ 'nova.example': true })
 

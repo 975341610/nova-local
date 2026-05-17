@@ -1,10 +1,10 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react';
-import { useState, useEffect, useRef, type CSSProperties } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Trash2, X, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom';
+import { computeFootnotePopoverStyle } from './footnotePositioning';
 
 const decodeHtml = (value: string) => {
   if (typeof document === 'undefined') return value;
@@ -43,19 +43,70 @@ export function FootnoteComponent({ node, updateAttributes, deleteNode, selected
   const [content, setContent] = useState(node.attrs.content || '');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
-  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
+  const popoverRef = useRef<HTMLSpanElement>(null);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties | null>(null);
 
-  // Sync content from node attributes
   useEffect(() => {
     setContent(node.attrs.content || '');
   }, [node.attrs.content]);
 
-  // Focus textarea when editing starts
   useEffect(() => {
     if (isEditing && textareaRef.current) {
       textareaRef.current.focus();
     }
   }, [isEditing]);
+
+  const updatePopoverPosition = (editing = isEditing) => {
+    const trigger = triggerRef.current;
+    if (!trigger || typeof window === 'undefined') return false;
+
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const viewportOffsetLeft = window.visualViewport?.offsetLeft ?? 0;
+    const viewportOffsetTop = window.visualViewport?.offsetTop ?? 0;
+    setPopoverStyle(computeFootnotePopoverStyle({
+      triggerRect: trigger.getBoundingClientRect(),
+      viewportWidth,
+      viewportHeight,
+      viewportOffsetLeft,
+      viewportOffsetTop,
+      editing,
+    }));
+
+    return true;
+  };
+
+  useLayoutEffect(() => {
+    const trigger = triggerRef.current;
+    const popover = popoverRef.current;
+    const shouldShowPopover = (isHovering && !isEditing) || isEditing;
+    if (!shouldShowPopover || !trigger || !popover) return;
+
+    let isActive = true;
+    const update = () => {
+      void computePosition(trigger, popover, {
+        strategy: 'fixed',
+        placement: isEditing ? 'bottom' : 'top',
+        middleware: [
+          offset(10),
+          flip({ padding: 12 }),
+          shift({ padding: 12 }),
+        ],
+      }).then(({ x, y }) => {
+        if (!isActive) return;
+        setPopoverStyle((current) => current
+          ? { ...current, left: Math.round(x), top: Math.round(y) }
+          : current);
+      });
+    };
+
+    const cleanup = autoUpdate(trigger, popover, update);
+    update();
+    return () => {
+      isActive = false;
+      cleanup();
+    };
+  }, [isEditing, isHovering, popoverStyle?.width]);
 
   const handleSave = () => {
     updateAttributes({ content });
@@ -70,40 +121,16 @@ export function FootnoteComponent({ node, updateAttributes, deleteNode, selected
     setIsHovering(false);
   };
 
-  const updatePopoverPosition = (editing = isEditing) => {
-    const trigger = triggerRef.current;
-    if (!trigger || typeof window === 'undefined') return;
-    const rect = trigger.getBoundingClientRect();
-    const width = editing ? 320 : 360;
-    const estimatedHeight = editing ? 260 : 180;
-    const gap = 10;
-    const placeBelow = rect.top < (editing ? 210 : 170);
-    const left = clamp(
-      rect.left + rect.width / 2 - width / 2,
-      12,
-      Math.max(12, window.innerWidth - width - 12),
-    );
-    setPopoverStyle({
-      position: 'fixed',
-      left,
-      top: placeBelow
-        ? clamp(rect.bottom + gap, 12, Math.max(12, window.innerHeight - estimatedHeight - 12))
-        : clamp(rect.top - estimatedHeight - gap, 12, Math.max(12, window.innerHeight - estimatedHeight - 12)),
-      width,
-      maxWidth: 'calc(100vw - 24px)',
-      zIndex: 1000,
-    });
-  };
-
   const displayedContent = cleanFootnoteDisplayText(node.attrs.content || '');
   const popover = (
     <AnimatePresence>
-      {isHovering && !isEditing && (
+      {isHovering && !isEditing && popoverStyle && (
         <motion.span
+          ref={popoverRef}
           initial={{ opacity: 0, y: 5, scale: 0.98 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 5, scale: 0.98 }}
-          transition={{ duration: 0.15, ease: "easeOut" }}
+          transition={{ duration: 0.15, ease: 'easeOut' }}
           style={popoverStyle}
           className="p-3 bg-white/90 backdrop-blur-md border border-stone-200/50 rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] pointer-events-none"
           contentEditable={false}
@@ -114,8 +141,9 @@ export function FootnoteComponent({ node, updateAttributes, deleteNode, selected
         </motion.span>
       )}
 
-      {isEditing && (
+      {isEditing && popoverStyle && (
         <motion.span
+          ref={popoverRef}
           initial={{ opacity: 0, scale: 0.98, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.98, y: 8 }}
@@ -172,24 +200,27 @@ export function FootnoteComponent({ node, updateAttributes, deleteNode, selected
   );
 
   return (
-    <NodeViewWrapper 
-      as="span" 
+    <NodeViewWrapper
+      as="span"
       className={`footnote-wrapper relative inline-flex items-baseline ${selected ? 'ring-2 ring-blue-400/20 rounded-sm' : ''}`}
       onMouseEnter={() => {
-        if (!isEditing) {
-          updatePopoverPosition(false);
+        if (!isEditing && updatePopoverPosition(false)) {
           setIsHovering(true);
         }
       }}
-      onMouseLeave={() => setIsHovering(false)}
+      onMouseLeave={() => {
+        setIsHovering(false);
+        if (!isEditing) {
+          setPopoverStyle(null);
+        }
+      }}
     >
-      {/* 注脚序号显示 */}
-      <span 
+      <span
         ref={triggerRef}
         className={`footnote-trigger select-none cursor-pointer transition-all duration-200 
           text-[11px] font-bold leading-none px-1 py-0.5 rounded-md mx-0.5 align-top
-          ${isHovering || isEditing 
-            ? 'bg-blue-600 text-white shadow-sm scale-110' 
+          ${isHovering || isEditing
+            ? 'bg-blue-600 text-white shadow-sm scale-110'
             : 'bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700'
           }`}
         onDoubleClick={handleDoubleClick}

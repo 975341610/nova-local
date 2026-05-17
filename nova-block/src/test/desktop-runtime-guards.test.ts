@@ -53,18 +53,15 @@ describe('desktop runtime guards', () => {
     expect(onUpdateBody).toContain('liveContentTimerRef.current = window.setTimeout')
   })
 
-  it('keeps sidebar titles in sync with the first text block during live content updates', () => {
+  it('keeps note titles separate from body content during live content updates', () => {
     const editorPath = path.resolve(__dirname, '../components/novablock/NovaBlockEditor.tsx')
     const editorSource = fs.readFileSync(editorPath, 'utf8')
     const onUpdateStart = editorSource.indexOf('onUpdate: ({ editor }) => {')
     const onCreateStart = editorSource.indexOf('onCreate: ({ editor }) => {')
     const onUpdateBody = editorSource.slice(onUpdateStart, onCreateStart)
 
-    expect(onUpdateBody).toContain('const nextAutoTitle = extractLeadingNoteTitle(editor.state.doc);')
-    expect(onUpdateBody).toContain('nextAutoTitle &&')
-    expect(onUpdateBody).toContain('!currentLatestNote?.is_title_manually_edited &&')
-    expect(onUpdateBody).toContain('nextAutoTitle !== currentLatestNote?.title')
-    expect(onUpdateBody).toContain('payload.is_title_manually_edited = false;')
+    expect(onUpdateBody).not.toContain('extractLeadingNoteTitle')
+    expect(onUpdateBody).not.toContain('nextAutoTitle')
     expect(onUpdateBody).toContain('title: latestNoteRef.current?.title,')
   })
 
@@ -291,9 +288,14 @@ describe('desktop runtime guards', () => {
     const closeHandlerStart = mainSource.indexOf("mainWindow.on('close'")
     const closeHandlerEnd = mainSource.indexOf("mainWindow.on('closed'", closeHandlerStart)
     const closeHandler = mainSource.slice(closeHandlerStart, closeHandlerEnd)
-    expect(closeHandler).toContain('await flushPendingRevisionSnapshotTimers()')
-    expect(closeHandler.indexOf('await flushPendingRevisionSnapshotTimers()')).toBeLessThan(
+    expect(mainSource).toContain('async function flushPendingRevisionSnapshotTimersWithTimeout')
+    expect(mainSource).toContain('flushPendingRevisionSnapshotTimers().catch')
+    expect(closeHandler).toContain('await flushPendingRevisionSnapshotTimersWithTimeout()')
+    expect(closeHandler.indexOf('await flushPendingRevisionSnapshotTimersWithTimeout()')).toBeLessThan(
       closeHandler.indexOf('finalizeClose()'),
     )
+    expect(mainSource).toContain('const CLOSE_REVISION_FLUSH_TIMEOUT_MS')
+    expect(closeHandler).toContain('flushPendingRevisionSnapshotTimersWithTimeout()')
+    expect(mainSource).toContain('Promise.race')
   })
 })

@@ -41,6 +41,5 @@ function encodeBase64Utf8(s: string): string {
   const bytes = new TextEncoder().encode(s)
   let bin = ''
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (globalThis as any).btoa(bin)
 }

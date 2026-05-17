@@ -107,7 +107,6 @@ async function pickPackageFile(): Promise<string | null> {
     const result = await bridge().ipcInvoke('updater:pick-file')
     return (result as string) ?? null
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn('updater:pick-file failed', err)
     return null
   }

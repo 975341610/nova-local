@@ -4,7 +4,7 @@ const https = require('node:https');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const {app, BrowserWindow, dialog, ipcMain, shell, Menu } = require('electron');
 const { createFsBridge } = require('./fsBridge');
 const { createVaultWatcher } = require('./vaultWatcher');
 const {
@@ -94,6 +94,7 @@ let backendLastError = null;
 const recentLocalVaultChanges = new Map();
 const revisionSnapshotTimers = new Map();
 const REVISION_FINAL_SNAPSHOT_DELAY_MS = 3_000;
+const CLOSE_REVISION_FLUSH_TIMEOUT_MS = 1_200;
 
 const fsBridge = createFsBridge({ vaultRoot: VAULT_ROOT });
 
@@ -364,12 +365,14 @@ async function bootstrapApp() {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
+    autoHideMenuBar: true,
     width: 1440,
     height: 920,
     minWidth: 1100,
     minHeight: 720,
     backgroundColor: '#f5efe6',
-    title: 'Nova',
+    frame: false,
+    title: '清知',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -379,6 +382,15 @@ function createMainWindow() {
     },
   });
 
+  
+  // QINGZHI_HIDE_NATIVE_MENU_V34
+  try {
+    if (typeof Menu !== 'undefined' && Menu.setApplicationMenu) Menu.setApplicationMenu(null);
+    if (mainWindow.setMenuBarVisibility) mainWindow.setMenuBarVisibility(false);
+    if (mainWindow.setAutoHideMenuBar) mainWindow.setAutoHideMenuBar(true);
+  } catch (error) {
+    console.warn('[qingzhi] hide native menu failed:', error?.message || error);
+  }
   mainWindow.webContents.session.webRequest.onBeforeRequest((details, callback) => {
     try {
       const rawUrl = details.url || '';
@@ -431,7 +443,7 @@ function createMainWindow() {
 
     const handleRendererReady = async () => {
       cleanup();
-      await flushPendingRevisionSnapshotTimers();
+      await flushPendingRevisionSnapshotTimersWithTimeout();
       finalizeClose();
     };
 
@@ -888,6 +900,29 @@ async function flushPendingRevisionSnapshotTimers() {
   )));
 }
 
+async function flushPendingRevisionSnapshotTimersWithTimeout() {
+  let timeoutId = null;
+  let didTimeout = false;
+  const flushPromise = flushPendingRevisionSnapshotTimers().catch((error) => {
+    console.warn('[revision] close-time snapshot flush failed:', error && error.message ? error.message : error);
+  });
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutId = setTimeout(() => {
+      didTimeout = true;
+      resolve();
+    }, CLOSE_REVISION_FLUSH_TIMEOUT_MS);
+  });
+
+  await Promise.race([flushPromise, timeoutPromise]);
+
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+  }
+  if (didTimeout) {
+    console.warn(`[revision] close-time snapshot flush timed out after ${CLOSE_REVISION_FLUSH_TIMEOUT_MS}ms`);
+  }
+}
+
 function pickNoteWritePayload(payload) {
   const source = ensurePlainObject(payload);
   const allowedKeys = [
@@ -921,6 +956,25 @@ function pickNoteWritePayload(payload) {
 function registerIpcHandlers() {
   ipcMain.handle('desktop:api-request', async (_event, payload) => requestBackendApi(payload));
   ipcMain.handle('desktop:get-backend-base-url', async () => BACKEND_API_BASE);
+  ipcMain.handle('desktop:window-control', async (event, payload = {}) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!targetWindow) return { ok: false, reason: 'window-not-found' };
+
+    switch (payload.action) {
+      case 'minimize':
+        targetWindow.minimize();
+        return { ok: true };
+      case 'maximize':
+        if (targetWindow.isMaximized()) targetWindow.unmaximize();
+        else targetWindow.maximize();
+        return { ok: true };
+      case 'close':
+        targetWindow.close();
+        return { ok: true };
+      default:
+        return { ok: false, reason: 'unsupported-action' };
+    }
+  });
   ipcMain.handle('system:open-file', async (_event, payload) => openLocalFile(payload));
   ipcMain.handle('system:switch-data-path', async (_event, payload) => switchDataPath(payload));
   ipcMain.handle('system:import-data', async (_event, payload) => importData(payload));

@@ -26,3 +26,23 @@ bin/
 canvas-drag-antijitter.patch.txt
 report_text.txt
 test_repro_session.db
+
+# QingZhi redesign local repair/rollback artifacts
+.qingzhi*/
+nova-block/.qingzhi*/
+nova-block/.qingzhi-installed
+*.qingzhi.patch.ts
+fix_qingzhi_*.py
+install_qingzhi_*.py
+install-qingzhi-fixed.bat
+rollback_qingzhi_*.py
+run_fix_qingzhi_*.cmd
+PATCH_SUMMARY_QINGZHI_*.md
+README-QINGZHI.md
+README_QINGZHI_*.md
+README_青芷类型错误修复.md
+README-QINGZHI-UI-REPAIR-*.txt
+README_ROLLBACK.txt
+MANUAL_APP_PATCH.md
+payload/
+logs/

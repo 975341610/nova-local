@@ -1,15 +1,29 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { WashiTape, JournalStamp } from '../../lib/tiptapExtensions'
 
+const editors: Editor[] = []
+
+function createEditor(options: ConstructorParameters<typeof Editor>[0]) {
+  const editor = new Editor(options)
+  editors.push(editor)
+  return editor
+}
+
+afterEach(() => {
+  for (const editor of editors.splice(0)) {
+    editor.destroy()
+  }
+})
+
 describe('Journal Extensions', () => {
   describe('WashiTape', () => {
     it('should be correctly parsed from HTML', () => {
-      const editor = new Editor({
+      const editor = createEditor({
         extensions: [StarterKit, WashiTape],
         content: '<div data-type="washi-tape" data-pattern="polka-dots" data-color="#ff0000"></div>',
       })
@@ -20,7 +34,7 @@ describe('Journal Extensions', () => {
     })
 
     it('should render correct HTML attributes', () => {
-      const editor = new Editor({
+      const editor = createEditor({
         extensions: [StarterKit, WashiTape],
       })
       editor.commands.insertContent({
@@ -36,7 +50,7 @@ describe('Journal Extensions', () => {
 
   describe('JournalStamp', () => {
     it('should be correctly parsed from HTML', () => {
-      const editor = new Editor({
+      const editor = createEditor({
         extensions: [StarterKit, JournalStamp],
         content: '<span data-type="journal-stamp" data-stamp-type="mood" data-value="happy"></span>',
       })

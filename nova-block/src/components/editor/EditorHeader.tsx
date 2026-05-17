@@ -116,9 +116,10 @@ export function EditorHeader(props: EditorHeaderProps) {
 
   return (
     <div className="flex flex-col bg-transparent px-0 pt-0 pb-0 antialiased">
-      <div className="sticky top-0 z-50 mb-4 flex items-center justify-between border-b border-border/40 bg-background/80 pt-3 pb-3 backdrop-blur-xl transition-colors">
-        <div className="flex items-center gap-4">
+      <div data-testid="qingzhi-editorbar" className="qz-editorbar sticky top-0 z-50 mb-4 flex items-center justify-between border-b border-border/40 bg-background/80 pt-3 pb-3 backdrop-blur-xl transition-colors">
+        <div data-testid="qingzhi-editor-status" className="qz-editor-status flex min-w-0 items-center gap-4">
           <div className="flex cursor-default items-center gap-2 rounded-lg p-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground transition-all hover:bg-accent/50">
+            <span className="text-[11px] font-semibold tracking-[0.18em] text-[var(--nv-color-accent-fg)]">清知编辑</span>
             <div
               className={`h-2 w-2 rounded-full ${
                 savePhase === 'saving'
@@ -150,13 +151,14 @@ export function EditorHeader(props: EditorHeaderProps) {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div data-testid="qingzhi-editor-actions" className="qz-editor-actions flex items-center gap-3">
           <div className="relative flex h-[30px] w-[64px] items-center rounded-lg border border-border/40 bg-accent/30 p-0.5">
             <div
               className="absolute top-0.5 bottom-0.5 z-0 w-[28px] rounded-md border border-border/50 bg-background shadow-sm transition-transform duration-300 ease-out"
               style={{ transform: viewMode === 'edit' ? 'translateX(2px)' : 'translateX(30px)' }}
             />
             <button
+              data-testid="qingzhi-editor-action-edit-mode"
               onClick={() => onSetViewMode('edit')}
               title="编辑模式"
               className={`relative z-10 flex flex-1 items-center justify-center rounded-md p-1.5 transition-colors duration-300 ${
@@ -166,6 +168,7 @@ export function EditorHeader(props: EditorHeaderProps) {
               <Pen size={13} strokeWidth={2.5} />
             </button>
             <button
+              data-testid="qingzhi-editor-action-preview-mode"
               onClick={() => onSetViewMode('preview')}
               title="预览模式"
               className={`relative z-10 flex flex-1 items-center justify-center rounded-md p-1.5 transition-colors duration-300 ${
@@ -177,6 +180,7 @@ export function EditorHeader(props: EditorHeaderProps) {
           </div>
 
           <button
+            data-testid="qingzhi-editor-action-typewriter"
             onClick={onToggleTypewriter}
             title={isTypewriterOn ? '退出打字机模式 · ⌘T' : '打字机模式 · ⌘T'}
             aria-label="toggle-typewriter-mode"
@@ -192,6 +196,7 @@ export function EditorHeader(props: EditorHeaderProps) {
 
           <div className="relative flex items-center" ref={backgroundMenuRef}>
             <button
+              data-testid="qingzhi-editor-action-background-paper"
               onClick={() => setIsBackgroundMenuOpen((open) => !open)}
               className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border/40 bg-accent/30 text-muted-foreground transition-all duration-300 hover:border-border/60 hover:text-foreground ${
                 backgroundPaper !== 'none' || isBackgroundMenuOpen ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-500' : ''
@@ -228,6 +233,7 @@ export function EditorHeader(props: EditorHeaderProps) {
 
           <div className="group relative flex items-center">
             <button
+              data-testid="qingzhi-editor-action-sticker-mode"
               onClick={onToggleStickerMode}
               title={isStickerMode ? '关闭贴纸模式' : '开启贴纸模式'}
               aria-label="toggle-sticker-mode"
@@ -282,6 +288,7 @@ export function EditorHeader(props: EditorHeaderProps) {
           </div>
 
           <button
+            data-testid="qingzhi-editor-action-save-template"
             onClick={onSaveAsTemplate}
             title="另存为模板"
             className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border/40 bg-accent/30 text-muted-foreground transition-all duration-300 hover:border-primary/40 hover:text-primary"
@@ -291,14 +298,16 @@ export function EditorHeader(props: EditorHeaderProps) {
 
           <div className="ml-1 flex items-center gap-1 border-l border-border/40 pl-3">
             <button
+              data-testid="qingzhi-editor-action-save-note"
               onClick={onSave}
-              title="Save"
+              title="保存"
               className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <Save size={16} />
             </button>
             {onOpenHistory && (
               <button
+                data-testid="qingzhi-editor-action-revision-history"
                 onClick={onOpenHistory}
                 title="版本历史"
                 aria-label="open-revision-history"
@@ -308,6 +317,7 @@ export function EditorHeader(props: EditorHeaderProps) {
               </button>
             )}
             <button
+              data-testid="qingzhi-editor-action-margin-notes"
               onClick={onToggleMarginNotes}
               onMouseEnter={onOutlineEnter}
               onMouseLeave={onOutlineLeave}

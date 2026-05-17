@@ -122,7 +122,13 @@ export function TaskMirror({ notes, isOpen, onClose, onOpenNote }: TaskMirrorPro
 
   const counts = useMemo(() => {
     let open = 0, done = 0
-    for (const t of allTasks) t.done ? done++ : open++
+    for (const t of allTasks) {
+      if (t.done) {
+        done++
+      } else {
+        open++
+      }
+    }
     return { open, done, total: allTasks.length }
   }, [allTasks])
 

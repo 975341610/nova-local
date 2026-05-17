@@ -122,7 +122,7 @@ export function aiMarkdownToHtmlWithFootnotes(
   citations: Array<{ title?: string; excerpt?: string }> = [],
 ): string {
   const placeholders = new Map<string, string>()
-  const prepared = markdown.replace(/(?<!\!)\[(\d+)\]/g, (match, rawIndex: string, offset: number) => {
+  const prepared = markdown.replace(/(?<!!)\[(\d+)\]/g, (match, rawIndex: string, offset: number) => {
     const index = Number(rawIndex)
     if (!Number.isFinite(index) || index < 1) return match
     const citation = citations[index - 1]

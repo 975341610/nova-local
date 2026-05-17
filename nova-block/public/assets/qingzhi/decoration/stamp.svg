@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="jadeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9CC2B6"/>
+      <stop offset="100%" stop-color="#6B907F"/>
+    </linearGradient>
+  </defs>
+  <circle cx="16" cy="16" r="14" fill="url(#jadeGrad)" stroke="#C8A873" stroke-width="1.2"/>
+  <text x="16" y="22" text-anchor="middle" font-family="'Source Han Serif SC','Noto Serif SC',serif" font-size="14" font-weight="600" fill="#FBF8F2">知</text>
+</svg>

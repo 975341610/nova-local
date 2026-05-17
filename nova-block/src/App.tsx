@@ -17,7 +17,7 @@ import { MusicProvider, useMusicControls } from './contexts/MusicContext'
 import { HabitProvider } from './contexts/HabitContext'
 import { TodoProvider } from './contexts/TodoContext'
 import { AIProvider } from './contexts/AIContext'
-import { AmbientSoundProvider } from './contexts/AmbientSoundContext'
+import { AMBIENT_LIST, AmbientSoundProvider, useAmbientSound } from './contexts/AmbientSoundContext'
 import { PomodoroProvider, usePomodoro } from './contexts/PomodoroContext'
 import { FloatingMusicCapsule } from './components/widgets/FloatingMusicCapsule'
 import { PlaylistPopover } from './components/widgets/PlaylistPopover'
@@ -46,6 +46,7 @@ import {
   Share2 as Share2Icon,
   Calendar as CalendarIcon,
   Settings as SettingsIcon,
+  Command as CommandIcon,
   Plus as PlusIcon,
   Sparkles as SparklesIcon,
   FileText as FileTextIcon,
@@ -58,8 +59,24 @@ import {
   Download as DownloadIcon,
   Link2 as Link2Icon,
   Wand2 as Wand2Icon,
+  PanelRight as PanelRightIcon,
+  MoreHorizontal as MoreHorizontalIcon,
+  Waves as WavesIcon,
+  Play as PlayIcon,
+  Pause as PauseIcon,
+  RotateCcw as RotateCcwIcon,
+  Minus as MinimizeIcon,
+  Square as MaximizeIcon,
+  X as CloseIcon,
 } from 'lucide-react'
 import { useNoteStore } from './store/useNoteStore'
+import {
+  applyQingzhiSettings,
+  QINGZHI_SETTINGS_EVENT,
+  readQingzhiSettings,
+  type QingzhiSettings,
+  type QingzhiTopbarActionId,
+} from './lib/qingzhiSettings'
 
 function MusicGlobalUI() {
   const { playlistPopoverAnchor, closePlaylist } = useMusicControls()
@@ -74,6 +91,383 @@ function MusicGlobalUI() {
         />
       )}
     </AnimatePresence>
+  )
+}
+
+function QingzhiTopbarAvatar() {
+  const defaultAvatar = '/assets/qingzhi/avatar/default.webp'
+  const fallbackAvatar = '/assets/qingzhi/avatar/default.png'
+  const [src, setSrc] = useState(() => readQingzhiSettings().avatarSrc || defaultAvatar)
+  const [failedFallback, setFailedFallback] = useState(false)
+
+  useEffect(() => {
+    const update = () => {
+      setFailedFallback(false)
+      setSrc(readQingzhiSettings().avatarSrc || defaultAvatar)
+    }
+    window.addEventListener(QINGZHI_SETTINGS_EVENT, update)
+    return () => window.removeEventListener(QINGZHI_SETTINGS_EVENT, update)
+  }, [])
+
+  if (failedFallback) {
+    return <span data-testid="qingzhi-topbar-avatar-fallback">知</span>
+  }
+
+  return (
+    <img
+      data-testid="qingzhi-topbar-avatar-img"
+      src={src}
+      alt=""
+      onError={() => {
+        if (src !== fallbackAvatar) setSrc(fallbackAvatar)
+        else setFailedFallback(true)
+      }}
+    />
+  )
+}
+
+function QingzhiBrandMark() {
+  const defaultLogo = '/assets/qingzhi/logo-mark.png'
+  const fallbackLogo = '/assets/qingzhi/logo-mark.webp'
+  const [src, setSrc] = useState(() => readQingzhiSettings().brandLogoSrc || defaultLogo)
+  const [failedFallback, setFailedFallback] = useState(false)
+
+  useEffect(() => {
+    const update = () => {
+      setFailedFallback(false)
+      setSrc(readQingzhiSettings().brandLogoSrc || defaultLogo)
+    }
+    window.addEventListener(QINGZHI_SETTINGS_EVENT, update)
+    return () => window.removeEventListener(QINGZHI_SETTINGS_EVENT, update)
+  }, [])
+
+  if (failedFallback) {
+    return <span className="qz-brand-mark-fallback">知</span>
+  }
+
+  return (
+    <img
+      data-testid="qingzhi-brand-logo-img"
+      src={src}
+      alt=""
+      onError={() => {
+        if (src !== fallbackLogo) setSrc(fallbackLogo)
+        else setFailedFallback(true)
+      }}
+    />
+  )
+}
+
+function formatPomodoroRemaining(seconds: number) {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.max(0, seconds % 60)
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+}
+
+function QingzhiDotMatrixTime({ value }: { value: string }) {
+  return (
+    <span className="qz-dot-matrix" aria-label={value}>
+      {value.split('').map((char, index) => (
+        <span
+          key={`${char}-${index}`}
+          className={`qz-dot-matrix-cell ${char === ':' ? 'qz-dot-matrix-cell-colon' : ''}`}
+          aria-hidden="true"
+          data-char={char}
+        >
+          {char}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+function QingzhiTopbarRuntimeStatus({
+  onOpenPanel,
+}: {
+  onOpenPanel: (panel: 'pomodoro' | 'ambient') => void
+}) {
+  const pomodoro = usePomodoro()
+  const ambient = useAmbientSound()
+  const activeAmbient = AMBIENT_LIST.find((item) => item.id === ambient.activeId)
+
+  if (!pomodoro.isRunning && !activeAmbient) return null
+
+  return (
+    <div data-testid="qingzhi-topbar-status" className="qz-topbar-status">
+      {pomodoro.isRunning && (
+        <div data-testid="qingzhi-topbar-pomodoro-chip" className="qz-topbar-status-chip qz-topbar-status-chip-pomodoro">
+          <button
+            type="button"
+            className="qz-topbar-status-chip-main"
+            title="打开番茄钟面板"
+            onClick={() => onOpenPanel('pomodoro')}
+          >
+            <span className="qz-topbar-status-chip-label">
+              {pomodoro.phase === 'focus' ? `专注 ${pomodoro.currentCycle}/${pomodoro.longBreakEvery}` : pomodoro.isLongBreak ? '长休' : '短休'}
+            </span>
+            <QingzhiDotMatrixTime value={formatPomodoroRemaining(pomodoro.remaining)} />
+          </button>
+          <button
+            type="button"
+            className="qz-topbar-status-chip-close"
+            title="关闭番茄钟"
+            aria-label="关闭番茄钟"
+            onClick={(event) => {
+              event.stopPropagation()
+              pomodoro.reset()
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {activeAmbient && (
+        <div data-testid="qingzhi-topbar-ambient-chip" className="qz-topbar-status-chip qz-topbar-status-chip-ambient">
+          <button
+            type="button"
+            className="qz-topbar-status-chip-main"
+            title="打开白噪音面板"
+            onClick={() => onOpenPanel('ambient')}
+          >
+            <WavesIcon size={13} strokeWidth={2} />
+            <span className="qz-topbar-status-chip-label">{activeAmbient.label}</span>
+          </button>
+          <button
+            type="button"
+            className="qz-topbar-status-chip-close"
+            title="关闭白噪音"
+            aria-label="关闭白噪音"
+            onClick={(event) => {
+              event.stopPropagation()
+              ambient.stop()
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function QingzhiTopbarOverflowRuntimeActions({
+  onOpenPanel,
+}: {
+  onOpenPanel: (panel: 'pomodoro' | 'ambient') => void
+}) {
+  const pomodoro = usePomodoro()
+  const ambient = useAmbientSound()
+
+  return (
+    <>
+      <div className="qz-topbar-overflow-sep" />
+      <button
+        type="button"
+        data-testid="qingzhi-topbar-overflow-pomodoro"
+        className="qz-topbar-overflow-item"
+        title="打开番茄钟面板"
+        onClick={() => onOpenPanel('pomodoro')}
+      >
+        <ClockIcon size={14} strokeWidth={2.1} />
+        <span>{pomodoro.isRunning ? `番茄钟 · ${formatPomodoroRemaining(pomodoro.remaining)}` : '番茄钟'}</span>
+      </button>
+      <button
+        type="button"
+        data-testid="qingzhi-topbar-overflow-ambient"
+        className="qz-topbar-overflow-item"
+        title="打开白噪音面板"
+        onClick={() => onOpenPanel('ambient')}
+      >
+        <WavesIcon size={14} strokeWidth={2.1} />
+        <span>{ambient.activeId ? `白噪音 · ${AMBIENT_LIST.find((item) => item.id === ambient.activeId)?.label ?? ''}` : '白噪音'}</span>
+      </button>
+    </>
+  )
+}
+
+function QingzhiTopbarPomodoroPanel({
+  onClose,
+}: {
+  onClose: () => void
+}) {
+  const {
+    phase,
+    remaining,
+    isRunning,
+    start,
+    pause,
+    reset,
+    focusMin,
+    breakMin,
+    longBreakMin,
+    longBreakEvery,
+    completedFocusSessions,
+    currentCycle,
+    isLongBreak,
+    setDurations,
+  } = usePomodoro()
+  const [focusInput, setFocusInput] = useState(String(focusMin))
+  const [breakInput, setBreakInput] = useState(String(breakMin))
+  const [longBreakInput, setLongBreakInput] = useState(String(longBreakMin))
+  const [cycleInput, setCycleInput] = useState(String(longBreakEvery))
+
+  useEffect(() => {
+    setFocusInput(String(focusMin))
+    setBreakInput(String(breakMin))
+    setLongBreakInput(String(longBreakMin))
+    setCycleInput(String(longBreakEvery))
+  }, [focusMin, breakMin, longBreakMin, longBreakEvery])
+
+  const phaseLabel = phase === 'idle'
+    ? '准备开始'
+    : phase === 'focus'
+      ? `专注 ${currentCycle}/${longBreakEvery}`
+      : isLongBreak
+        ? '长休中'
+        : '短休中'
+
+  const workflowHint = phase === 'idle'
+    ? `${focusMin} 分钟专注 / ${breakMin} 分钟短休 / ${longBreakMin} 分钟长休`
+    : phase === 'focus'
+      ? `第 ${currentCycle}/${longBreakEvery} 轮专注，完成后自动进入休息`
+      : isLongBreak
+        ? `已完成 ${completedFocusSessions} 轮专注，正在长休`
+        : `已完成 ${completedFocusSessions} 轮专注，正在短休`
+
+  return (
+    <motion.div
+      key="qingzhi-topbar-pomodoro-panel"
+      data-testid="qingzhi-topbar-pomodoro-panel"
+      initial={{ opacity: 0, y: -6, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+      transition={{ duration: 0.16 }}
+      className="qz-topbar-runtime-panel"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="qz-topbar-runtime-panel-head">
+        <div>
+          <div className="qz-topbar-runtime-title">番茄钟</div>
+          <div className="qz-topbar-runtime-subtle">{workflowHint}</div>
+        </div>
+        <button type="button" className="qz-topbar-runtime-dismiss" onClick={onClose} aria-label="关闭番茄钟面板">×</button>
+      </div>
+
+      <div className="qz-topbar-runtime-display">
+        <QingzhiDotMatrixTime value={formatPomodoroRemaining(remaining)} />
+      </div>
+
+      <div className="qz-topbar-runtime-subtle" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>{phaseLabel}</span>
+        <span>完成 {completedFocusSessions} 轮</span>
+      </div>
+
+      <div className="qz-topbar-runtime-actions">
+        <button
+          type="button"
+          data-testid="qingzhi-pomodoro-start"
+          className="qz-topbar-runtime-btn"
+          onClick={() => {
+            if (isRunning) pause()
+            else start()
+          }}
+        >
+          {isRunning ? <PauseIcon size={13} /> : <PlayIcon size={13} />}
+          <span>{isRunning ? '暂停' : phase === 'idle' ? '开始专注' : '继续'}</span>
+        </button>
+        <button type="button" data-testid="qingzhi-pomodoro-reset" className="qz-topbar-runtime-btn" onClick={reset}>
+          <RotateCcwIcon size={13} />
+          <span>重置</span>
+        </button>
+      </div>
+
+      <div className="qz-topbar-runtime-settings">
+        <label>
+          <span>专注</span>
+          <input data-testid="qingzhi-pomodoro-focus-input" type="number" min={1} max={120} value={focusInput} onChange={(e) => setFocusInput(e.target.value)} />
+        </label>
+        <label>
+          <span>短休</span>
+          <input data-testid="qingzhi-pomodoro-break-input" type="number" min={1} max={60} value={breakInput} onChange={(e) => setBreakInput(e.target.value)} />
+        </label>
+        <label>
+          <span>长休</span>
+          <input data-testid="qingzhi-pomodoro-long-break-input" type="number" min={1} max={90} value={longBreakInput} onChange={(e) => setLongBreakInput(e.target.value)} />
+        </label>
+        <label>
+          <span>轮次</span>
+          <input data-testid="qingzhi-pomodoro-cycle-input" type="number" min={2} max={8} value={cycleInput} onChange={(e) => setCycleInput(e.target.value)} />
+        </label>
+        <button
+          type="button"
+          data-testid="qingzhi-pomodoro-apply"
+          className="qz-topbar-runtime-btn qz-topbar-runtime-btn-ghost"
+          onClick={() => setDurations(
+            parseInt(focusInput || '25', 10),
+            parseInt(breakInput || '5', 10),
+            parseInt(longBreakInput || '15', 10),
+            parseInt(cycleInput || '4', 10),
+          )}
+        >
+          应用
+        </button>
+      </div>
+    </motion.div>
+  )
+}
+function QingzhiTopbarAmbientPanel({
+  onClose,
+}: {
+  onClose: () => void
+}) {
+  const { activeId, volume, toggle, setVolume, stop } = useAmbientSound()
+
+  return (
+    <motion.div
+      key="qingzhi-topbar-ambient-panel"
+      data-testid="qingzhi-topbar-ambient-panel"
+      initial={{ opacity: 0, y: -6, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+      transition={{ duration: 0.16 }}
+      className="qz-topbar-runtime-panel"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="qz-topbar-runtime-panel-head">
+        <div>
+          <div className="qz-topbar-runtime-title">白噪音</div>
+          <div className="qz-topbar-runtime-subtle">{activeId ? '正在播放环境声' : '选择一个场景开始播放'}</div>
+        </div>
+        <button type="button" className="qz-topbar-runtime-dismiss" onClick={onClose} aria-label="关闭白噪音面板">×</button>
+      </div>
+
+      <div className="qz-topbar-runtime-scene-grid">
+        {AMBIENT_LIST.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            data-testid={`qingzhi-ambient-scene-${item.id}`}
+            className="qz-topbar-runtime-scene"
+            data-active={String(activeId === item.id)}
+            onClick={() => toggle(item.id)}
+            title={item.hint}
+          >
+            <span className="qz-topbar-runtime-scene-icon" aria-hidden="true">{item.icon}</span>
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="qz-topbar-runtime-settings">
+        <label className="qz-topbar-runtime-range">
+          <span>音量</span>
+          <input data-testid="qingzhi-ambient-volume" type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => setVolume(parseFloat(e.target.value))} />
+        </label>
+        <button type="button" data-testid="qingzhi-ambient-stop" className="qz-topbar-runtime-btn qz-topbar-runtime-btn-ghost" onClick={stop}>
+          停止播放
+        </button>
+      </div>
+    </motion.div>
   )
 }
 
@@ -149,10 +543,15 @@ function App() {
   const [isInspectorOpen, setIsInspectorOpen] = useState(false)
   const [isTypewriterOn, setIsTypewriterOn] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isTopbarOverflowOpen, setIsTopbarOverflowOpen] = useState(false)
+  const [openTopbarRuntimePanel, setOpenTopbarRuntimePanel] = useState<null | 'pomodoro' | 'ambient'>(null)
+  const topbarOverflowRef = useRef<HTMLDivElement | null>(null)
   const [isTaskMirrorOpen, setIsTaskMirrorOpen] = useState(false)
   const [isAskOpen, setIsAskOpen] = useState(false)
   const [isRecapOpen, setIsRecapOpen] = useState(false)
   const [isExportOpen, setIsExportOpen] = useState(false)
+  const [qingzhiSettings, setQingzhiSettings] = useState<QingzhiSettings>(() => readQingzhiSettings())
+  const [qingzhiEmptyState, setQingzhiEmptyState] = useState<'notes' | 'night'>('notes')
   const [pageTurnKey, setPageTurnKey] = useState(0)
   const [pageTurnDir, setPageTurnDir] = useState<1 | -1>(1)
   const [templateModal, setTemplateModal] = useState<{
@@ -168,6 +567,79 @@ function App() {
   const toggleSidebar = (collapsed: boolean) => {
     setIsSidebarCollapsed(collapsed)
   }
+
+  useEffect(() => {
+    applyQingzhiSettings(qingzhiSettings)
+  }, [qingzhiSettings])
+
+  useEffect(() => {
+    const handleSettingsChange = (event: Event) => {
+      setQingzhiSettings((event as CustomEvent<QingzhiSettings>).detail ?? readQingzhiSettings())
+    }
+    window.addEventListener(QINGZHI_SETTINGS_EVENT, handleSettingsChange)
+    return () => window.removeEventListener(QINGZHI_SETTINGS_EVENT, handleSettingsChange)
+  }, [])
+
+  useEffect(() => {
+    if (!isTopbarOverflowOpen && !openTopbarRuntimePanel) return
+    const handleClickOutside = (event: MouseEvent) => {
+      if (topbarOverflowRef.current && !topbarOverflowRef.current.contains(event.target as Node)) {
+        setIsTopbarOverflowOpen(false)
+        setOpenTopbarRuntimePanel(null)
+      }
+    }
+    window.addEventListener('mousedown', handleClickOutside)
+    return () => window.removeEventListener('mousedown', handleClickOutside)
+  }, [isTopbarOverflowOpen, openTopbarRuntimePanel])
+
+  const qingzhiTopbarActions = useMemo(() => [
+    { id: 'daily', label: '日历', hint: '打开 Daily Notes', Icon: CalendarIcon, run: () => setIsDailyOpen(true) },
+    { id: 'command', label: '命令面板', hint: '打开命令面板', Icon: CommandIcon, run: () => setIsCommandPaletteOpen(true) },
+    { id: 'reader', label: '阅读', hint: '进入阅读模式', Icon: BookOpenIcon, run: () => setIsReaderOpen(true) },
+    { id: 'inspect', label: '检视', hint: '打开检视面板', Icon: PanelRightIcon, run: () => setIsInspectorOpen(true) },
+    { id: 'graph', label: '图谱', hint: '打开 Graph View', Icon: Share2Icon, run: () => setIsGraphOpen(true) },
+    { id: 'ask', label: 'AI 灵感', hint: 'Ask My Notes', Icon: MessageSquareIcon, run: () => setIsAskOpen(true) },
+    { id: 'task-mirror', label: '任务', hint: '打开任务镜像', Icon: CheckSquareIcon, run: () => setIsTaskMirrorOpen(true) },
+    { id: 'recap', label: '回顾', hint: '打开每日回顾', Icon: ActivityIcon, run: () => setIsRecapOpen(true) },
+    { id: 'timeline', label: '时间轴', hint: '打开时间轴', Icon: ClockIcon, run: () => setIsTimelineOpen(true) },
+    { id: 'export', label: '导出', hint: '导出静态站点', Icon: DownloadIcon, run: () => setIsExportOpen(true) },
+    { id: 'concept-orbit', label: '概念轨道', hint: '打开 Concept Orbit', Icon: SparklesIcon, run: () => setIsConceptOrbitOpen(true) },
+    { id: 'rich-summary', label: '摘要卡片', hint: '打开 Rich Summary', Icon: FileTextIcon, run: () => setIsRichSummaryOpen(true) },
+    { id: 'settings', label: '设置', hint: '打开设置', Icon: SettingsIcon, run: () => setIsSettingsOpen(true) },
+  ], [])
+
+  const qingzhiActionById = useMemo(
+    () => new Map(qingzhiTopbarActions.map((action) => [action.id, action])),
+    [qingzhiTopbarActions],
+  )
+  const qingzhiPinnedTopbarActions = useMemo(
+    () => qingzhiSettings.topbarPins
+      .map((id) => qingzhiActionById.get(id))
+      .filter((action): action is NonNullable<typeof action> => Boolean(action)),
+    [qingzhiActionById, qingzhiSettings.topbarPins],
+  )
+  const qingzhiOverflowTopbarActions = useMemo(
+    () => qingzhiTopbarActions.filter((action) => !qingzhiSettings.topbarPins.includes(action.id as QingzhiTopbarActionId)),
+    [qingzhiSettings.topbarPins, qingzhiTopbarActions],
+  )
+
+  const handleWindowControl = useCallback((action: 'minimize' | 'maximize' | 'close') => {
+    void window.electron?.ipcInvoke?.('desktop:window-control', { action }).catch((error: unknown) => {
+      console.warn('[qingzhi] window control unavailable', action, error)
+    })
+  }, [])
+
+  const qingzhiEmptyCopy = qingzhiEmptyState === 'night'
+    ? {
+        title: '夜深了，先把脑海里的微光存下来',
+        body: '清知会把这一点灵感守在宣纸里，等你明天继续展开。',
+        sticker: '/assets/qingzhi/stickers/13-hmm.webp',
+      }
+    : {
+        title: '让清知陪你写下第一片叶子',
+        body: '从左侧新建一篇笔记，或用命令面板把脑海里的线索变成卡片。',
+        sticker: '/assets/qingzhi/stickers/16-welcome.webp',
+      }
 
   useEffect(() => {
     return () => {
@@ -1215,9 +1687,165 @@ function App() {
           <TodoProvider>
             <AmbientSoundProvider>
               <PomodoroProvider>
-            <div className="flex h-screen w-full bg-background text-foreground font-sans selection:bg-primary/30 overflow-hidden relative theme-transition">
+            <div
+              data-testid="qingzhi-app-shell"
+              className="qz-app-shell flex h-screen w-full bg-background text-foreground font-sans selection:bg-primary/30 overflow-hidden relative theme-transition"
+            >
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(var(--primary),0.05),transparent_70%)] pointer-events-none z-0" />
               <div className="absolute inset-0 opacity-[0.4] pointer-events-none z-0" style={{ backgroundImage: 'var(--paper-texture)' }} />
+
+              <header data-testid="qingzhi-topbar" className="qz-topbar absolute top-0 left-0 right-0 z-30 px-4">
+                <button
+                  type="button"
+                  data-testid="qingzhi-logo-toggle"
+                  className="qz-logo-toggle"
+                  aria-label={isSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                  aria-pressed={isSidebarCollapsed}
+                  title="点击清知 Logo 收起/展开侧边栏"
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                  onClick={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
+                >
+                  <span className="qz-brand-mark" aria-hidden="true">
+                    <QingzhiBrandMark />
+                  </span>
+                  <span className="leading-tight">
+                    <span className="block text-sm font-semibold tracking-[0.16em]">清知</span>
+                    <span className="block text-[10px] text-[var(--nv-color-fg-muted)]">QingZhi Notes</span>
+                  </span>
+                </button>
+                <div data-testid="qingzhi-topbar-drag" className="qz-topbar-drag" />
+                <div ref={topbarOverflowRef} className="qz-topbar-right text-[11px] text-[var(--nv-color-fg-muted)]">
+                  <QingzhiTopbarRuntimeStatus
+                    onOpenPanel={(panel) => {
+                      setIsTopbarOverflowOpen(false)
+                      setOpenTopbarRuntimePanel(panel)
+                    }}
+                  />
+                  {qingzhiPinnedTopbarActions.map((action) => {
+                    const Icon = action.Icon
+                    return (
+                      <button
+                        key={action.id}
+                        type="button"
+                        data-testid={`qingzhi-topbar-pin-${action.id}`}
+                        className="qz-topbar-pin"
+                        title={action.hint}
+                        aria-label={action.label}
+                        onClick={action.run}
+                      >
+                        <span
+                          className="qz-topbar-pin-icon"
+                          data-testid={`qingzhi-topbar-pin-icon-${action.id}`}
+                          aria-hidden="true"
+                        >
+                          <Icon size={15} strokeWidth={2.1} />
+                        </span>
+                        <span
+                          className="qz-topbar-pin-label"
+                          data-testid={`qingzhi-topbar-pin-label-${action.id}`}
+                        >
+                          {action.label}
+                        </span>
+                      </button>
+                    )
+                  })}
+                  <button
+                    type="button"
+                    data-testid="qingzhi-topbar-more"
+                    className="qz-topbar-more"
+                    title="更多功能"
+                    aria-label="更多功能"
+                    onClick={() => {
+                      setOpenTopbarRuntimePanel(null)
+                      setIsTopbarOverflowOpen((open) => !open)
+                    }}
+                  >
+                    <MoreHorizontalIcon size={15} strokeWidth={2.2} />
+                    <span>更多</span>
+                  </button>
+                  {isTopbarOverflowOpen && (
+                    <div className="qz-topbar-overflow-panel">
+                      {qingzhiOverflowTopbarActions.map((action) => {
+                        const Icon = action.Icon
+                        return (
+                          <button
+                            key={action.id}
+                            type="button"
+                            className="qz-topbar-overflow-item"
+                            title={action.hint}
+                            onClick={() => {
+                              action.run()
+                              setIsTopbarOverflowOpen(false)
+                            }}
+                          >
+                            <Icon size={14} strokeWidth={2.1} />
+                            <span>{action.label}</span>
+                          </button>
+                        )
+                      })}
+                      <QingzhiTopbarOverflowRuntimeActions
+                        onOpenPanel={(panel) => {
+                          setIsTopbarOverflowOpen(false)
+                          setOpenTopbarRuntimePanel(panel)
+                        }}
+                      />
+                    </div>
+                  )}
+                  <AnimatePresence>
+                    {openTopbarRuntimePanel === 'pomodoro' && (
+                      <QingzhiTopbarPomodoroPanel onClose={() => setOpenTopbarRuntimePanel(null)} />
+                    )}
+                    {openTopbarRuntimePanel === 'ambient' && (
+                      <QingzhiTopbarAmbientPanel onClose={() => setOpenTopbarRuntimePanel(null)} />
+                    )}
+                  </AnimatePresence>
+                  <button
+                    type="button"
+                    data-testid="qingzhi-topbar-avatar"
+                    className="qz-topbar-avatar"
+                    title="个人与设置"
+                    aria-label="个人与设置"
+                    onClick={() => setIsSettingsOpen(true)}
+                  >
+                    <QingzhiTopbarAvatar />
+                  </button>
+                  <div className="qz-window-controls" data-testid="qingzhi-window-controls">
+                    <button
+                      type="button"
+                      data-testid="qingzhi-window-minimize"
+                      className="qz-window-control"
+                      title="最小化"
+                      aria-label="最小化"
+                      onClick={() => handleWindowControl('minimize')}
+                    >
+                      <MinimizeIcon size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="qingzhi-window-maximize"
+                      className="qz-window-control"
+                      title="最大化"
+                      aria-label="最大化"
+                      onClick={() => handleWindowControl('maximize')}
+                    >
+                      <MaximizeIcon size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="qingzhi-window-close"
+                      className="qz-window-control qz-window-control-danger"
+                      title="关闭"
+                      aria-label="关闭"
+                      onClick={() => handleWindowControl('close')}
+                    >
+                      <CloseIcon size={14} />
+                    </button>
+                  </div>
+                </div>
+              </header>
 
               <SidebarTree
                 selectedNodeId={currentNoteId?.toString() ?? null}
@@ -1245,7 +1873,7 @@ function App() {
                   duration: 0.5,
                   ease: [0.32, 0.72, 0, 1],
                 }}
-                className="flex-1 h-full relative overflow-hidden flex flex-col z-10 bg-background shadow-[0_0_50px_rgba(0,0,0,0.1)] origin-left"
+                className="flex-1 h-full relative overflow-hidden flex flex-col z-10 bg-background shadow-[0_0_50px_rgba(0,0,0,0.1)] origin-left pt-14"
               >
                 <QuickActionsBar
                   onOpenReader={() => setIsReaderOpen(true)}
@@ -1293,6 +1921,7 @@ function App() {
                     transition={{ duration: 0.46, ease: [0.23, 1, 0.32, 1] }}
                     style={{ transformPerspective: 1600, transformOrigin: pageTurnDir === 1 ? 'left center' : 'right center' }}
                     className="flex-1 h-full"
+                    data-testid="qingzhi-editor-region"
                   >
                   {currentNote ? (
                     isCanvasNote ? (
@@ -1314,8 +1943,40 @@ function App() {
                       />
                     )
                   ) : (
-                    <div className="flex h-full items-center justify-center text-muted-foreground">
-                      还没有可编辑的笔记，先在左侧创建一篇。
+                    <div
+                      data-testid="qingzhi-empty-state"
+                      data-empty-state={qingzhiEmptyState}
+                      className="qz-empty-state px-8"
+                    >
+                      <div className="max-w-md rounded-[28px] border border-[var(--nv-color-border)] bg-[var(--nv-glass-bg)] p-8 shadow-[var(--nv-shadow-float)] backdrop-blur-xl">
+                        <img
+                          src={qingzhiEmptyCopy.sticker}
+                          alt="清知情绪贴纸"
+                          className="mx-auto mb-5 h-24 w-24 object-contain opacity-90"
+                        />
+                        <h2 className="text-xl font-semibold text-[var(--nv-color-fg)]">{qingzhiEmptyCopy.title}</h2>
+                        <p className="mt-3 text-sm leading-7 text-[var(--nv-color-fg-muted)]">{qingzhiEmptyCopy.body}</p>
+                        <div className="mt-6 flex justify-center gap-2">
+                          <button
+                            type="button"
+                            data-testid="qingzhi-empty-state-select-notes"
+                            data-empty-state-select="notes"
+                            onClick={() => setQingzhiEmptyState('notes')}
+                            className={`rounded-full border px-3 py-1 text-xs ${qingzhiEmptyState === 'notes' ? 'border-primary bg-primary/10 text-primary' : 'border-border/40 text-muted-foreground'}`}
+                          >
+                            初始灵感
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="qingzhi-empty-state-select-night"
+                            data-empty-state-select="night"
+                            onClick={() => setQingzhiEmptyState('night')}
+                            className={`rounded-full border px-3 py-1 text-xs ${qingzhiEmptyState === 'night' ? 'border-primary bg-primary/10 text-primary' : 'border-border/40 text-muted-foreground'}`}
+                          >
+                            夜间记录
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   )}
                   </motion.div>

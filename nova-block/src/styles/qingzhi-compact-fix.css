@@ -1,0 +1,314 @@
+/* QingZhi Compact Repair
+   目标：把“展示页 / PPT 化”的青芷补丁压回图1那种产品级笔记软件比例。
+   只做视觉覆写，不改笔记数据、保存逻辑、编辑器业务逻辑。 */
+
+html[data-nv-theme="qingzhi"],
+html:not([data-nv-theme]) {
+  --qz-mascot-opacity: 0.075;
+  --qz-texture-opacity: 0.16;
+  --nv-color-bg: hsl(36 26% 96%);
+  --nv-color-bg-subtle: hsl(38 20% 94%);
+  --nv-color-surface-1: hsla(42 30% 98% / 0.72);
+  --nv-color-surface-2: hsla(42 30% 99% / 0.88);
+  --nv-color-border: hsla(36 28% 22% / 0.10);
+  --nv-shadow-float: 0 12px 32px -26px rgba(80, 60, 30, 0.22);
+}
+
+body::before {
+  opacity: var(--qz-texture-opacity, 0.16) !important;
+}
+
+.qz-app-shell {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(128,168,156,.075), transparent 30%),
+    linear-gradient(135deg, #fbfaf7, #f3f0ea) !important;
+}
+
+/* 顶栏：保留图1的轻量自定义标题栏，不再像大号胶囊导航。 */
+.qz-topbar {
+  height: 56px !important;
+  padding: 0 14px !important;
+  border-bottom: 1px solid rgba(80, 60, 30, .08) !important;
+  background: rgba(250, 248, 244, .92) !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(18px) saturate(150%) !important;
+}
+
+.qz-logo-toggle {
+  height: 40px !important;
+  gap: 8px !important;
+  padding: 0 8px 0 4px !important;
+  border-radius: 10px !important;
+  color: #343434 !important;
+}
+
+.qz-logo-toggle > span:first-child {
+  height: 28px !important;
+  width: 28px !important;
+  border-radius: 999px !important;
+  font-size: 13px !important;
+  box-shadow: none !important;
+}
+
+.qz-logo-toggle .leading-tight span:first-child {
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  letter-spacing: .12em !important;
+}
+
+.qz-logo-toggle .leading-tight span:first-child::after {
+  content: "  ★";
+  color: rgba(200,168,115,.88);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.qz-logo-toggle .leading-tight span:last-child {
+  display: none !important;
+}
+
+.qz-topbar > div:last-child {
+  gap: 6px !important;
+}
+
+.qz-topbar-pin,
+.qz-topbar-more {
+  min-height: 30px !important;
+  width: 30px !important;
+  padding: 0 !important;
+  justify-content: center !important;
+  border-radius: 9px !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.qz-topbar-pin:hover,
+.qz-topbar-more:hover {
+  background: rgba(128,168,156,.12) !important;
+  border-color: rgba(128,168,156,.16) !important;
+}
+
+.qz-topbar-pin-label,
+.qz-topbar-more span {
+  display: none !important;
+}
+
+.qz-topbar-pin-icon {
+  width: 18px !important;
+  height: 18px !important;
+}
+
+/* 左栏：图1是轻导航，不是展示海报。 */
+.qz-sidebar {
+  background: rgba(248, 249, 246, .72) !important;
+  border-right: 1px solid rgba(80,60,30,.08) !important;
+  box-shadow: none !important;
+}
+
+.qz-sidebar::before {
+  background: linear-gradient(180deg, rgba(250,248,244,.64), transparent 42%) !important;
+}
+
+.qz-sidebar-header {
+  display: none !important;
+}
+
+.qz-sidebar-tab-strip {
+  min-height: 56px !important;
+  margin-bottom: 0 !important;
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+  border-bottom: 1px solid rgba(80,60,30,.06) !important;
+  background: rgba(250,248,244,.34) !important;
+}
+
+.qz-sidebar-tab {
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 9px !important;
+  box-shadow: none !important;
+}
+
+.qz-sidebar-quick-search,
+.qz-sidebar-footer-settings {
+  height: 34px !important;
+  border-radius: 11px !important;
+  background: rgba(255,255,255,.52) !important;
+  box-shadow: none !important;
+}
+
+.qz-sidebar-section-title {
+  color: rgba(43, 43, 43, .48) !important;
+  letter-spacing: .08em !important;
+  font-weight: 500 !important;
+}
+
+.qz-tree-node-item {
+  min-height: 28px !important;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+}
+
+.qz-tree-node-item::before {
+  display: none !important;
+}
+
+.qz-tree-node-item[data-selected="true"] {
+  background: rgba(128,168,156,.16) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.qz-mascot-backdrop {
+  height: 310px !important;
+  opacity: var(--qz-mascot-opacity, .075) !important;
+  background-position: bottom center !important;
+}
+
+/* 中央编辑区：去掉“纸张大卡片 / PPT 封面”感。 */
+.qz-editor-paper-shell {
+  max-width: 760px !important;
+  padding-bottom: 96px !important;
+}
+
+.qz-editor-paper-shell::before,
+.qz-editor-art-screen {
+  display: none !important;
+}
+
+.qz-editor-paper-shell > .px-12 {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-top: 10px !important;
+}
+
+.qz-editorbar {
+  min-height: 40px !important;
+  margin-bottom: 16px !important;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+  border-bottom: 1px solid rgba(80,60,30,.08) !important;
+  background: rgba(250,248,244,.62) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+.qz-editorbar .text-\[11px\] {
+  display: none !important;
+}
+
+.qz-editor-property-card {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+}
+
+.qz-editor-writing-surface {
+  margin-top: 8px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+.qz-editor-writing-surface .novablock-editor {
+  padding: 8px 0 128px !important;
+  font-size: 15.5px !important;
+  line-height: 1.78 !important;
+  letter-spacing: 0 !important;
+  color: #363636 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor h1,
+.qz-editor-writing-surface .novablock-editor h2,
+.qz-editor-writing-surface .novablock-editor h3 {
+  font-family: var(--nv-font-display) !important;
+  letter-spacing: -0.02em !important;
+  text-shadow: none !important;
+}
+
+.qz-editor-writing-surface .novablock-editor h1 {
+  font-size: clamp(32px, 3.2vw, 40px) !important;
+  line-height: 1.18 !important;
+  margin: 20px 0 10px !important;
+  padding-bottom: 0 !important;
+  border-bottom: 0 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor h2 {
+  font-size: clamp(24px, 2.3vw, 30px) !important;
+  line-height: 1.25 !important;
+  margin: 32px 0 12px !important;
+  padding-left: .42em !important;
+}
+
+.qz-editor-writing-surface .novablock-editor h2::before {
+  width: 2px !important;
+  top: .2em !important;
+  bottom: .16em !important;
+  opacity: .75 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor h3 {
+  font-size: 20px !important;
+  line-height: 1.32 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor p,
+.qz-editor-writing-surface .novablock-editor li {
+  font-size: 15.5px !important;
+}
+
+.qz-editor-writing-surface .novablock-editor blockquote,
+.qz-editor-writing-surface .novablock-editor [data-highlight-block],
+.qz-editor-writing-surface .novablock-editor .callout-block,
+.qz-editor-writing-surface .novablock-editor figure[data-ai-source-card] {
+  box-shadow: none !important;
+}
+
+.qz-editor-writing-surface .novablock-editor pre {
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+
+.qz-editor-writing-surface .novablock-editor code {
+  border-radius: 6px !important;
+}
+
+/* 底部悬浮 Dock 是图2最“PPT 化”的来源，先默认隐藏。 */
+.qz-quick-actions {
+  display: none !important;
+}
+
+/* 开发性能角标不应出现在成品界面。 */
+.fixed.top-6.left-6.z-\[100\] {
+  display: none !important;
+}
+
+/* 空状态也压小，避免像弹窗海报。 */
+.qz-empty-state > div {
+  max-width: 360px !important;
+  padding: 24px !important;
+  border-radius: 20px !important;
+  box-shadow: 0 12px 36px -26px rgba(80,60,30,.22) !important;
+}
+
+.qz-empty-state img {
+  height: 72px !important;
+  width: 72px !important;
+}
+
+@media (min-width: 1400px) {
+  .qz-editor-paper-shell {
+    max-width: 780px !important;
+  }
+}
+
+@media (max-width: 1100px) {
+  .qz-editor-paper-shell {
+    max-width: 720px !important;
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+}

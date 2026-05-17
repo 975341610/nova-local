@@ -1,0 +1,176 @@
+/* QingZhi UI repair v3.2
+   Safe CSS refinement after v3/v3.1 source repair. */
+
+html[data-nv-theme="qingzhi"],
+html:not([data-nv-theme]) {
+  --qz-topbar-h: 60px;
+}
+
+.qz-topbar {
+  height: var(--qz-topbar-h) !important;
+  padding: 0 14px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  border-bottom: 1px solid rgba(80,60,30,.08) !important;
+}
+
+.qz-logo-toggle {
+  flex: 0 0 auto !important;
+}
+
+.qz-topbar-right {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  position: relative !important;
+}
+
+.qz-topbar-pin,
+.qz-topbar-more,
+.qz-topbar-avatar {
+  height: 32px !important;
+  min-width: 32px !important;
+  padding: 0 8px !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(80,60,30,.08) !important;
+  background: rgba(255,255,255,.28) !important;
+  color: rgba(53,53,53,.84) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: none !important;
+}
+
+.qz-topbar-pin:hover,
+.qz-topbar-more:hover,
+.qz-topbar-avatar:hover {
+  background: rgba(128,168,156,.12) !important;
+  border-color: rgba(128,168,156,.16) !important;
+}
+
+.qz-topbar-pin-label,
+.qz-topbar-more > span {
+  display: none !important;
+}
+
+.qz-topbar-avatar {
+  padding: 0 !important;
+  width: 32px !important;
+  overflow: hidden !important;
+  border-radius: 999px !important;
+}
+
+.qz-topbar-avatar img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+}
+
+.qz-topbar-overflow-panel {
+  position: absolute !important;
+  top: calc(100% + 8px) !important;
+  right: 40px !important;
+  min-width: 176px !important;
+  padding: 8px !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(80,60,30,.10) !important;
+  background: rgba(250,248,244,.96) !important;
+  box-shadow: 0 18px 40px -28px rgba(80,60,30,.28) !important;
+  backdrop-filter: blur(20px) saturate(150%) !important;
+  z-index: 80 !important;
+}
+
+.qz-topbar-overflow-item {
+  width: 100% !important;
+  height: 34px !important;
+  padding: 0 10px !important;
+  border-radius: 10px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  color: rgba(53,53,53,.84) !important;
+  text-align: left !important;
+}
+
+.qz-topbar-overflow-item:hover {
+  background: rgba(128,168,156,.12) !important;
+}
+
+.qz-topbar-overflow-sep {
+  height: 1px !important;
+  margin: 6px 2px !important;
+  background: rgba(80,60,30,.08) !important;
+}
+
+/* Keep the 4 sidebar tabs visible below the absolute topbar. */
+.qz-sidebar {
+  padding-top: var(--qz-topbar-h) !important;
+}
+
+.qz-sidebar-header {
+  display: none !important;
+}
+
+.qz-sidebar-tab-strip {
+  display: flex !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 12 !important;
+  min-height: 52px !important;
+  margin-bottom: 8px !important;
+  padding: 8px 12px !important;
+  gap: 8px !important;
+  background: rgba(250,248,244,.78) !important;
+  backdrop-filter: blur(14px) !important;
+}
+
+.qz-sidebar-tab {
+  width: 34px !important;
+  height: 34px !important;
+  flex: 0 0 auto !important;
+}
+
+.qz-mascot-backdrop {
+  opacity: .06 !important;
+}
+
+/* Editor toolbar: compact left save status, right actions aligned. */
+.qz-editorbar {
+  min-height: 38px !important;
+  margin-bottom: 14px !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+.qz-editorbar > div:first-child {
+  gap: 10px !important;
+}
+
+.qz-editorbar > div:first-child > div:first-child {
+  padding: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+}
+
+.qz-editorbar > div:first-child > div:first-child > span:first-child {
+  display: none !important;
+}
+
+.qz-editorbar > div:first-child > div:nth-child(2) {
+  display: none !important;
+}
+
+.qz-editorbar > div:last-child {
+  gap: 8px !important;
+}
+
+.qz-editor-paper-shell > .px-12 {
+  margin-top: 0 !important;
+}
+
+.qz-quick-actions,
+[data-testid="qingzhi-quick-actions"] {
+  display: none !important;
+}

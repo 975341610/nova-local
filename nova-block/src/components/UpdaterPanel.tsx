@@ -44,14 +44,12 @@ export const UpdaterPanel: React.FC<UpdaterPanelProps> = ({ className }) => {
       const cur = await updaterApi.getCurrentVersion()
       setCurrentVersion(cur)
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn('updater getCurrentVersion failed', err)
     }
     try {
       const rb = await updaterApi.getRollbackTarget()
       setRollbackTarget(rb)
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn('updater getRollbackTarget failed', err)
     }
   }, [])

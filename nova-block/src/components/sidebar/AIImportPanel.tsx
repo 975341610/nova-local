@@ -958,7 +958,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
       data-testid="ai-import-panel"
       onDragOver={(event) => event.preventDefault()}
       onDrop={handleDrop}
-      className="flex h-full min-h-0 flex-col"
+      className="qingzhi-ai-panel flex h-full min-h-0 flex-col"
     >
       <input
         ref={aiImportInputRef}

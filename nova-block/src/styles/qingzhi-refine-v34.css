@@ -1,0 +1,1276 @@
+/* QingZhi UI repair v3.4
+   Focus: editor structure + complete topbar action map. */
+
+html[data-nv-theme="qingzhi"],
+html:not([data-nv-theme]) {
+  --qz-topbar-h: 56px;
+}
+
+.qz-topbar {
+  height: var(--qz-topbar-h) !important;
+  padding: 0 12px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  border-bottom: 1px solid rgba(80,60,30,.08) !important;
+  background: rgba(250,248,244,.94) !important;
+  box-shadow: none !important;
+}
+
+.qz-logo-toggle {
+  height: 44px !important;
+  min-width: 154px !important;
+  border-right: 1px solid rgba(80,60,30,.08) !important;
+  border-radius: 0 !important;
+  justify-content: flex-start !important;
+}
+
+.qz-topbar-right {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  position: relative !important;
+}
+
+.qz-topbar-pin,
+.qz-topbar-more,
+.qz-topbar-avatar {
+  height: 30px !important;
+  min-width: 30px !important;
+  padding: 0 7px !important;
+  border-radius: 9px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: rgba(42,64,58,.86) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: none !important;
+}
+
+.qz-topbar-pin:hover,
+.qz-topbar-more:hover,
+.qz-topbar-avatar:hover {
+  background: rgba(128,168,156,.12) !important;
+  border-color: rgba(128,168,156,.16) !important;
+}
+
+.qz-topbar-pin-label,
+.qz-topbar-more > span {
+  display: none !important;
+}
+
+.qz-topbar-avatar {
+  padding: 0 !important;
+  width: 32px !important;
+  height: 32px !important;
+  overflow: hidden !important;
+  border-radius: 999px !important;
+  border-color: rgba(80,60,30,.12) !important;
+  background: rgba(255,255,255,.56) !important;
+}
+
+.qz-topbar-avatar img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+}
+
+.qz-topbar-overflow-panel {
+  position: absolute !important;
+  top: calc(100% + 8px) !important;
+  right: 36px !important;
+  width: 204px !important;
+  padding: 8px !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(80,60,30,.10) !important;
+  background: rgba(250,248,244,.98) !important;
+  box-shadow: 0 20px 42px -28px rgba(80,60,30,.36) !important;
+  backdrop-filter: blur(20px) saturate(150%) !important;
+  z-index: 100 !important;
+}
+
+.qz-topbar-overflow-item {
+  width: 100% !important;
+  height: 34px !important;
+  padding: 0 10px !important;
+  border-radius: 10px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 9px !important;
+  color: rgba(53,53,53,.86) !important;
+  text-align: left !important;
+  font-size: 12px !important;
+}
+
+.qz-topbar-overflow-item:hover {
+  background: rgba(128,168,156,.12) !important;
+}
+
+.qz-topbar-overflow-sep {
+  height: 1px !important;
+  margin: 6px 2px !important;
+  background: rgba(80,60,30,.08) !important;
+}
+
+/* Sidebar starts below the absolute topbar; keep the 4 tabs visible. */
+.qz-sidebar {
+  padding-top: var(--qz-topbar-h) !important;
+  background: rgba(248,249,246,.72) !important;
+}
+
+.qz-sidebar-header {
+  display: none !important;
+}
+
+.qz-sidebar-tab-strip {
+  display: flex !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 12 !important;
+  min-height: 52px !important;
+  margin-bottom: 8px !important;
+  padding: 8px 12px !important;
+  gap: 8px !important;
+  background: rgba(250,248,244,.78) !important;
+  backdrop-filter: blur(14px) !important;
+}
+
+.qz-sidebar-tab {
+  width: 34px !important;
+  height: 34px !important;
+  flex: 0 0 auto !important;
+}
+
+.qz-mascot-backdrop {
+  opacity: .055 !important;
+}
+
+/* Editor top action bar: small save status on the left, editor buttons on the right. */
+.qz-editorbar {
+  min-height: 38px !important;
+  margin-bottom: 10px !important;
+  padding: 4px 0 !important;
+  border-bottom: 1px solid rgba(80,60,30,.08) !important;
+  background: rgba(250,248,244,.54) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+.qz-editorbar > div:first-child {
+  flex: 0 0 auto !important;
+  min-width: 100px !important;
+  gap: 8px !important;
+}
+
+.qz-editorbar > div:first-child > div:first-child {
+  padding: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+}
+
+.qz-editorbar > div:first-child > div:first-child > span:first-child {
+  display: none !important;
+}
+
+.qz-editorbar > div:first-child > div:nth-child(2) {
+  display: none !important;
+}
+
+.qz-editorbar > div:last-child {
+  margin-left: auto !important;
+  gap: 8px !important;
+}
+
+.qz-editorbar button {
+  box-shadow: none !important;
+}
+
+/* Editor paper: remove the giant PPT/card feel. */
+.qz-editor-paper-shell {
+  max-width: 760px !important;
+  padding-bottom: 120px !important;
+}
+
+.qz-editor-paper-shell::before,
+.qz-editor-art-screen {
+  display: none !important;
+}
+
+.qz-editor-paper-shell > .px-12 {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-top: 0 !important;
+}
+
+.qz-note-frontmatter-block {
+  margin: 24px 0 12px !important;
+  padding: 0 !important;
+}
+
+.qz-note-title {
+  margin: 0 !important;
+  font-family: var(--nv-font-display) !important;
+  font-size: clamp(32px, 3.1vw, 40px) !important;
+  line-height: 1.18 !important;
+  font-weight: 700 !important;
+  color: rgba(43,43,43,.96) !important;
+  letter-spacing: -0.035em !important;
+}
+
+.qz-note-title-input {
+  display: block !important;
+  width: 100% !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.qz-note-title-input:focus {
+  color: rgba(43,43,43,1) !important;
+}
+
+.qz-note-title-input::placeholder {
+  color: rgba(43,43,43,.28) !important;
+}
+
+.qz-note-breadcrumb {
+  margin-top: 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-size: 12px !important;
+  color: rgba(43,43,43,.42) !important;
+}
+
+.qz-note-breadcrumb span {
+  color: rgba(200,168,115,.82) !important;
+}
+
+.qz-editor-property-card {
+  margin-top: 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.qz-editor-writing-surface {
+  margin-top: 22px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+  min-height: 420px !important;
+}
+
+.qz-editor-writing-surface::before,
+.qz-editor-writing-surface::after {
+  display: none !important;
+}
+
+.qz-editor-writing-surface .novablock-editor {
+  padding: 0 0 128px !important;
+  font-size: 15.5px !important;
+  line-height: 1.78 !important;
+  color: #363636 !important;
+}
+
+/* The note title is now rendered above properties; hide duplicated first H1 inside the editable body. */
+.qz-editor-writing-surface .novablock-editor h1 {
+  font-size: 32px !important;
+  line-height: 1.22 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor h2 {
+  font-size: 26px !important;
+  line-height: 1.28 !important;
+  margin: 30px 0 12px !important;
+}
+
+.qz-editor-writing-surface .novablock-editor p,
+.qz-editor-writing-surface .novablock-editor li {
+  font-size: 15.5px !important;
+  line-height: 1.78 !important;
+}
+
+/* Hide old floating dock and development FPS badge. */
+.qz-quick-actions,
+[data-testid="qingzhi-quick-actions"],
+.qz-fps-meter,
+[data-testid="qingzhi-fps-meter"] {
+  display: none !important;
+}
+
+/* QingZhi layout pass · topbar drag, centered editor gutters, TOC alignment */
+.qz-topbar {
+  background: #F6F3EF !important;
+  -webkit-app-region: drag !important;
+}
+.qz-topbar-drag {
+  flex: 1 1 auto !important;
+  min-width: 24px !important;
+  height: 100% !important;
+  -webkit-app-region: drag !important;
+}
+.qz-topbar-right,
+.qz-topbar-pin,
+.qz-topbar-more,
+.qz-topbar-avatar,
+.qz-window-controls,
+.qz-window-control,
+.qz-topbar-overflow-panel,
+.qz-topbar-status-chip {
+  -webkit-app-region: no-drag !important;
+}
+.qz-topbar-right {
+  margin-left: auto !important;
+}
+.qz-logo-toggle > span:first-child:not(.qz-brand-mark) {
+  display: none !important;
+}
+.qz-brand-mark {
+  display: grid !important;
+  width: 34px !important;
+  height: 34px !important;
+  place-items: center !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(200,168,115,.55) !important;
+  border-radius: 999px !important;
+  background: rgba(255,255,255,.72) !important;
+  box-shadow: 0 0 0 2px rgba(246,243,239,.88), inset 0 1px 0 rgba(255,255,255,.58) !important;
+}
+.qz-brand-mark img,
+.qz-brand-mark-fallback {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: grid !important;
+  place-items: center !important;
+}
+.qz-topbar-avatar {
+  border-color: rgba(200,168,115,.55) !important;
+  box-shadow: 0 0 0 2px rgba(246,243,239,.88), inset 0 1px 0 rgba(255,255,255,.58) !important;
+}
+.qz-topbar-status {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin-right: 4px !important;
+}
+.qz-topbar-status-chip {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  height: 28px !important;
+  padding: 0 11px !important;
+  border: 1px solid rgba(200,168,115,.22) !important;
+  border-radius: 999px !important;
+  background: rgba(250,247,241,.76) !important;
+  color: rgba(42,64,58,.92) !important;
+  font-size: 11px !important;
+}
+.qz-topbar-status-chip-time {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+  letter-spacing: .16em !important;
+}
+.qz-topbar-status-chip-close {
+  opacity: 0 !important;
+  transition: opacity .18s ease !important;
+}
+.qz-topbar-status-chip:hover .qz-topbar-status-chip-close {
+  opacity: .72 !important;
+}
+.qz-topbar-overflow-sep {
+  height: 1px !important;
+  margin: 6px 2px !important;
+  background: rgba(80,60,30,.08) !important;
+}
+.qz-mascot-backdrop {
+  background-image: var(--qz-mascot-image, url('/assets/qingzhi/mascot/sidebar-standing.webp')) !important;
+}
+.qz-editorbar {
+  margin-bottom: 0 !important;
+}
+.qz-editorbar > div:last-child {
+  margin-left: auto !important;
+  padding-right: 8px !important;
+}
+.qz-editor-frame {
+  grid-template-columns: minmax(0, 1fr) 232px !important;
+}
+.qz-editor-layout,
+.qz-editor-gutter-shell {
+  display: flex !important;
+  justify-content: center !important;
+  width: 100% !important;
+  padding: 0 56px 48px 56px !important;
+}
+.qz-editor-paper-shell,
+.qz-editor-body-column {
+  width: 100% !important;
+  max-width: min(920px, calc(100vw - 520px)) !important;
+}
+.qz-editor-paper-shell > .px-12 {
+  padding-left: 72px !important;
+  padding-right: 72px !important;
+}
+.qz-editor-writing-surface .novablock-editor > * {
+  position: relative !important;
+}
+.qz-editor-writing-surface .novablock-editor .tiptap-drag-handle,
+.qz-editor-writing-surface .novablock-editor [data-node-handle],
+.qz-editor-writing-surface .novablock-editor [data-fold-toggle] {
+  margin-left: -38px !important;
+}
+.qz-right-toc,
+.qz-right-toc-shell {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-start !important;
+  padding-top: 4px !important;
+  height: 100% !important;
+}
+.qz-right-toc-toggle {
+  margin: 8px 16px 12px auto !important;
+}
+.qz-right-toc-body {
+  padding: 0 16px 18px 18px !important;
+}
+.qz-right-toc-title {
+  margin-bottom: 14px !important;
+  padding-top: 8px !important;
+}
+.qz-settings-asset-card {
+  display: flex !important;
+  min-height: 72px !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  gap: 10px !important;
+  border: 1px solid rgba(128,168,156,.22) !important;
+  border-radius: 10px !important;
+  background: rgba(250,247,241,.82) !important;
+  padding: 12px !important;
+}
+.qz-settings-asset-meta {
+  display: flex !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  font-size: 12px !important;
+  color: rgba(42,64,58,.88) !important;
+}
+.qz-settings-asset-meta span:last-child {
+  color: rgba(42,64,58,.52) !important;
+  font-size: 11px !important;
+}
+.qz-settings-asset-actions {
+  display: flex !important;
+  gap: 8px !important;
+}
+.qz-settings-asset-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  border: 1px solid rgba(200,168,115,.20) !important;
+  border-radius: 8px !important;
+  background: rgba(246,243,239,.88) !important;
+  color: rgba(42,64,58,.84) !important;
+  cursor: pointer !important;
+  padding: 6px 10px !important;
+  font-size: 11px !important;
+}
+.qz-logo-toggle,
+.qz-logo-toggle * {
+  -webkit-app-region: no-drag !important;
+}
+
+.qz-topbar-status-chip {
+  position: relative !important;
+  padding-right: 8px !important;
+}
+
+.qz-topbar-status-chip-main {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  min-height: 26px !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: inherit !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+}
+
+.qz-topbar-status-chip-close {
+  display: grid !important;
+  width: 18px !important;
+  height: 18px !important;
+  place-items: center !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: inherit !important;
+  cursor: pointer !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  opacity: 0 !important;
+  transition: opacity .18s ease !important;
+}
+
+.qz-topbar-status-chip:hover .qz-topbar-status-chip-close {
+  opacity: .75 !important;
+}
+
+.qz-dot-matrix {
+  --qz-dot-color: rgba(42,64,58,.92);
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 2px !important;
+  font-size: 11px !important;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+.qz-dot-matrix-cell {
+  display: inline-grid !important;
+  place-items: center !important;
+  min-width: 10px !important;
+  min-height: 14px !important;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+  color: var(--qz-dot-color) !important;
+  background-image: radial-gradient(circle, rgba(42,64,58,.16) 1px, transparent 1.2px) !important;
+  background-size: 4px 4px !important;
+  background-position: center !important;
+  text-shadow: 0 0 0 currentColor !important;
+}
+
+.qz-dot-matrix-cell-colon {
+  min-width: 6px !important;
+}
+
+.qz-topbar-runtime-panel {
+  position: absolute !important;
+  top: calc(100% + 10px) !important;
+  right: 74px !important;
+  width: 288px !important;
+  border: 1px solid rgba(200,168,115,.22) !important;
+  border-radius: 18px !important;
+  background: rgba(250,247,241,.98) !important;
+  box-shadow: 0 20px 44px -24px rgba(80,60,30,.32) !important;
+  backdrop-filter: blur(18px) saturate(140%) !important;
+  padding: 14px !important;
+  z-index: 110 !important;
+}
+
+.qz-topbar-runtime-panel,
+.qz-topbar-runtime-panel * {
+  -webkit-app-region: no-drag !important;
+}
+
+.qz-topbar-runtime-panel-head {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+}
+
+.qz-topbar-runtime-title {
+  color: rgba(43,43,43,.96) !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+}
+
+.qz-topbar-runtime-subtle {
+  margin-top: 4px !important;
+  color: rgba(43,43,43,.52) !important;
+  font-size: 11px !important;
+}
+
+.qz-topbar-runtime-dismiss {
+  display: grid !important;
+  width: 22px !important;
+  height: 22px !important;
+  place-items: center !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: rgba(43,43,43,.52) !important;
+  cursor: pointer !important;
+}
+
+.qz-topbar-runtime-dismiss:hover {
+  background: rgba(128,168,156,.12) !important;
+  color: rgba(42,64,58,.92) !important;
+}
+
+.qz-topbar-runtime-display {
+  display: flex !important;
+  justify-content: center !important;
+  margin: 14px 0 12px !important;
+  padding: 12px 10px !important;
+  border: 1px solid rgba(200,168,115,.18) !important;
+  border-radius: 14px !important;
+  background: rgba(246,243,239,.8) !important;
+}
+
+.qz-topbar-runtime-actions,
+.qz-topbar-runtime-settings {
+  display: flex !important;
+  gap: 8px !important;
+  align-items: center !important;
+  flex-wrap: wrap !important;
+}
+
+.qz-topbar-runtime-actions {
+  margin-bottom: 10px !important;
+}
+
+.qz-topbar-runtime-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  min-height: 30px !important;
+  border: 1px solid rgba(128,168,156,.2) !important;
+  border-radius: 10px !important;
+  background: rgba(246,243,239,.88) !important;
+  color: rgba(42,64,58,.92) !important;
+  cursor: pointer !important;
+  padding: 0 10px !important;
+  font-size: 11px !important;
+}
+
+.qz-topbar-runtime-btn-ghost {
+  margin-left: auto !important;
+}
+
+.qz-topbar-runtime-settings label {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  color: rgba(43,43,43,.68) !important;
+  font-size: 11px !important;
+}
+
+.qz-topbar-runtime-settings input[type="number"] {
+  width: 48px !important;
+  border: 1px solid rgba(200,168,115,.18) !important;
+  border-radius: 8px !important;
+  background: rgba(255,255,255,.7) !important;
+  padding: 3px 6px !important;
+}
+
+.qz-topbar-runtime-range {
+  flex: 1 1 auto !important;
+}
+
+.qz-topbar-runtime-range input[type="range"] {
+  flex: 1 1 auto !important;
+}
+
+.qz-topbar-runtime-scene-grid {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+  margin: 12px 0 !important;
+}
+
+.qz-topbar-runtime-scene {
+  display: inline-flex !important;
+  min-height: 54px !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  border: 1px solid rgba(200,168,115,.18) !important;
+  border-radius: 12px !important;
+  background: rgba(246,243,239,.84) !important;
+  color: rgba(42,64,58,.8) !important;
+  cursor: pointer !important;
+  padding: 8px 6px !important;
+  font-size: 11px !important;
+}
+
+.qz-topbar-runtime-scene[data-active="true"] {
+  border-color: rgba(128,168,156,.38) !important;
+  background: rgba(128,168,156,.12) !important;
+  color: rgba(42,64,58,.96) !important;
+}
+
+.qz-topbar-runtime-scene-icon {
+  font-size: 14px !important;
+  line-height: 1 !important;
+}
+
+.qz-mascot-backdrop {
+  opacity: var(--qz-mascot-opacity) !important;
+  background-image: var(--qz-mascot-image, url('/assets/qingzhi/mascot/sidebar-standing.webp')) !important;
+}
+
+.qz-editor-shell-grid {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 248px !important;
+  align-items: stretch !important;
+}
+
+.qz-editor-main-column {
+  min-width: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+.qz-editor-toolbar-row {
+  flex: 0 0 auto !important;
+  padding: 0 18px 0 52px !important;
+}
+
+.qz-editorbar {
+  min-height: 52px !important;
+  margin-bottom: 0 !important;
+  padding: 8px 0 !important;
+  background: transparent !important;
+}
+
+.qz-editor-status {
+  min-width: 112px !important;
+}
+
+.qz-editor-actions {
+  margin-left: auto !important;
+  justify-content: flex-end !important;
+}
+
+.qz-editor-layout,
+.qz-editor-gutter-shell {
+  display: flex !important;
+  justify-content: center !important;
+  width: 100% !important;
+  padding: 18px 52px 56px 52px !important;
+}
+
+.qz-editor-paper-shell,
+.qz-editor-body-column {
+  width: 100% !important;
+  max-width: min(1040px, calc(100vw - 500px)) !important;
+}
+
+.qz-editor-content-column {
+  width: 100% !important;
+  max-width: 760px !important;
+  margin: 0 auto !important;
+  padding: 24px 96px 0 96px !important;
+}
+
+.qz-note-frontmatter-block,
+.qz-editor-property-card {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+
+.qz-editor-writing-surface {
+  margin-top: 18px !important;
+  overflow: visible !important;
+}
+
+.qz-editor-writing-surface .novablock-editor {
+  width: 100% !important;
+  max-width: 760px !important;
+  margin: 0 auto !important;
+  padding: 0 96px 128px 96px !important;
+  overflow: visible !important;
+}
+
+.qz-editor-writing-surface .novablock-editor > * {
+  position: relative !important;
+}
+
+.qz-editor-writing-surface .novablock-editor .tiptap-drag-handle,
+.qz-editor-writing-surface .novablock-editor [data-node-handle],
+.qz-editor-writing-surface .novablock-editor [data-fold-toggle] {
+  margin-left: -24px !important;
+}
+
+.qz-right-toc,
+.qz-right-toc-shell {
+  padding-top: 58px !important;
+  background: transparent !important;
+}
+
+.qz-right-toc-toggle {
+  margin: 0 18px 14px auto !important;
+}
+
+.qz-right-toc-body {
+  padding: 0 18px 20px 18px !important;
+}
+
+.qz-right-toc-list {
+  overflow: auto !important;
+  scrollbar-width: none !important;
+}
+
+/* v37 TOC/title-row and block-handle polish */
+.qz-right-toc-head {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  min-height: 44px !important;
+  padding: 0 16px !important;
+  border-bottom: 1px solid rgba(200,168,115,.16) !important;
+}
+
+.qz-right-toc-head .qz-right-toc-toggle {
+  margin: 0 !important;
+  flex: 0 0 auto !important;
+}
+
+.qz-right-toc-title {
+  display: flex !important;
+  align-items: center !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  color: rgba(200,168,115,.92) !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: .18em !important;
+}
+
+.qz-right-toc-body {
+  height: calc(100% - 44px) !important;
+  padding-top: 14px !important;
+}
+
+
+/* v36 structural fixes */
+.qz-editor-frame {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 218px !important;
+  grid-template-rows: auto minmax(0, 1fr) !important;
+}
+
+.qz-editor-toprail {
+  grid-column: 1 / -1 !important;
+  grid-row: 1 !important;
+  min-width: 0 !important;
+  border-bottom: 1px solid rgba(200,168,115,.18) !important;
+}
+
+.qz-editor-toolbar-row {
+  padding: 0 20px 0 36px !important;
+  border-bottom: 0 !important;
+}
+
+.qz-editorbar {
+  min-height: 54px !important;
+  padding: 8px 0 !important;
+}
+
+.qz-editor-main-column {
+  grid-column: 1 !important;
+  grid-row: 2 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
+
+.qz-editor-main-scroll {
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
+
+.qz-right-toc,
+.qz-right-toc-shell {
+  grid-column: 2 !important;
+  grid-row: 2 !important;
+  margin-top: 0 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  padding-top: 0 !important;
+}
+
+.qz-right-toc-toggle {
+  margin: 10px 16px 8px auto !important;
+}
+
+.qz-right-toc-body {
+  height: calc(100% - 44px) !important;
+}
+
+.qz-editor-frame-toc-collapsed {
+  grid-template-columns: minmax(0, 1fr) 52px !important;
+}
+
+.qz-editor-frame-toc-collapsed .qz-right-toc,
+.qz-editor-frame-toc-collapsed .qz-right-toc-shell {
+  width: 52px !important;
+}
+
+/* v35 layout corrections */
+.qz-topbar {
+  background: #F6F3EF !important;
+}
+
+.qz-topbar-drag {
+  -webkit-app-region: drag !important;
+}
+
+.qz-topbar-runtime-panel {
+  right: 88px !important;
+}
+
+.qz-dot-matrix {
+  gap: 1px !important;
+  padding: 2px 0 !important;
+}
+
+.qz-dot-matrix-cell {
+  min-width: 11px !important;
+  min-height: 15px !important;
+  border-radius: 4px !important;
+  background-color: rgba(42, 64, 58, 0.06) !important;
+  box-shadow: inset 0 0 0 1px rgba(200, 168, 115, 0.12) !important;
+}
+
+.qz-editor-shell-grid {
+  grid-template-columns: minmax(0, 1fr) 218px !important;
+}
+
+.qz-editor-frame-toc-collapsed {
+  grid-template-columns: minmax(0, 1fr) 52px !important;
+}
+
+.qz-editor-toolbar-row {
+  padding: 0 0 0 0 !important;
+  border-bottom: 1px solid rgba(200,168,115,.18) !important;
+}
+
+.qz-editorbar {
+  min-height: 54px !important;
+  padding: 8px 18px 8px 34px !important;
+}
+
+.qz-editor-status {
+  min-width: auto !important;
+  padding-left: 0 !important;
+}
+
+.qz-editor-actions {
+  margin-left: auto !important;
+  padding-right: 0 !important;
+}
+
+.qz-editor-layout,
+.qz-editor-gutter-shell {
+  padding: 18px 32px 64px 32px !important;
+}
+
+.qz-editor-paper-shell,
+.qz-editor-body-column {
+  max-width: min(980px, calc(100vw - 420px)) !important;
+}
+
+.qz-editor-content-column {
+  width: 100% !important;
+  max-width: 860px !important;
+  margin: 0 auto !important;
+  padding: 28px 84px 0 84px !important;
+}
+
+.qz-note-frontmatter-block,
+.qz-editor-property-card,
+.qz-editor-writing-surface {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+
+.qz-editor-writing-surface {
+  margin-top: 16px !important;
+  padding: 0 0 8px 0 !important;
+  overflow: visible !important;
+}
+
+.qz-editor-writing-surface .novablock-editor {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 0 128px 0 !important;
+  overflow: visible !important;
+}
+
+.qz-drag-handle-hitbox {
+  margin-left: -24px !important;
+  padding-left: 24px !important;
+}
+
+.qz-editor-writing-surface .novablock-editor .tiptap-drag-handle,
+.qz-editor-writing-surface .novablock-editor [data-node-handle],
+.qz-editor-writing-surface .novablock-editor [data-fold-toggle] {
+  margin-left: -16px !important;
+}
+
+.qz-editor-writing-surface .qz-drag-handle-hitbox .drag-handle {
+  position: relative !important;
+  z-index: 8 !important;
+}
+
+.qz-right-toc,
+.qz-right-toc-shell {
+  margin-top: 0 !important;
+  height: 100% !important;
+  padding-top: 0 !important;
+  border-left: 1px solid rgba(200,168,115,.20) !important;
+  background: rgba(246,243,239,.48) !important;
+}
+
+.qz-right-toc-toggle {
+  margin: 10px 16px 8px auto !important;
+}
+
+.qz-right-toc-body {
+  height: calc(100% - 44px) !important;
+  padding: 2px 16px 20px 16px !important;
+}
+
+.qz-right-toc-title {
+  padding-top: 0 !important;
+  margin-bottom: 12px !important;
+}
+
+.qz-right-toc-list {
+  overflow: auto !important;
+  scrollbar-width: none !important;
+}
+
+/* v38 TOC flush alignment and stable floating block handles */
+.qz-block-drag-handle-floating {
+  z-index: 60 !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  pointer-events: auto !important;
+}
+
+.qz-block-drag-handle-floating .qz-drag-handle-hitbox {
+  display: flex !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-left: 0 !important;
+  padding: 4px !important;
+}
+
+.qz-block-drag-handle-floating .drag-handle {
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+.qz-block-drag-handle-floating .qz-drag-grip {
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+.qz-right-toc,
+.qz-right-toc-shell {
+  margin-top: 0 !important;
+  height: 100% !important;
+  padding-top: 0 !important;
+}
+
+.qz-right-toc:not(.qz-right-toc-collapsed) .qz-right-toc-item {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.qz-right-toc:not(.qz-right-toc-collapsed) .qz-right-toc-item-line {
+  display: none !important;
+}
+
+.qz-right-toc-collapsed .qz-right-toc-head {
+  justify-content: center !important;
+  padding: 0 !important;
+}
+
+.qz-right-toc-collapsed .qz-right-toc-toggle {
+  margin: 10px auto 8px auto !important;
+}
+
+.qz-right-toc-collapsed-lines {
+  display: flex !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 18px !important;
+  padding-top: 22px !important;
+  overflow: hidden !important;
+}
+
+.qz-right-toc-collapsed-lines span {
+  width: 14px !important;
+  height: 2px !important;
+  flex: 0 0 auto !important;
+  border-radius: 999px !important;
+  background: rgba(200,168,115,.72) !important;
+}
+
+.qz-right-toc-collapsed-lines span[data-level="2"] {
+  width: 11px !important;
+}
+
+.qz-right-toc-collapsed-lines span[data-level="3"],
+.qz-right-toc-collapsed-lines span[data-level="4"],
+.qz-right-toc-collapsed-lines span[data-level="5"],
+.qz-right-toc-collapsed-lines span[data-level="6"] {
+  width: 8px !important;
+}
+
+/* v39/v40: use one floating handle shell and keep heading fold controls out of drag positioning */
+.qz-block-drag-handle-floating .qz-drag-grip {
+  pointer-events: auto !important;
+}
+
+.qz-editor-writing-surface .novablock-editor [data-qz-heading-wrapper="true"] {
+  overflow: visible !important;
+}
+
+.qz-editor-writing-surface .novablock-editor [data-qz-heading-wrapper="true"] [data-fold-toggle="true"] {
+  margin-left: 0 !important;
+  pointer-events: auto !important;
+  z-index: 20 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor [data-qz-heading-wrapper="true"]:hover [data-fold-toggle="true"],
+.qz-editor-writing-surface .novablock-editor [data-qz-heading-wrapper="true"].is-collapsed [data-fold-toggle="true"] {
+  opacity: 1 !important;
+}
+
+/* v41 isolated block-handle lane */
+.qz-editor-writing-surface .novablock-editor {
+  --qz-block-handle-lane: 52px;
+  /* content axis owns the writing gutter; the editor body must not double-indent */
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 0 128px 0 !important;
+  overflow: visible !important;
+}
+
+.qz-editor-writing-surface .novablock-editor > * {
+  position: relative !important;
+}
+
+.qz-editor-writing-surface .novablock-editor > ul,
+.qz-editor-writing-surface .novablock-editor > ol {
+  margin-left: 0 !important;
+  padding-left: 1.45em !important;
+}
+
+.qz-editor-writing-surface .novablock-editor > ul[data-type="taskList"] {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor > [data-qz-heading-wrapper="true"] {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor [data-qz-heading-wrapper="true"] [data-fold-toggle="true"] {
+  left: -30px !important;
+  width: 24px !important;
+  margin-left: 0 !important;
+  pointer-events: auto !important;
+  z-index: 20 !important;
+}
+
+.qz-custom-block-handle {
+  display: flex !important;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 0 !important;
+  border-radius: 10px !important;
+  background: transparent !important;
+  color: rgba(92,92,92,.56) !important;
+  cursor: grab !important;
+  pointer-events: auto !important;
+  user-select: none !important;
+  z-index: 95 !important;
+  transition: color .16s ease, background .16s ease, box-shadow .16s ease, opacity .16s ease !important;
+}
+
+.qz-custom-block-handle:hover,
+.qz-custom-block-handle:focus-visible {
+  background: rgba(128,168,156,.12) !important;
+  color: rgba(42,64,58,.88) !important;
+  box-shadow: 0 8px 22px -18px rgba(42,64,58,.32) !important;
+  outline: none !important;
+}
+
+.qz-custom-block-handle:active {
+  cursor: grabbing !important;
+}
+
+.qz-custom-block-handle .qz-custom-block-handle-icon {
+  display: grid !important;
+  width: 24px !important;
+  height: 24px !important;
+  place-items: center !important;
+  border-radius: 8px !important;
+  pointer-events: none !important;
+}
+
+.qz-block-drag-handle-floating {
+  z-index: 70 !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  pointer-events: auto !important;
+}
+
+.qz-block-drag-handle-floating .qz-drag-handle-hitbox {
+  width: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  margin-left: 0 !important;
+  padding: 4px !important;
+  pointer-events: auto !important;
+}
+
+.qz-block-drag-handle-floating .qz-drag-grip {
+  display: grid !important;
+  width: 24px !important;
+  height: 24px !important;
+  place-items: center !important;
+  border-radius: 8px !important;
+  pointer-events: auto !important;
+}
+
+.qz-editor-writing-surface .novablock-editor blockquote:not([data-ai-source-card]) {
+  margin: 18px 0 !important;
+  padding: 16px 22px 16px 28px !important;
+  border-left: 4px solid rgba(128,168,156,.92) !important;
+  border-radius: 0 12px 12px 0 !important;
+  background: rgba(220,229,222,.72) !important;
+  color: rgba(43,43,43,.72) !important;
+  font-style: italic !important;
+  box-shadow: none !important;
+}
+
+.qz-editor-writing-surface .novablock-editor blockquote:not([data-ai-source-card]) p {
+  margin: 0 !important;
+  font-size: 18px !important;
+  line-height: 1.75 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor blockquote[data-ai-source-card] {
+  font-style: normal !important;
+}

@@ -98,8 +98,13 @@ export const TreeNodeItem = ({
             onSelect(node.id);
           }
         }}
+        data-testid={`qingzhi-tree-node-${node.id}`}
+        data-depth={level}
+        data-selected={isSelected ? 'true' : 'false'}
+        data-folder={node.isFolder ? 'true' : 'false'}
+        data-expanded={isOpen ? 'true' : 'false'}
         className={`
-          group flex items-center gap-2 py-2 px-3 rounded-xl cursor-pointer transition-colors duration-200
+          qz-tree-node-item group flex items-center gap-2 py-2 px-3 rounded-xl cursor-pointer transition-colors duration-200
           ${isSelected && !node.isFolder ? 'bg-primary/15 text-primary shadow-sm shadow-primary/5' : 'hover:bg-accent/50 text-muted-foreground hover:text-foreground'}
           ${dragOver === 'into' ? 'bg-primary/20 ring-1 ring-primary/30' : ''}
         `}
@@ -110,8 +115,9 @@ export const TreeNodeItem = ({
             e.stopPropagation();
             if (!isEditing) onToggle(node.id);
           }}
+          data-testid={`qingzhi-tree-node-disclosure-${node.id}`}
           className={`
-            p-1 rounded-lg transition-colors
+            qz-tree-node-disclosure p-1 rounded-lg transition-colors
             ${node.isFolder || hasChildren ? 'hover:bg-accent' : 'opacity-0 pointer-events-none'}
           `}
         >
@@ -122,11 +128,13 @@ export const TreeNodeItem = ({
         </div>
 
         <div className="flex items-center gap-2.5 flex-1 min-w-0">
-          {node.isFolder ? (
-            isOpen ? <FolderOpen size={16} className={`shrink-0 ${isSelected ? 'text-primary' : 'text-primary/70'}`} /> : <Folder size={16} className={`shrink-0 ${isSelected ? 'text-primary' : 'text-primary/70'}`} />
-          ) : (
-            <FileText size={16} className={`shrink-0 ${isSelected ? 'text-primary/80' : 'text-muted-foreground/60'}`} />
-          )}
+          <span data-testid={`qingzhi-tree-node-icon-${node.id}`} className="qz-tree-node-icon inline-flex shrink-0">
+            {node.isFolder ? (
+              isOpen ? <FolderOpen size={16} className={`shrink-0 ${isSelected ? 'text-primary' : 'text-primary/70'}`} /> : <Folder size={16} className={`shrink-0 ${isSelected ? 'text-primary' : 'text-primary/70'}`} />
+            ) : (
+              <FileText size={16} className={`shrink-0 ${isSelected ? 'text-primary/80' : 'text-muted-foreground/60'}`} />
+            )}
+          </span>
           {isEditing ? (
             <input
               autoFocus
@@ -145,7 +153,8 @@ export const TreeNodeItem = ({
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
-            <span 
+            <span
+              data-testid={`qingzhi-tree-node-title-${node.id}`}
               className={`truncate text-sm tracking-tight ${isSelected ? 'font-bold' : 'font-medium'}`}
               title={node.title || (node.isFolder ? '无标题文件夹' : '无标题笔记')}
             >
@@ -156,12 +165,13 @@ export const TreeNodeItem = ({
 
         {!isEditing && (
           <div className={`transition-opacity duration-300 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
-            <button 
+            <button
+              data-testid={`qingzhi-tree-node-menu-${node.id}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onContextMenu?.(e, node);
               }}
-              className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-all"
+              className="qz-tree-node-menu p-1.5 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-all"
             >
               <MoreHorizontal size={14} />
             </button>

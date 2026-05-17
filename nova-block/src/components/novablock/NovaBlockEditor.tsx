@@ -6,7 +6,6 @@ import { NodeSelection } from '@tiptap/pm/state';
 import type { ChainedCommands } from '@tiptap/core';
 import { Node, mergeAttributes } from '@tiptap/core';
 import { BubbleMenu } from '@tiptap/react/menus';
-import DragHandle from '@tiptap/extension-drag-handle-react';
 import StarterKit from '@tiptap/starter-kit';
 import Dropcursor from '@tiptap/extension-dropcursor';
 import { Focus } from '@tiptap/extensions';
@@ -64,7 +63,7 @@ import { RevisionHistoryDrawer } from '../editor/RevisionHistoryDrawer';
 import { getSuggestionConfig } from '../notion/SlashMenuConfig';
 import { getNoteLinkSuggestionConfig } from './extensions/NoteLinkConfig';
 import { buildPendingSwitchSavePayload, shouldApplySavedDraftToCurrentNote, syncLatestDraftWithIncomingNote } from '../../lib/editorDraftSync';
-import { extractLeadingNoteTitle } from '../../lib/noteTitle';
+import { stripLeadingDuplicateTitleBlockFromHtml } from '../../lib/noteContentTitle';
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
 import {
@@ -83,11 +82,11 @@ import { SpellcheckSuggestionCard } from './components/SpellcheckSuggestionCard'
 import { buildSpellcheckSuggestionDetail } from './extensions/spellcheckHelpers';
 import { collectSpellcheckTextblocks, getSpellcheckTextblockAtPos, SPELLCHECK_SUGGESTION_REQUEST_EVENT } from './extensions/AISpellcheck';
 import {
-  dragHandleComputePositionConfig,
-  getDragHandleElement,
+  getQingZhiBlockHandleRect,
   getDragHandleReferenceRect,
-  getDragHandleVirtualReference,
-  repositionDragHandleAtNode,
+  getDragHandleTargetPosFromElement,
+  getDragHandleTargetPosFromPoint,
+  shouldKeepDragHandlePositionOnNodeLoss,
 } from './dragHandlePositioning';
 
 const NOVA_BLOCK_SLASH_ITEMS = [
@@ -672,6 +671,16 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const activeDragHandlePosRef = useRef(-1);
   const dragHandleRepositionFrameRef = useRef<number | null>(null);
   const dragInteractionRef = useRef<{ startX: number; startY: number; startTime: number } | null>(null);
+  const dragPreviewRef = useRef<HTMLElement | null>(null);
+  const suppressNextGripClickRef = useRef(false);
+  const dragHandleBridgeLockedRef = useRef(false);
+  const isBlockMenuOpenRef = useRef(false);
+  const [blockHandleState, setBlockHandleState] = useState<{
+    visible: boolean;
+    pos: number;
+    rect: { top: number; left: number; right: number; bottom: number; width: number; height: number };
+    referenceRect: { top: number; left: number; right: number; bottom: number };
+  } | null>(null);
 
   const slashItemsRef = useRef<any[]>(NOVA_BLOCK_SLASH_ITEMS);
   slashItemsRef.current = NOVA_BLOCK_SLASH_ITEMS;
@@ -679,6 +688,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   // 淇濇寔瀵规渶鏂?note 鐨勫紩鐢紝闃叉鍦?useEditor 闂寘涓嬁鍒版棫鐨?state 瀵艰嚧灞炴€ц瑕嗙洊
   const [prevNoteId, setPrevNoteId] = useState<number | string | undefined>(note?.id);
   const latestNoteRef = useRef(note);
+  const [draftTitle, setDraftTitle] = useState(note?.title || '未命名笔记');
   const isSavingRef = useRef(false);
   const queuedPayloadRef = useRef<any | null>(null);
   const handleSaveRef = useRef<(content?: string, updates?: Partial<Note>) => Promise<void> | void>(() => undefined);
@@ -737,6 +747,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   useEffect(() => {
     latestNoteRef.current = syncLatestDraftWithIncomingNote(latestNoteRef.current, note, prevNoteId);
   }, [note, prevNoteId]);
+
+  useEffect(() => {
+    setDraftTitle(note?.title || '未命名笔记');
+  }, [note?.id, note?.title]);
 
   useEffect(() => {
     stickersRef.current = stickers;
@@ -835,6 +849,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   ], [isAiEnabled]);
 
   const [outline, setOutline] = useState<any[]>([]);
+  const [isTocCollapsed, setIsTocCollapsed] = useState(false);
   const outlineTimerRef = useRef<any>(null);
 
   // 鎻愬彇澶х翰鏁版嵁鐢ㄤ簬 TOC
@@ -896,10 +911,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }, 500); // 500ms 闃叉姈锛屽ぇ骞呮彁鍗囪緭鍏ユ€ц兘锛屾潨缁?React 娓叉煋姝婚攣
   }, []);
 
-  const normalizedNoteContent = useMemo(
-    () => sanitizeLegacyApiUrlsInHtml(note?.content) || '<p></p>',
-    [note?.content],
-  );
+  const normalizedNoteContent = useMemo(() => {
+    const html = sanitizeLegacyApiUrlsInHtml(note?.content) || '<p></p>';
+    return stripLeadingDuplicateTitleBlockFromHtml(html, note?.title);
+  }, [note?.content, note?.title]);
 
   const editor = useEditor({
     extensions,
@@ -911,28 +926,6 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         setIsDirty(true);
       }
       
-      const currentLatestNote = latestNoteRef.current;
-      const payload: any = { ...currentLatestNote };
-      
-      const nextAutoTitle = extractLeadingNoteTitle(editor.state.doc);
-      if (
-        nextAutoTitle &&
-        !currentLatestNote?.is_title_manually_edited &&
-        nextAutoTitle !== currentLatestNote?.title
-      ) {
-        payload.title = nextAutoTitle;
-        payload.is_title_manually_edited = false;
-      }
-      
-      latestNoteRef.current = payload;
-      if (payload.title !== currentLatestNote?.title) {
-        onLiveChange?.({
-          id: payload.id,
-          title: payload.title,
-          is_title_manually_edited: payload.is_title_manually_edited,
-        });
-      }
-
       if (liveContentTimerRef.current) {
         window.clearTimeout(liveContentTimerRef.current);
       }
@@ -1031,6 +1024,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const scheduleDragHandleReposition = useCallback(() => {
     const editorDom = getEditorViewDom();
     if (!editor || editor.isDestroyed || !editorDom) {
+      setBlockHandleState(null);
       return;
     }
 
@@ -1041,16 +1035,30 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     dragHandleRepositionFrameRef.current = requestAnimationFrame(() => {
       dragHandleRepositionFrameRef.current = null;
 
-      const dragHandleElement = getDragHandleElement(blockMenuRef.current);
+      const pos = activeDragHandlePosRef.current;
+      const referenceRect = getDragHandleReferenceRect(editor, pos);
+      const handleRect = getQingZhiBlockHandleRect(referenceRect);
 
-      void repositionDragHandleAtNode({
-        editor,
-        dragHandleElement,
-        pos: activeDragHandlePosRef.current,
-        computePositionConfig: dragHandleComputePositionConfig,
+      if (!referenceRect || !handleRect || pos < 0) {
+        if (!isBlockMenuOpen) {
+          setBlockHandleState(null);
+        }
+        return;
+      }
+
+      setBlockHandleState({
+        visible: true,
+        pos,
+        rect: handleRect,
+        referenceRect: {
+          top: referenceRect.top,
+          left: referenceRect.left,
+          right: referenceRect.right,
+          bottom: referenceRect.bottom,
+        },
       });
     });
-  }, [editor, getEditorViewDom]);
+  }, [editor, getEditorViewDom, isBlockMenuOpen]);
 
   useEffect(() => {
     const handleAddSticker = (e?: Event) => {
@@ -1562,6 +1570,55 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     await runSave(payloadToSave);
   }, [editor, onNotify, onSave]);
 
+  const handleTitleInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const currentNote = latestNoteRef.current;
+    const nextTitle = event.target.value;
+    const normalizedTitle = nextTitle.trim() || '未命名笔记';
+
+    setDraftTitle(nextTitle);
+    if (!currentNote) {
+      return;
+    }
+
+    latestNoteRef.current = {
+      ...currentNote,
+      title: normalizedTitle,
+      is_title_manually_edited: true,
+    };
+    setIsDirty(true);
+    onLiveChange?.({
+      id: currentNote.id,
+      title: normalizedTitle,
+      is_title_manually_edited: true,
+    });
+  }, [onLiveChange]);
+
+  const commitNoteTitle = useCallback((nextRawTitle?: string) => {
+    const currentNote = latestNoteRef.current;
+    if (!currentNote) {
+      return;
+    }
+
+    const nextTitle = (nextRawTitle ?? draftTitle).trim() || '未命名笔记';
+    const payload = {
+      ...currentNote,
+      title: nextTitle,
+      is_title_manually_edited: true,
+    };
+
+    setDraftTitle(nextTitle);
+    latestNoteRef.current = payload;
+    onLiveChange?.({
+      id: payload.id,
+      title: payload.title,
+      is_title_manually_edited: true,
+    });
+    void handleSave(undefined, {
+      title: nextTitle,
+      is_title_manually_edited: true,
+    });
+  }, [draftTitle, handleSave, onLiveChange]);
+
   useEffect(() => {
     handleSaveRef.current = handleSave;
   }, [handleSave]);
@@ -1621,7 +1678,20 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
     const unsubscribeBeforeClose = window.electron?.onBeforeAppClose?.(async () => {
       try {
-        await handleSave(latestNoteRef.current?.content, latestNoteRef.current || undefined);
+        const shouldFlushDirtyDraft = Boolean(latestNoteRef.current && (isDirty || queuedPayloadRef.current));
+        if (shouldFlushDirtyDraft) {
+          await new Promise<void>((resolve) => {
+            const timeoutId = window.setTimeout(resolve, 1200);
+            Promise.resolve(handleSave(undefined, latestNoteRef.current || undefined))
+              .catch((error) => {
+                console.error('Failed to flush note before app close:', error);
+              })
+              .finally(() => {
+                window.clearTimeout(timeoutId);
+                resolve();
+              });
+          });
+        }
       } finally {
         window.electron?.finishBeforeAppClose?.();
       }
@@ -1639,18 +1709,23 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [blockMenuAnchorRect, setBlockMenuAnchorRect] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
   const blockMenuContentRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    isBlockMenuOpenRef.current = isBlockMenuOpen;
+  }, [isBlockMenuOpen]);
+
   const getBlockMenuAnchorRect = useCallback((pos: number) => {
     if (!editor) {
       return null;
     }
 
-    const dragHandleElement = getDragHandleElement(blockMenuRef.current);
     const referenceRect = getDragHandleReferenceRect(editor, pos);
+    const handleRect = blockHandleState?.pos === pos
+      ? blockHandleState.rect
+      : getQingZhiBlockHandleRect(referenceRect);
 
-    if (!(dragHandleElement instanceof HTMLElement) || !referenceRect) {
+    if (!handleRect || !referenceRect) {
       return null;
     }
-    const handleRect = dragHandleElement.getBoundingClientRect();
 
     return {
       top: Math.min(referenceRect.top, handleRect.top),
@@ -1658,7 +1733,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       right: handleRect.right,
       bottom: Math.max(referenceRect.bottom, handleRect.bottom),
     };
-  }, [editor]);
+  }, [blockHandleState, editor]);
 
   // 瑙嗗彛杈圭晫妫€娴嬶細闃叉鑿滃崟琚伄鎸?
   useLayoutEffect(() => {
@@ -1739,10 +1814,80 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     };
   }, [isEmoticonPanelOpen]);
 
+  const cleanupGripDragPreview = useCallback(() => {
+    dragPreviewRef.current?.remove();
+    dragPreviewRef.current = null;
+    document.removeEventListener('drop', cleanupGripDragPreview);
+    document.removeEventListener('dragend', cleanupGripDragPreview);
+  }, []);
+
+  const handleGripDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!editor || editor.isDestroyed || !e.dataTransfer) {
+      return;
+    }
+
+    const blockPos = activeDragHandlePosRef.current;
+    const node = editor.state.doc.nodeAt(blockPos);
+    if (blockPos < 0 || !node) {
+      e.preventDefault();
+      return;
+    }
+
+    try {
+      setIsBlockMenuOpen(false);
+      suppressNextGripClickRef.current = true;
+      const selection = NodeSelection.create(editor.state.doc, blockPos);
+      const slice = editor.state.doc.slice(blockPos, blockPos + node.nodeSize);
+      const tr = editor.state.tr.setSelection(selection);
+
+      const preview = document.createElement('div');
+      const domNode = editor.view.nodeDOM(blockPos);
+      if (domNode instanceof HTMLElement) {
+        preview.appendChild(domNode.cloneNode(true));
+      } else {
+        preview.textContent = node.textContent || 'Nova block';
+      }
+      preview.style.position = 'fixed';
+      preview.style.left = '-10000px';
+      preview.style.top = '-10000px';
+      preview.style.width = `${Math.max(160, blockHandleState?.referenceRect.right && blockHandleState?.referenceRect.left
+        ? blockHandleState.referenceRect.right - blockHandleState.referenceRect.left
+        : 320)}px`;
+      preview.style.pointerEvents = 'none';
+      preview.style.opacity = '0.86';
+      document.body.appendChild(preview);
+      dragPreviewRef.current = preview;
+
+      e.dataTransfer.clearData();
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', node.textContent || '');
+      e.dataTransfer.setDragImage(preview, 12, 12);
+
+      editor.view.dragging = { slice, move: true, node: selection } as typeof editor.view.dragging;
+      editor.view.dispatch(tr);
+
+      document.addEventListener('drop', cleanupGripDragPreview);
+      document.addEventListener('dragend', cleanupGripDragPreview);
+    } catch {
+      e.preventDefault();
+      cleanupGripDragPreview();
+    }
+  }, [blockHandleState, cleanupGripDragPreview, editor]);
+
+  const handleGripDragEnd = useCallback(() => {
+    dragInteractionRef.current = null;
+    cleanupGripDragPreview();
+  }, [cleanupGripDragPreview]);
+
   // 处理拖拽手柄点击：严格区分点击与拖拽 (Notion 风格)
   const handleGripClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
+
+    if (suppressNextGripClickRef.current) {
+      suppressNextGripClickRef.current = false;
+      return;
+    }
 
     // 如果最近有显著的拖拽行为，不触发点击菜单
     if (dragInteractionRef.current) {
@@ -1841,7 +1986,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         });
       }
 
-      replaceEditorContentWithoutHistory(editor, sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>');
+      replaceEditorContentWithoutHistory(
+        editor,
+        stripLeadingDuplicateTitleBlockFromHtml(sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>', note.title),
+      );
       // 鍒囨崲鍐呭鍚庯紝寮哄埗琛ラ綈 ID 骞舵洿鏂板ぇ绾?
       // @ts-ignore
       editor.commands.ensureHeadingIds();
@@ -1858,8 +2006,14 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       return;
     }
 
-    const incomingContent = sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>';
-    const knownContent = sanitizeLegacyApiUrlsInHtml(latestNoteRef.current?.content) || '<p></p>';
+    const incomingContent = stripLeadingDuplicateTitleBlockFromHtml(
+      sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>',
+      note.title,
+    );
+    const knownContent = stripLeadingDuplicateTitleBlockFromHtml(
+      sanitizeLegacyApiUrlsInHtml(latestNoteRef.current?.content) || '<p></p>',
+      latestNoteRef.current?.title,
+    );
     if (incomingContent === knownContent || incomingContent === editor.getHTML()) {
       latestNoteRef.current = note;
       return;
@@ -1885,7 +2039,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         latestNoteRef.current = { ...latestNoteRef.current, content: detail.content } as Note;
         return;
       }
-      const nextContent = sanitizeLegacyApiUrlsInHtml(detail.content) || '<p></p>';
+      const nextContent = stripLeadingDuplicateTitleBlockFromHtml(
+        sanitizeLegacyApiUrlsInHtml(detail.content) || '<p></p>',
+        note.title,
+      );
       replaceEditorContentWithoutHistory(editor, nextContent);
       // @ts-ignore
       editor.commands.ensureHeadingIds();
@@ -2033,6 +2190,109 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     };
   }, []);
 
+  const setDragHandleBridgeLocked = useCallback((locked: boolean) => {
+    if (dragHandleBridgeLockedRef.current === locked) {
+      return;
+    }
+
+    dragHandleBridgeLockedRef.current = locked;
+    if (locked) {
+      scheduleDragHandleReposition();
+      return;
+    }
+
+    if (!isBlockMenuOpen) {
+      window.setTimeout(() => {
+        if (!dragHandleBridgeLockedRef.current && !isBlockMenuOpenRef.current) {
+          setBlockHandleState((current) => current ? { ...current, visible: false } : current);
+        }
+      }, 320);
+    }
+  }, [isBlockMenuOpen, scheduleDragHandleReposition]);
+
+  const updateDragHandleTargetFromPointer = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!editor || editor.isDestroyed) {
+      return null;
+    }
+
+    const editorDom = getEditorViewDom();
+    if (!editorDom) {
+      return null;
+    }
+
+    const nextPos = getDragHandleTargetPosFromPoint(editor, { x: event.clientX, y: event.clientY });
+    if (nextPos !== null) {
+      if (activeDragHandlePosRef.current !== nextPos) {
+        activeDragHandlePosRef.current = nextPos;
+      }
+
+      scheduleDragHandleReposition();
+      return nextPos;
+    }
+
+    const pointerTarget = event.target instanceof Element ? event.target : null;
+    if (pointerTarget && editorDom.contains(pointerTarget)) {
+      const targetPos = getDragHandleTargetPosFromElement(editor, pointerTarget);
+      if (targetPos !== null) {
+        if (activeDragHandlePosRef.current !== targetPos) {
+          activeDragHandlePosRef.current = targetPos;
+        }
+
+        scheduleDragHandleReposition();
+        return targetPos;
+      }
+    }
+
+    if (shouldKeepDragHandlePositionOnNodeLoss({
+      nextPos: -1,
+      bridgeLocked: dragHandleBridgeLockedRef.current,
+      menuOpen: isBlockMenuOpen,
+    })) {
+      scheduleDragHandleReposition();
+      return activeDragHandlePosRef.current;
+    }
+
+    return null;
+  }, [editor, getEditorViewDom, isBlockMenuOpen, scheduleDragHandleReposition]);
+
+  const handleWritingSurfaceMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!editor || editor.isDestroyed || isBlockMenuOpen) {
+      return;
+    }
+
+    const pointerResolvedPos = updateDragHandleTargetFromPointer(event);
+    const pos = pointerResolvedPos ?? activeDragHandlePosRef.current;
+    if (pos < 0) {
+      setDragHandleBridgeLocked(false);
+      return;
+    }
+
+    const referenceRect = getDragHandleReferenceRect(editor, pos);
+    const handleRect = getQingZhiBlockHandleRect(referenceRect);
+    if (!referenceRect || !handleRect) {
+      setDragHandleBridgeLocked(false);
+      return;
+    }
+
+    const x = event.clientX;
+    const y = event.clientY;
+    const inVerticalBand = y >= Math.min(referenceRect.top, handleRect.top) - 10 && y <= Math.max(referenceRect.bottom, handleRect.bottom) + 10;
+    const inHandleBridge = x >= handleRect.left - 8 && x <= referenceRect.left + 12;
+    setDragHandleBridgeLocked(inVerticalBand && inHandleBridge);
+  }, [editor, isBlockMenuOpen, setDragHandleBridgeLocked, updateDragHandleTargetFromPointer]);
+
+  const handleWritingSurfaceMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const relatedTarget = event.relatedTarget;
+    if (relatedTarget instanceof globalThis.Node && blockMenuRef.current?.contains(relatedTarget as globalThis.Node)) {
+      setDragHandleBridgeLocked(true);
+      return;
+    }
+
+    if (!isBlockMenuOpen) {
+      setDragHandleBridgeLocked(false);
+    }
+  }, [isBlockMenuOpen, setDragHandleBridgeLocked]);
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -2041,62 +2301,17 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     >
       
       {/* 鎬ц兘浠〃鐩?*/}
-      <div className="fixed top-6 left-6 z-[100] flex items-center gap-2 px-3 py-1.5 bg-background/40 hover:bg-background/80 rounded-full backdrop-blur-xl border border-border/20 pointer-events-none transition-all duration-300 shadow-soft">
+      <div data-testid="qingzhi-fps-meter" className="qz-fps-meter fixed top-6 left-6 z-[100] flex items-center gap-2 px-3 py-1.5 bg-background/40 hover:bg-background/80 rounded-full backdrop-blur-xl border border-border/20 pointer-events-none transition-all duration-300 shadow-soft">
         <Cpu size={12} className={fps < 55 ? 'text-destructive' : 'text-primary'} />
         <span className="text-[10px] font-mono font-bold text-muted-foreground">{fps} FPS</span>
       </div>
 
-      <div 
-        data-note-id={note?.id ?? ''}
-        ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto relative scrollbar-hide pt-0 custom-scrollbar"
-        onScroll={() => {
-          // 寮哄埗璁?tiptap-extension-drag-handle 閲嶆柊璁＄畻浣嶇疆锛岃В鍐虫粴鍔ㄦ紓绉婚棶棰?
-          // 璇ユ彃浠跺唴閮ㄧ洃鍚簡 window 婊氬姩锛屼絾瀵逛簬鑷畾涔夋粴鍔ㄥ鍣ㄩ渶瑕佹墜鍔ㄨЕ鍙?
-          scheduleDragHandleReposition();
-        }}
-        onDragEnd={() => {
-          document.querySelectorAll('.nova-drop-cursor, .ProseMirror-dropcursor').forEach(el => {
-            (el as HTMLElement).style.display = 'none';
-          });
-        }}
-        onDragOver={(e) => {
-          if (isStickerMode) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
-          }
-        }}
-        onDrop={(e) => {
-          if (!isStickerMode) return;
-          e.preventDefault();
-          
-          try {
-            const dataStr = e.dataTransfer.getData('application/json');
-            if (!dataStr) return;
-            
-            const stickerData = JSON.parse(dataStr);
-            if (stickerData.type === 'image' && stickerData.url) {
-              // 璁＄畻鐩稿浜?scrollContainer 鐨勫潗鏍?
-              const rect = e.currentTarget.getBoundingClientRect();
-              const x = e.clientX - rect.left;
-              const y = e.clientY - rect.top + e.currentTarget.scrollTop;
-
-              window.dispatchEvent(new CustomEvent('add-sticky-note', { 
-                detail: { 
-                  url: stickerData.url, 
-                  type: 'image',
-                  x: x - 50, // 灞呬腑钀界偣
-                  y: y - 50 
-                } 
-              }));
-            }
-          } catch (err) {
-            console.error('Failed to handle sticker drop:', err);
-          }
-        }}
+      <div
+        data-testid="qingzhi-editor-frame"
+        className={`qz-editor-frame qz-editor-shell-grid flex flex-1 overflow-hidden ${isTocCollapsed ? 'qz-editor-frame-toc-collapsed' : ''}`}
       >
-        <div className="flex flex-col w-full max-w-[900px] mx-auto pb-40">
-          <div className="px-12 mt-6">
+        <div data-testid="qingzhi-editor-toprail" className="qz-editor-toprail">
+          <div data-testid="qingzhi-editor-toolbar-row" className="qz-editor-toolbar-row">
             <EditorHeader
               icon={note?.icon ?? '馃摑'}
               title={note?.title ?? '未命名笔记'}
@@ -2158,10 +2373,108 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                 }
               }}
             />
+          </div>
+        </div>
+      <div className="qz-editor-main-column flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div
+        data-testid="qingzhi-editor-main-scroll"
+        className="qz-editor-main-scroll flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
+      <div 
+        data-testid="qingzhi-editor-scroll"
+        data-note-id={note?.id ?? ''}
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto relative scrollbar-hide pt-0 custom-scrollbar"
+        onScroll={() => {
+          scheduleDragHandleReposition();
+        }}
+        onDragEnd={() => {
+          document.querySelectorAll('.nova-drop-cursor, .ProseMirror-dropcursor').forEach(el => {
+            (el as HTMLElement).style.display = 'none';
+          });
+        }}
+        onDragOver={(e) => {
+          if (isStickerMode) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+          }
+        }}
+        onDrop={(e) => {
+          if (!isStickerMode) return;
+          e.preventDefault();
+          
+          try {
+            const dataStr = e.dataTransfer.getData('application/json');
+            if (!dataStr) return;
+            
+            const stickerData = JSON.parse(dataStr);
+            if (stickerData.type === 'image' && stickerData.url) {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const x = e.clientX - rect.left;
+              const y = e.clientY - rect.top + e.currentTarget.scrollTop;
+
+              window.dispatchEvent(new CustomEvent('add-sticky-note', { 
+                detail: { 
+                  url: stickerData.url, 
+                  type: 'image',
+                  x: x - 50,
+                  y: y - 50 
+                } 
+              }));
+            }
+          } catch (err) {
+            console.error('Failed to handle sticker drop:', err);
+          }
+        }}
+      >
+        <div data-testid="qingzhi-editor-layout" className="qz-editor-layout qz-editor-gutter-shell">
+          <div
+            data-testid="qingzhi-editor-paper-shell"
+            className="qz-editor-paper-shell qz-editor-body-column flex flex-col w-full pb-40"
+            onMouseMoveCapture={handleWritingSurfaceMouseMove}
+            onMouseLeave={handleWritingSurfaceMouseLeave}
+          >
+          <div
+            data-testid="qingzhi-editor-art-screen"
+            className="qz-editor-art-screen pointer-events-none absolute right-10 top-24 hidden w-40 opacity-80 lg:block"
+            aria-hidden="true"
+          >
+            <img
+              src="/assets/qingzhi/uploaded/illustration-decoration.webp"
+              alt=""
+              className="h-auto w-full object-contain"
+            />
+          </div>
+          <div className="qz-editor-content-column">
+            {note && (
+              <div data-testid="qingzhi-note-frontmatter" className="qz-note-frontmatter-block">
+                <input
+                  data-testid="qingzhi-note-title-input"
+                  className="qz-note-title qz-note-title-input"
+                  value={draftTitle}
+                  onChange={handleTitleInputChange}
+                  onBlur={(event) => commitNoteTitle(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  aria-label="全文标题"
+                  placeholder="未命名笔记"
+                />
+                <div className="qz-note-breadcrumb">
+                  <span>我的手账</span>
+                  <span>›</span>
+                  <span>{draftTitle.trim() || note.title || '未命名笔记'}</span>
+                </div>
+              </div>
+            )}
 
             {note && (
-              <div 
-                className="mt-1 px-0"
+              <div
+                data-testid="qingzhi-editor-property-card"
+                className="qz-editor-property-card mt-1 px-0"
                 onMouseDown={(e) => e.stopPropagation()}
               >
                 <PropertyPanel 
@@ -2181,55 +2494,63 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                 />
               </div>
             )}
-          </div>
-
-          <div className="relative group/editor mt-2 w-full min-h-[500px] rounded-xl overflow-hidden">
-            <BackgroundPaper type={backgroundPaper} />
-            {/* Block 鎷栨嫿鎵嬫焺 */}
-            {editor && (
-              /* @ts-ignore */
-              <DragHandle 
-                editor={editor} 
-                pluginKey="DragHandle"
-                // @ts-ignore
-                getReferencedVirtualElement={() => getDragHandleVirtualReference(editor, activeDragHandlePosRef.current)}
-                onNodeChange={({ pos }) => {
-                  activeDragHandlePosRef.current = pos;
-                  if (pos >= 0) {
+            <div
+              data-testid="qingzhi-editor-writing-surface"
+              data-qz-handle-bridge="true"
+              className="qz-editor-writing-surface relative group/editor mt-2 w-full min-h-[500px] rounded-xl"
+            >
+              <BackgroundPaper type={backgroundPaper} />
+              {/* QingZhi custom block handle overlay: independent from Tiptap plugin visibility. */}
+              {editor && blockHandleState?.visible && typeof document !== 'undefined' && createPortal(
+                <div
+                  ref={blockMenuRef}
+                  data-testid="qingzhi-block-handle"
+                  data-qz-block-handle="true"
+                  role="button"
+                  tabIndex={0}
+                  draggable={true}
+                  className="qz-custom-block-handle"
+                  style={{
+                    position: 'fixed',
+                    left: blockHandleState.rect.left,
+                    top: blockHandleState.rect.top,
+                    width: blockHandleState.rect.width,
+                    height: blockHandleState.rect.height,
+                  }}
+                  onMouseEnter={() => {
+                    setDragHandleBridgeLocked(true);
                     scheduleDragHandleReposition();
-                  }
-                }}
-                onElementDragEnd={() => {
-                  setTimeout(() => {
-                    document.querySelectorAll('.nova-drop-cursor, .ProseMirror-dropcursor').forEach(el => {
-                      (el as HTMLElement).style.display = 'none';
-                    });
-                  }, 50);
-                }}
-                // @ts-ignore
-                computePositionConfig={dragHandleComputePositionConfig}
-              >
-                <div className="flex items-center gap-1 group/handle relative" ref={blockMenuRef}>
-                  <div 
-                    onMouseDown={handleGripMouseDown}
-                    onClick={handleGripClick}
-                    className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 cursor-grab active:cursor-grabbing text-stone-400 group-hover/handle:text-stone-600 transition-colors drag-handle"
-                  >
+                  }}
+                  onMouseLeave={() => {
+                    if (!isBlockMenuOpen) {
+                      setDragHandleBridgeLocked(false);
+                    }
+                  }}
+                  onMouseDown={handleGripMouseDown}
+                  onDragStart={handleGripDragStart}
+                  onDragEnd={handleGripDragEnd}
+                  onClick={handleGripClick}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      handleGripClick(event as unknown as React.MouseEvent);
+                    }
+                  }}
+                  aria-label="打开块菜单"
+                >
+                  <span className="qz-custom-block-handle-icon" aria-hidden="true">
                     <GripVertical size={16} />
-                  </div>
+                  </span>
+                </div>,
+                document.body,
+              )}
 
-
-                </div>
-              </DragHandle>
-            )}
-
-            {/* 琛ㄦ牸娴姩鑿滃崟 */}
-            {editor && (
-              <BubbleMenu 
-                editor={editor} 
-                shouldShow={({ editor }) => editor.isActive('table')}
-                className="flex overflow-hidden rounded-2xl border border-border/20 bg-popover/80 backdrop-blur-2xl shadow-soft p-1.5"
-              >
+              {/* 琛ㄦ牸娴姩鑿滃崟 */}
+              {editor && (
+                <BubbleMenu 
+                  editor={editor} 
+                  shouldShow={({ editor }) => editor.isActive('table')}
+                  className="flex overflow-hidden rounded-2xl border border-border/20 bg-popover/80 backdrop-blur-2xl shadow-soft p-1.5"
+                >
                 <div className="flex items-center gap-1">
                   <button 
                     onClick={() => editor.chain().focus().addColumnBefore().run()}
@@ -2287,8 +2608,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                     <Trash2 size={16} />
                   </button>
                 </div>
-              </BubbleMenu>
-            )}
+                </BubbleMenu>
+              )}
 
             {isBlockMenuOpen && editor && typeof document !== 'undefined' && createPortal(
                 <motion.div
@@ -2782,9 +3103,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
             />
 
             {/* Layer 1: Tiptap Editor */}
-            <EditorContent 
-              editor={editor} 
-              className={`relative z-30 transition-all duration-500 ${isStickerMode ? 'opacity-40 blur-[1px] pointer-events-none' : 'opacity-100 blur-0'}`} 
+            <EditorContent
+              editor={editor}
+              className={`qz-editor-content-layer relative z-30 transition-all duration-500 ${isStickerMode ? 'opacity-40 blur-[1px] pointer-events-none' : 'opacity-100 blur-0'}`}
             />
 
             {/* Layer 0: Sticky Notes (Top Layer) - Independent of Sticker Mode blur */}
@@ -2924,11 +3245,19 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                 </motion.div>
               )}
             </AnimatePresence>
+            </div>
+          </div>
           </div>
         </div>
-        
-        {/* TOC 鎸傝浇鍦ㄦ粴鍔ㄥ鍣ㄥ唴閮紝鐩稿瀹氫綅 */}
-        <TableOfContents outline={outline} scrollContainerRef={scrollContainerRef as React.RefObject<HTMLDivElement>} />
+      </div>
+      </div>
+      </div>
+      <TableOfContents
+        outline={outline}
+        scrollContainerRef={scrollContainerRef as React.RefObject<HTMLDivElement>}
+        isCollapsed={isTocCollapsed}
+        onCollapsedChange={setIsTocCollapsed}
+      />
       </div>
 
       <AnimatePresence>
@@ -2972,7 +3301,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
             const patched: any = { ...updated, content: cleanContent };
             replaceEditorContentWithoutHistory(
               editor,
-              sanitizeLegacyApiUrlsInHtml(cleanContent) || '<p></p>',
+              stripLeadingDuplicateTitleBlockFromHtml(
+                sanitizeLegacyApiUrlsInHtml(cleanContent) || '<p></p>',
+                updated.title,
+              ),
             );
             latestNoteRef.current = { ...latestNoteRef.current, ...patched } as Note;
             setIsDirty(false);

@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Settings, BookOpen, Upload, Database, RefreshCw, Zap, Palette, Download, FileJson, Save, Package } from 'lucide-react';
+import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Settings, BookOpen, Upload, Database, RefreshCw, Zap, Palette, Download, FileJson, Save, Package, CalendarDays, Command, PanelRight, Share2, MessageSquare, Clock, Plus, GripVertical } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAI } from '../contexts/AIContext';
 import { getThemeConfig, saveThemeConfig, exportThemeConfig, validateThemeConfig, applyThemeConfig } from '../lib/themeUtils';
 import type { AIEngineMode, ThemeConfig, VaultHealthReport } from '../lib/types';
 import { isSpellcheckFeatureEnabled, saveSpellcheckFeatureEnabled } from '../lib/spellcheckSettings';
 import { UpdaterPanel } from './UpdaterPanel';
+import {
+  QINGZHI_TOPBAR_ACTIONS,
+  readQingzhiSettings,
+  saveQingzhiSettings,
+  type QingzhiSettings,
+  type QingzhiTopbarActionId,
+} from '../lib/qingzhiSettings';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -29,7 +36,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     base_url: '',
     model_name: '',
   });
-  const [activeTab, setActiveTab] = useState<'ai' | 'dictionary' | 'theme' | 'vault' | 'updater'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'dictionary' | 'theme' | 'qingzhi' | 'vault' | 'updater'>('ai');
   const [isSpellcheckEnabled, setIsSpellcheckEnabled] = useState(isSpellcheckFeatureEnabled());
   
   // Dictionary Import State
@@ -39,6 +46,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
 
   // Theme State
   const [themeConfig, setThemeConfigState] = useState<ThemeConfig>(getThemeConfig());
+  const [qingzhiSettings, setQingzhiSettings] = useState<QingzhiSettings>(() => readQingzhiSettings());
   const [themeImportError, setThemeImportError] = useState<string | null>(null);
   const [themeImportSuccess, setThemeImportSuccess] = useState(false);
   const [vaultHealth, setVaultHealth] = useState<VaultHealthReport | null>(null);
@@ -138,6 +146,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       loadModelConfig();
       setImportResult(null);
       setThemeConfigState(getThemeConfig());
+      setQingzhiSettings(readQingzhiSettings());
       setThemeImportError(null);
       setThemeImportSuccess(false);
       setModelConfigNotice(null);
@@ -341,6 +350,269 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
     saveThemeConfig(newConfig);
   };
 
+  const updateQingzhiSettings = (patch: Partial<QingzhiSettings>) => {
+    setQingzhiSettings((prev) => saveQingzhiSettings({ ...prev, ...patch }));
+  };
+
+  const readImageAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.readAsDataURL(file);
+  });
+
+  const handleQingzhiAssetPick = async (
+    key: 'brandLogoSrc' | 'avatarSrc' | 'mascotSrc',
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const src = await readImageAsDataUrl(file);
+      updateQingzhiSettings({ [key]: src } as Partial<QingzhiSettings>);
+    } catch (error) {
+      console.error('[qingzhi] asset read failed', error);
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const resetQingzhiAsset = (key: 'brandLogoSrc' | 'avatarSrc' | 'mascotSrc') => {
+    updateQingzhiSettings({ [key]: '' } as Partial<QingzhiSettings>);
+  };
+
+  const toggleQingzhiTopbarPin = (id: QingzhiTopbarActionId) => {
+    const selected = qingzhiSettings.topbarPins.includes(id);
+    const nextPins = selected
+      ? qingzhiSettings.topbarPins.filter((pin) => pin !== id)
+      : [...qingzhiSettings.topbarPins, id].slice(0, 4);
+    updateQingzhiSettings({ topbarPins: nextPins });
+  };
+
+  const qingzhiSettingsIconMap: Record<QingzhiTopbarActionId, React.ComponentType<{ size?: number; strokeWidth?: number }>> = {
+    daily: CalendarDays,
+    command: Command,
+    reader: BookOpen,
+    inspect: PanelRight,
+    graph: Share2,
+    ask: MessageSquare,
+    export: Download,
+    timeline: Clock,
+  };
+
+  const renderQingzhiSettingsLegacy = () => (
+    <div className="qz-settings-panel space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div className="qz-settings-hero flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="grid h-10 w-10 place-items-center rounded-2xl border border-[var(--nv-color-border)] bg-[var(--nv-color-surface-2)] text-sm font-bold text-[var(--nv-color-accent-fg)] shadow-[var(--nv-shadow-rest)]">
+            知
+          </div>
+          <div>
+            <h3 className="text-sm font-bold tracking-[0.12em]">清知外观与顶栏</h3>
+            <p className="text-[10px] text-muted-foreground">按原预览管理常驻入口、角色水印和顶栏密度</p>
+          </div>
+        </div>
+        <div className="qz-settings-preview-mascot" aria-hidden="true" />
+      </div>
+
+      <section data-testid="qingzhi-pinned-zone" className="qz-pinned-zone qz-settings-card space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h4 className="text-xs font-bold text-primary">顶栏常驻按钮自定义</h4>
+            <p className="text-[10px] text-muted-foreground mt-1">勾选后会立即出现在清知顶栏右侧，顺序按预览功能池排列。</p>
+          </div>
+          <span className="rounded-full border border-[rgba(200,168,115,.20)] bg-[rgba(250,247,241,.50)] px-2.5 py-1 text-[10px] text-muted-foreground">{qingzhiSettings.topbarPins.length} 个已固定</span>
+        </div>
+
+        <div className="qz-settings-pin-grid grid grid-cols-2 gap-2" data-testid="qingzhi-pinned-pool">
+          {QINGZHI_TOPBAR_ACTIONS.map((action) => {
+            const selected = qingzhiSettings.topbarPins.includes(action.id);
+            const Icon = qingzhiSettingsIconMap[action.id];
+            return (
+              <button
+                key={action.id}
+                type="button"
+                data-testid={`qingzhi-pin-toggle-${action.id}`}
+                data-qz-pin={action.id}
+                aria-pressed={selected}
+                onClick={() => toggleQingzhiTopbarPin(action.id)}
+                className={`qz-settings-pin-option rounded-xl border px-3 py-2 text-left transition-all ${
+                  selected
+                    ? 'border-primary/50 bg-primary/10 text-primary'
+                    : 'border-border/30 bg-accent/10 text-muted-foreground hover:text-foreground hover:bg-accent/20'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="qz-settings-pin-option-icon" aria-hidden="true">
+                    <Icon size={13} strokeWidth={2.1} />
+                  </span>
+                  <span className="text-xs font-bold">{action.label}</span>
+                </span>
+                <span className="block text-[10px] opacity-75 mt-1 pl-6">{action.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="qz-settings-range-card space-y-3">
+        <div className="flex justify-between text-[10px] font-medium">
+          <span className="text-muted-foreground">清知角色水印透明度</span>
+          <span className="text-primary">{qingzhiSettings.mascotOpacity.toFixed(2)}</span>
+        </div>
+        <input
+          data-testid="qingzhi-mascot-opacity"
+          data-range="mascot-opacity"
+          type="range"
+          min="0"
+          max="0.35"
+          step="0.01"
+          value={qingzhiSettings.mascotOpacity}
+          onChange={(e) => updateQingzhiSettings({ mascotOpacity: parseFloat(e.target.value) })}
+          className="qz-settings-range w-full h-1.5 bg-accent/30 rounded-lg appearance-none cursor-pointer accent-primary"
+        />
+        <p className="text-[10px] text-muted-foreground leading-relaxed">
+          透明度会写入 CSS 变量 <code>--qz-mascot-opacity</code>，侧栏清知立绘与后续空状态画屏共享该设置。
+        </p>
+      </section>
+    </div>
+  );
+
+  void renderQingzhiSettingsLegacy;
+
+  const renderQingzhiSettings = () => {
+    const selectedActions = qingzhiSettings.topbarPins
+      .map((id) => QINGZHI_TOPBAR_ACTIONS.find((action) => action.id === id))
+      .filter((action): action is (typeof QINGZHI_TOPBAR_ACTIONS)[number] => Boolean(action));
+    const candidateActions = QINGZHI_TOPBAR_ACTIONS.filter((action) => !qingzhiSettings.topbarPins.includes(action.id));
+    const isFull = selectedActions.length >= 4;
+
+    return (
+      <div className="qz-settings-panel animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <header className="qz-settings-page-header">
+          <div className="flex items-center gap-3">
+            <div className="qz-settings-page-stamp">肆</div>
+            <h3>Settings · 顶栏常驻按钮自定义</h3>
+          </div>
+          <span>设置 → 外观 → 顶栏 · 默认 4 项</span>
+        </header>
+
+        <section data-testid="qingzhi-pinned-zone" className="qz-settings-card">
+          <div className="qz-settings-card-head">
+            <div>
+              <h4>顶栏常驻按钮</h4>
+              <p>最多 4 个，从左到右显示在头像左侧。其余功能可从 … 菜单访问。</p>
+            </div>
+            <button type="button" onClick={() => updateQingzhiSettings({ topbarPins: ['daily', 'command', 'reader', 'inspect'] })}>
+              恢复默认
+            </button>
+          </div>
+
+          <div data-testid="qingzhi-selected-pins" className="qz-settings-selected-zone">
+            <div className="qz-settings-zone-title">已选 · 拖拽排序</div>
+            <div className="qz-settings-selected-grid">
+              {selectedActions.map((action) => {
+                const Icon = qingzhiSettingsIconMap[action.id];
+                return (
+                  <button
+                    key={action.id}
+                    type="button"
+                    data-testid={`qingzhi-pin-toggle-${action.id}`}
+                    data-qz-pin={action.id}
+                    aria-pressed="true"
+                    onClick={() => toggleQingzhiTopbarPin(action.id)}
+                    className="qz-settings-selected-chip"
+                    title={`从顶栏移除：${action.label}`}
+                  >
+                    <GripVertical size={12} aria-hidden="true" />
+                    <Icon size={15} strokeWidth={2.1} aria-hidden="true" />
+                    <span>{action.label}</span>
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+            <div className="qz-settings-used-count">已用 {selectedActions.length} / 4</div>
+          </div>
+
+          <div data-testid="qingzhi-candidate-pool" className="qz-settings-candidate-zone">
+            <div className="qz-settings-zone-title">候选库 · 点击 + 加入顶栏</div>
+            <div className="qz-settings-candidate-grid">
+              {candidateActions.map((action) => {
+                const Icon = qingzhiSettingsIconMap[action.id];
+                return (
+                  <button
+                    key={action.id}
+                    type="button"
+                    data-testid={`qingzhi-pin-toggle-${action.id}`}
+                    data-qz-pin={action.id}
+                    aria-pressed="false"
+                    disabled={isFull}
+                    onClick={() => toggleQingzhiTopbarPin(action.id)}
+                    className="qz-settings-candidate-chip"
+                    title={isFull ? '顶栏最多放 4 个常驻按钮' : `加入顶栏：${action.label}`}
+                  >
+                    <Icon size={14} strokeWidth={2.1} aria-hidden="true" />
+                    <span>{action.label}</span>
+                    <Plus size={14} aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="qz-settings-candidate-zone">
+            <div className="qz-settings-zone-title">清知品牌素材</div>
+            <div className="qz-settings-candidate-grid">
+              {([
+                { key: 'brandLogoSrc', label: '品牌 Logo', value: qingzhiSettings.brandLogoSrc },
+                { key: 'avatarSrc', label: '顶栏头像', value: qingzhiSettings.avatarSrc },
+                { key: 'mascotSrc', label: '侧栏立绘', value: qingzhiSettings.mascotSrc },
+              ] as const).map((asset) => (
+                <div key={asset.key} className="qz-settings-asset-card">
+                  <div className="qz-settings-asset-meta">
+                    <span>{asset.label}</span>
+                    <span>{asset.value ? '已替换' : '默认'}</span>
+                  </div>
+                  <div className="qz-settings-asset-actions">
+                    <label className="qz-settings-asset-btn">
+                      <Upload size={14} />
+                      <span>上传</span>
+                      <input hidden type="file" accept="image/*" onChange={(event) => handleQingzhiAssetPick(asset.key, event)} />
+                    </label>
+                    <button type="button" className="qz-settings-asset-btn" onClick={() => resetQingzhiAsset(asset.key)}>
+                      <RefreshCw size={14} />
+                      <span>恢复</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="qz-settings-range-card">
+            <div>
+              <h4>立绘水印不透明度</h4>
+              <p>侧边栏底部立绘的可见度（默认 15%）</p>
+            </div>
+            <input
+              data-testid="qingzhi-mascot-opacity"
+              data-range="mascot-opacity"
+              type="range"
+              min="0"
+              max="0.35"
+              step="0.01"
+              value={qingzhiSettings.mascotOpacity}
+              onChange={(e) => updateQingzhiSettings({ mascotOpacity: parseFloat(e.target.value) })}
+              className="qz-settings-range"
+            />
+            <span>{Math.round(qingzhiSettings.mascotOpacity * 100)}%</span>
+          </div>
+        </section>
+      </div>
+    );
+  };
+
   const renderThemeControl = (label: string, section: 'slashMenu' | 'textMenu' | 'blockMenu') => (
     <div className="p-4 bg-accent/10 rounded-2xl border border-border/20 space-y-4">
       <h4 className="text-xs font-bold text-primary">{label}</h4>
@@ -474,6 +746,15 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
               >
                 <Palette size={14} />
                 主题管理
+              </button>
+              <button
+                onClick={() => setActiveTab('qingzhi')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-lg transition-all ${
+                  activeTab === 'qingzhi' ? 'bg-background shadow-sm text-primary' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Palette size={14} />
+                清知
               </button>
               <button
                 onClick={() => setActiveTab('vault')}
@@ -885,6 +1166,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                     {renderThemeControl('块级菜单 (Block Menu)', 'blockMenu')}
                   </div>
                 </div>
+              ) : activeTab === 'qingzhi' ? (
+                renderQingzhiSettings()
               ) : activeTab === 'vault' ? (
                 <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   {/* v0.22.0 · 一键导出全部数据 */}
