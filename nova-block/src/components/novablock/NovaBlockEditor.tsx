@@ -14,6 +14,7 @@ import Link from '@tiptap/extension-link';
 import UnderlineExtension from '@tiptap/extension-underline';
 import { Table as TiptapTable } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
+import { CellSelection } from 'prosemirror-tables';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { BackgroundPaper } from '../editor/BackgroundPaper';
@@ -288,7 +289,10 @@ const NOVA_BLOCK_SLASH_ITEMS = [
     group: '插入',
     icon: <TableIcon size={18} className="text-primary" />,
     keywords: ['advanced-table', 'table', 'sheet', 'gaoji'],
-    action: (chain: ChainedCommands) => chain.insertTable({ rows: 4, cols: 4, withHeaderRow: true }),
+    action: (chain: ChainedCommands) => {
+      window.dispatchEvent(new CustomEvent('open-advanced-table-size-picker'));
+      return chain;
+    },
   },
   {
     label: '代码块',
@@ -662,6 +666,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   // v0.21.1 · BubbleMenu 两个新 popover 的展开状态（合并高亮+取色）
   const [isTextColorOpen, setIsTextColorOpen] = useState(false);
   const [isHighlightColorOpen, setIsHighlightColorOpen] = useState(false);
+  const [showAdvancedTableToolbar, setShowAdvancedTableToolbar] = useState(false);
+  const [advancedTableSize, setAdvancedTableSize] = useState({ open: false, rows: 4, cols: 4 });
   const [textColorAnchor, setTextColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [highlightColorAnchor, setHighlightColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [backgroundPaper, setBackgroundPaper] = useState<BackgroundPaperType>(note?.background_paper || 'none');
@@ -1001,6 +1007,72 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       },
     }
   }, [extensions, updateOutline]);
+
+  const isAdvancedTableCellSelection = useCallback((selection: any) => (
+    selection instanceof CellSelection ||
+    (selection && '$anchorCell' in selection && '$headCell' in selection)
+  ), []);
+
+  const shouldShowAdvancedTableToolbar = useCallback((nextEditor: Editor) => {
+    if (!nextEditor.isActive('table')) return false;
+    return showAdvancedTableToolbar || isAdvancedTableCellSelection(nextEditor.state.selection);
+  }, [isAdvancedTableCellSelection, showAdvancedTableToolbar]);
+
+  const insertAdvancedTableWithSize = useCallback((rows: number, cols: number) => {
+    if (!editor || editor.isDestroyed) return;
+    const safeRows = Math.max(1, Math.min(12, rows));
+    const safeCols = Math.max(1, Math.min(12, cols));
+    editor.chain().focus().insertTable({ rows: safeRows, cols: safeCols, withHeaderRow: true }).run();
+    setAdvancedTableSize((value) => ({ ...value, open: false }));
+    setShowAdvancedTableToolbar(false);
+  }, [editor]);
+
+  const handleAdvancedTableContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest('td, th')) return;
+    event.preventDefault();
+    setShowAdvancedTableToolbar(true);
+    editor?.chain().focus().run();
+  }, [editor]);
+
+  useEffect(() => {
+    const openAdvancedTableSizePicker = () => {
+      setAdvancedTableSize({ open: true, rows: 4, cols: 4 });
+      setShowAdvancedTableToolbar(false);
+    };
+    window.addEventListener('open-advanced-table-size-picker', openAdvancedTableSizePicker);
+    return () => window.removeEventListener('open-advanced-table-size-picker', openAdvancedTableSizePicker);
+  }, []);
+
+  useEffect(() => {
+    if (!editor) return;
+    const handleSelectionUpdate = ({ editor: nextEditor }: { editor: Editor }) => {
+      if (!nextEditor.isActive('table')) {
+        setShowAdvancedTableToolbar(false);
+        return;
+      }
+      if (isAdvancedTableCellSelection(nextEditor.state.selection)) {
+        setShowAdvancedTableToolbar(true);
+      }
+    };
+    editor.on('selectionUpdate', handleSelectionUpdate);
+    return () => {
+      editor.off('selectionUpdate', handleSelectionUpdate);
+    };
+  }, [editor, isAdvancedTableCellSelection]);
+
+  useEffect(() => {
+    if (!showAdvancedTableToolbar) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('.qz-advanced-table-toolbar')) return;
+      if (target.closest('td, th')) return;
+      setShowAdvancedTableToolbar(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [showAdvancedTableToolbar]);
 
   const getEditorViewDom = useCallback(() => {
     if (!editor || editor.isDestroyed || !editor.isInitialized) {
@@ -2514,6 +2586,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
             <div
               data-testid="qingzhi-editor-writing-surface"
               data-qz-handle-bridge="true"
+              onContextMenu={handleAdvancedTableContextMenu}
               className="qz-editor-writing-surface relative group/editor mt-2 w-full min-h-[500px] rounded-xl"
             >
               <BackgroundPaper type={backgroundPaper} />
@@ -2565,7 +2638,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               {editor && (
                 <BubbleMenu 
                   editor={editor} 
-                  shouldShow={({ editor }) => editor.isActive('table')}
+                  shouldShow={({ editor }) => shouldShowAdvancedTableToolbar(editor)}
                   className="qz-advanced-table-toolbar flex overflow-hidden rounded-2xl border border-border/20 bg-popover/90 backdrop-blur-2xl shadow-soft p-1.5"
                 >
                   <div className="qz-advanced-table-group">
@@ -2692,6 +2765,50 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                     </button>
                   </div>
                 </BubbleMenu>
+              )}
+
+              {advancedTableSize.open && typeof document !== 'undefined' && createPortal(
+                <div
+                  className="qz-table-size-picker"
+                  role="dialog"
+                  aria-label="选择高级表格行列"
+                  onMouseDown={(event) => event.preventDefault()}
+                >
+                  <div className="qz-table-size-picker-head">
+                    <div>
+                      <div className="qz-table-size-picker-title">高级表格</div>
+                      <div className="qz-table-size-picker-subtitle">
+                        {advancedTableSize.rows} 行 × {advancedTableSize.cols} 列
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="close-advanced-table-size-picker"
+                      onClick={() => setAdvancedTableSize((value) => ({ ...value, open: false }))}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="qz-table-size-picker-grid">
+                    {Array.from({ length: 64 }).map((_, index) => {
+                      const row = Math.floor(index / 8) + 1;
+                      const col = (index % 8) + 1;
+                      const selected = row <= advancedTableSize.rows && col <= advancedTableSize.cols;
+                      return (
+                        <button
+                          key={`${row}-${col}`}
+                          type="button"
+                          aria-label={`insert-advanced-table-${row}x${col}`}
+                          className={selected ? 'is-selected' : ''}
+                          onMouseEnter={() => setAdvancedTableSize((value) => ({ ...value, rows: row, cols: col }))}
+                          onClick={() => insertAdvancedTableWithSize(row, col)}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div className="qz-table-size-picker-foot">点击格子插入，悬停预览行列数量</div>
+                </div>,
+                document.body,
               )}
 
             {isBlockMenuOpen && editor && typeof document !== 'undefined' && createPortal(

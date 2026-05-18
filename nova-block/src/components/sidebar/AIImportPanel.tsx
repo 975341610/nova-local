@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, FilePlus2, Loader2, MessageSquare, Paperclip, Plus, Send, Sparkles, TextCursorInput } from 'lucide-react';
+import { ChevronDown, Copy, FilePlus2, Info, Loader2, MessageSquare, Paperclip, Plus, Send, Sparkles, TextCursorInput } from 'lucide-react';
 import { api } from '../../lib/api';
 import { aiMarkdownToHtmlWithFootnotes } from '../../lib/aiMarkdown';
 import type { Citation, ImportPreviewItem, ImportTemplateId, Note } from '../../lib/types';
@@ -62,6 +62,12 @@ const SUGGESTED_ASK_PROMPTS = [
   '提取可执行行动项',
   '生成复习问题',
 ];
+
+const compactPromptLabel = (prompt: string) => {
+  if (prompt.includes('行动')) return '行动项';
+  if (prompt.includes('复习')) return '复习题';
+  return '总结要点';
+};
 
 const htmlToPlainText = (html: string) => {
   if (!html) return '';
@@ -971,17 +977,25 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
       />
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-3 custom-scrollbar">
-        <div className="px-1 py-1">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Sparkles size={16} className="text-primary" />
-            AI
+        <div className="qz-ai-compact-header">
+          <div className="qz-ai-compact-icon" aria-hidden="true">
+            <Sparkles size={13} />
           </div>
-          <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            导入文件、链接和视频页面，整理成可追溯的结构化笔记。
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] font-semibold text-foreground">AI 助手</div>
+            <div className="truncate text-[10px] text-muted-foreground">导入 · 问答 · 写作</div>
           </div>
+          <button
+            type="button"
+            aria-label="ai-panel-info"
+            className="qz-ai-compact-info"
+            title="导入文件、链接和视频页面，整理成可追溯的结构化笔记。"
+          >
+            <Info size={12} />
+          </button>
         </div>
 
-        <div className="grid grid-cols-3 gap-1 rounded-lg border border-border/30 bg-muted/30 p-1">
+        <div className="qz-ai-compact-segment grid grid-cols-3 gap-1 rounded-lg border border-border/30 bg-muted/30 p-1">
           {([
             ['import', '导入'],
             ['ask', '问答'],
@@ -992,7 +1006,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
               type="button"
               aria-label={`ai-workbench-mode-${mode}`}
               onClick={() => selectWorkbenchMode(mode)}
-              className={`min-h-8 rounded-md px-2 text-[11px] font-medium transition-colors ${
+              className={`min-h-7 rounded-md px-2 text-[11px] font-medium transition-colors ${
                 activeWorkbenchMode === mode
                   ? 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground'
@@ -1086,7 +1100,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
         )}
 
         {activeWorkbenchMode === 'ask' && visibleAskScopeId && (
-          <div className="qz-ai-scope-card rounded-lg border border-border/30 bg-background/70 p-3 space-y-2">
+          <div className="qz-ai-scope-card qz-ai-compact-ask rounded-lg border border-border/30 bg-background/70 p-2 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs font-semibold text-foreground">{visibleChatTitle}</div>
               {importBatchMessages.length > 0 && (
@@ -1100,21 +1114,22 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                 </button>
               )}
             </div>
-            <label className="block text-[10px] font-semibold uppercase text-muted-foreground">
-              问答范围
+            <label className="qz-ai-scope-chip">
+              <span>范围</span>
               <select
                 aria-label="ai-ask-scope-select"
                 value={effectiveAskScope}
                 onChange={(event) => setAskScope(event.target.value as AskScope)}
-                className="mt-1 h-8 w-full rounded-lg border border-border/30 bg-background px-2 text-xs font-medium normal-case text-foreground outline-none focus:border-primary/40"
+                className="min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-foreground outline-none"
               >
                 {activeImportBatchId && <option value="import">这批资料</option>}
                 {selectedNoteAskId && <option value="note">当前笔记</option>}
                 <option value="vault">全库</option>
               </select>
+              <ChevronDown size={12} aria-hidden="true" />
             </label>
             {(activeImportSources.length > 0 || activeNoteAskId || isVaultAsk) && (
-              <div data-testid="import-source-list" className="space-y-1">
+              <div data-testid="import-source-list" className="qz-ai-source-compact space-y-1">
                 <div className="text-[10px] font-semibold uppercase text-muted-foreground">{visibleChatSourceLabel}</div>
                 {isVaultAsk && (
                   <div className="rounded-lg border border-border/30 bg-background/70 px-2 py-1.5">
@@ -1146,7 +1161,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
             {importBatchMessages.length === 0 && (
               <div className="space-y-1">
                 <div className="text-[10px] font-semibold uppercase text-muted-foreground">推荐问题</div>
-                <div className="qz-ai-prompt-grid flex flex-wrap gap-1.5">
+                <div className="qz-ai-prompt-grid qz-ai-compact-prompts flex gap-1.5">
                   {SUGGESTED_ASK_PROMPTS.map((prompt) => (
                     <button
                       key={prompt}
@@ -1156,7 +1171,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                       disabled={isAskingImportBatch}
                       className="rounded-full border border-border/40 px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent/40 hover:text-foreground disabled:opacity-50"
                     >
-                      {prompt}
+                      {compactPromptLabel(prompt)}
                     </button>
                   ))}
                 </div>
@@ -1313,13 +1328,13 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
             写作模式会基于当前笔记生成结果，可在上方复制或插入当前笔记。
           </div>
         ) : (
-        <div className="qz-ai-composer flex items-end gap-2">
+        <div className="qz-ai-composer qz-ai-compact-composer flex items-end gap-1.5">
           <button
             type="button"
             aria-label="upload-ai-import-file"
             onClick={() => aiImportInputRef.current?.click()}
             disabled={isAiImporting}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/40 text-muted-foreground hover:text-foreground hover:bg-accent/40 disabled:opacity-50"
+            className="qz-ai-compact-action flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/40 text-muted-foreground hover:text-foreground hover:bg-accent/40 disabled:opacity-50"
             title="Upload files"
           >
             <Paperclip size={15} />
@@ -1335,12 +1350,13 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                   return nextMode;
                 });
               }}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/40 text-muted-foreground hover:text-foreground hover:bg-accent/40"
+              className="qz-ai-compact-action flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/40 text-muted-foreground hover:text-foreground hover:bg-accent/40"
               title={composerMode === 'ask' ? '添加来源' : '切回问答'}
             >
               {composerMode === 'ask' ? <Plus size={15} /> : <MessageSquare size={15} />}
             </button>
           )}
+          <div className="qz-ai-compact-input">
           <textarea
             aria-label={isAskComposer ? 'ask-import-batch-input' : 'ai-import-url-input'}
             value={isAskComposer ? importBatchQuestion : aiImportUrlDraft}
@@ -1358,9 +1374,11 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
               }
             }}
             placeholder={isAskComposer ? (effectiveAskScope === 'import' ? '询问这批资料...' : effectiveAskScope === 'note' ? '询问当前笔记...' : '询问整个知识库...') : '粘贴链接，每行一个...'}
-            rows={2}
-            className="min-h-9 min-w-0 flex-1 resize-none rounded-lg border border-border/30 bg-background px-3 py-2 text-xs text-foreground outline-none focus:border-primary/40"
+            rows={1}
+            className="min-h-9 min-w-0 flex-1 resize-none rounded-lg border border-border/30 bg-background px-3 py-2 pr-10 text-xs text-foreground outline-none focus:border-primary/40"
           />
+          <span className="qz-ai-compact-shortcut">⌘↵</span>
+          </div>
           <button
             type="button"
             aria-label={isAskComposer ? 'ask-import-batch' : 'preview-ai-import-url'}
@@ -1370,7 +1388,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
               isAskingImportBatch ||
               (isAskComposer ? !importBatchQuestion.trim() : !parseAiImportUrls(aiImportUrlDraft).length)
             }
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+            className="qz-ai-compact-send flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
             title="Send"
           >
             {isAskingImportBatch ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}

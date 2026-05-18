@@ -87,11 +87,14 @@ describe('QingZhi sidebar tab upgrades', () => {
     expect(screen.getByRole('button', { name: 'copy-current-note-wikilink' })).toBeTruthy()
   })
 
-  it('keeps the AI tab contract source aligned with compact cards and prompt chips', () => {
+  it('keeps the AI tab contract source aligned with compact workbench controls', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../components/sidebar/AIImportPanel.tsx'), 'utf8')
 
-    expect(source).toContain('qz-ai-scope-card')
-    expect(source).toContain('qz-ai-prompt-grid')
-    expect(source).toContain('qz-ai-composer')
+    expect(source).toContain('qz-ai-compact-header')
+    expect(source).toContain('qz-ai-compact-segment')
+    expect(source).toContain('qz-ai-scope-chip')
+    expect(source).toContain('qz-ai-compact-prompts')
+    expect(source).toContain('qz-ai-compact-composer')
+    expect(source).toContain('⌘↵')
   })
 })
