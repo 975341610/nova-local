@@ -34,6 +34,8 @@ describe('QingZhi advanced table', () => {
     expect(editorSource).toContain('selectAdvancedTableCellAtPoint')
     expect(editorSource).toContain('enterAdvancedTableCellAtPoint')
     expect(editorSource).toContain('openAdvancedTableToolbarAtPoint')
+    expect(editorSource).toContain('openAdvancedTableToolbarAtPoint(view, event.clientX, event.clientY, target)')
+    expect(editorSource).toContain('event.stopPropagation()')
     expect(editorSource).toContain('handleAdvancedTableContextMenu')
     expect(editorSource).toContain('handleAdvancedTableEditorContextMenu')
     expect(editorSource).toContain('handleAdvancedTableMouseDown')
@@ -91,6 +93,10 @@ describe('QingZhi advanced table', () => {
     expect(styleSource).toContain('.qz-table-edge-select-zone.is-column::after')
     expect(styleSource).toContain('.qz-table-edge-select-zone.is-row::after')
     expect(styleSource).toContain('.qz-table-edge-button::after')
+    expect(editorSource).toContain('data-qz-label')
+    expect(styleSource).toContain('content: attr(data-qz-label)')
+    expect(styleSource).toContain('border-top:')
+    expect(styleSource).toContain('border-left:')
     expect(styleSource).toContain('content: "·"')
     expect(styleSource).toContain('.qz-table-edge-button.is-hot::after')
     expect(styleSource).toContain('content: "+"')
@@ -128,11 +134,20 @@ describe('QingZhi advanced table', () => {
   })
 
   it('keeps native column resizing reachable while table edge controls are active', () => {
+    const editorSource = fs.readFileSync(
+      path.resolve(sourceRoot, 'components/novablock/NovaBlockEditor.tsx'),
+      'utf8',
+    )
     const styleSource = fs.readFileSync(
       path.resolve(sourceRoot, 'styles/qingzhi-refine-v34.css'),
       'utf8',
     )
 
+    expect(editorSource).toContain('TableMap')
+    expect(editorSource).toContain('startAdvancedTableColumnResize')
+    expect(editorSource).toContain('applyAdvancedTableColumnWidth')
+    expect(editorSource).toContain('colwidth')
+    expect(editorSource).toContain("document.addEventListener('mousemove', handleResizeMove)")
     expect(styleSource).toContain('.qz-editor-writing-surface .novablock-editor .column-resize-handle')
     expect(styleSource).toContain('.qz-editor-writing-surface.qz-table-resize-cursor')
     expect(styleSource).toContain('cursor: col-resize')
@@ -160,7 +175,8 @@ describe('QingZhi advanced table', () => {
 
     expect(styleSource).toContain('.qz-editor-writing-surface .novablock-editor td.selectedCell')
     expect(styleSource).toContain('box-shadow: inset 0 0 0 1px')
-    expect(styleSource).toContain('background: rgba(128, 168, 156, .045')
+    expect(styleSource).toContain('background: transparent !important')
+    expect(styleSource).not.toContain('background: rgba(128, 168, 156, .045')
     expect(styleSource).toContain('user-select: none')
   })
 

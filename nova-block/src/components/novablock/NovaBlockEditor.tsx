@@ -14,7 +14,7 @@ import Link from '@tiptap/extension-link';
 import UnderlineExtension from '@tiptap/extension-underline';
 import { Table as TiptapTable } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
-import { CellSelection } from 'prosemirror-tables';
+import { CellSelection, TableMap } from 'prosemirror-tables';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { BackgroundPaper } from '../editor/BackgroundPaper';
@@ -1000,8 +1000,21 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     return true;
   }, []);
 
-  const openAdvancedTableToolbarAtPoint = useCallback((view: any, clientX: number, clientY: number) => {
-    if (!selectAdvancedTableCellAtPoint(view, clientX, clientY)) return false;
+  const openAdvancedTableToolbarAtPoint = useCallback((view: any, clientX: number, clientY: number, target?: HTMLElement | null) => {
+    if (!selectAdvancedTableCellAtPoint(view, clientX, clientY)) {
+      const selection = view?.state?.selection;
+      const hasSelectedTarget = Boolean(target?.closest('td.selectedCell, th.selectedCell'));
+      const isCellSelection = selection instanceof CellSelection ||
+        (selection && '$anchorCell' in selection && '$headCell' in selection);
+      if (!hasSelectedTarget || !isCellSelection) return false;
+      if (typeof selection.isRowSelection === 'function' && selection.isRowSelection()) {
+        setAdvancedTableSelectionScope('row');
+      } else if (typeof selection.isColSelection === 'function' && selection.isColSelection()) {
+        setAdvancedTableSelectionScope('column');
+      } else {
+        setAdvancedTableSelectionScope('cell');
+      }
+    }
     setAdvancedTableEdgeIntent(null);
     setShowAdvancedTableToolbar(true);
     return true;
@@ -1012,7 +1025,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     const target = event.target as HTMLElement | null;
     if (!target?.closest('td, th')) return false;
     event.preventDefault();
-    return openAdvancedTableToolbarAtPoint(view, event.clientX, event.clientY);
+    event.stopPropagation();
+    return openAdvancedTableToolbarAtPoint(view, event.clientX, event.clientY, target);
   }, [openAdvancedTableToolbarAtPoint]);
 
   const handleAdvancedTableEditorDragStart = useCallback((view: any, nativeEvent: Event) => {
@@ -1133,8 +1147,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     const target = event.target as HTMLElement | null;
     if (!target?.closest('td, th')) return;
     event.preventDefault();
+    event.stopPropagation();
     if (!editor?.view) return;
-    openAdvancedTableToolbarAtPoint(editor.view, event.clientX, event.clientY);
+    openAdvancedTableToolbarAtPoint(editor.view, event.clientX, event.clientY, target);
   }, [editor, openAdvancedTableToolbarAtPoint]);
 
   const isAdvancedTableColumnResizeHandleHit = useCallback((target: HTMLElement | null, clientX: number) => {
@@ -1146,11 +1161,123 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     return Math.abs(clientX - rect.right) <= 8;
   }, []);
 
+  const applyAdvancedTableColumnWidth = useCallback((tablePos: number, column: number, width: number) => {
+    if (!editor?.view) return;
+    const { state, view } = editor;
+    const table = state.doc.nodeAt(tablePos);
+    if (!table) return;
+
+    const tableMap = TableMap.get(table);
+    const tableStart = tablePos + 1;
+    const seenCells = new Set<number>();
+    const nextWidth = Math.max(48, Math.round(width));
+    let tr = state.tr;
+
+    for (let row = 0; row < tableMap.height; row += 1) {
+      const mapIndex = row * tableMap.width + column;
+      const cellOffset = tableMap.map[mapIndex];
+      if (cellOffset === undefined || seenCells.has(cellOffset)) continue;
+      seenCells.add(cellOffset);
+
+      const cell = table.nodeAt(cellOffset);
+      if (!cell) continue;
+
+      const cellRect = tableMap.findCell(cellOffset);
+      const colspan = Math.max(1, cell.attrs.colspan || cellRect.right - cellRect.left);
+      const widthIndex = Math.max(0, Math.min(colspan - 1, column - cellRect.left));
+      const colwidth = Array.isArray(cell.attrs.colwidth)
+        ? [...cell.attrs.colwidth]
+        : Array.from({ length: colspan }, () => 0);
+
+      while (colwidth.length < colspan) colwidth.push(0);
+      colwidth[widthIndex] = nextWidth;
+      tr = tr.setNodeMarkup(tableStart + cellOffset, undefined, {
+        ...cell.attrs,
+        colwidth,
+      });
+    }
+
+    if (tr.docChanged) {
+      view.dispatch(tr);
+    }
+  }, [editor]);
+
+  const startAdvancedTableColumnResize = useCallback((event: React.MouseEvent<HTMLDivElement>, target: HTMLElement | null) => {
+    if (!editor?.view || !target) return false;
+    const cell = target.closest('td, th') as HTMLElement | null;
+    if (!cell) return false;
+    const cellRect = cell.getBoundingClientRect();
+    if (Math.abs(event.clientX - cellRect.right) > 10 && !target.closest('.column-resize-handle')) return false;
+
+    const safeX = cellRect.left + Math.max(2, Math.min(cellRect.width - 2, cellRect.width / 2));
+    const safeY = cellRect.top + Math.max(2, Math.min(cellRect.height - 2, cellRect.height / 2));
+    const cellPos = getAdvancedTableCellPosAtPoint(editor.view, safeX, safeY);
+    if (cellPos === null) return false;
+
+    const $cell = editor.view.state.doc.resolve(cellPos);
+    let tableDepth = -1;
+    for (let depth = $cell.depth; depth > 0; depth -= 1) {
+      if ($cell.node(depth).type.name === 'table') {
+        tableDepth = depth;
+        break;
+      }
+    }
+    if (tableDepth < 0) return false;
+
+    const table = $cell.node(tableDepth);
+    const tablePos = $cell.before(tableDepth);
+    const tableStart = tablePos + 1;
+    const tableMap = TableMap.get(table);
+    const cellMapRect = tableMap.findCell(cellPos - tableStart);
+    const column = Math.max(0, cellMapRect.right - 1);
+    const startX = event.clientX;
+    const startWidth = cellRect.width;
+
+    event.preventDefault();
+    event.stopPropagation();
+    setAdvancedTableEdgeIntent(null);
+    setShowAdvancedTableToolbar(false);
+    setAdvancedTablePopover(null);
+
+    const handleResizeMove = (moveEvent: MouseEvent) => {
+      moveEvent.preventDefault();
+      applyAdvancedTableColumnWidth(tablePos, column, startWidth + moveEvent.clientX - startX);
+    };
+    const handleResizeEnd = () => {
+      document.removeEventListener('mousemove', handleResizeMove);
+      document.removeEventListener('mouseup', handleResizeEnd);
+      setIsAdvancedTableResizeCursor(false);
+    };
+
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+    return true;
+  }, [applyAdvancedTableColumnWidth, editor, getAdvancedTableCellPosAtPoint]);
+
+  const closeAdvancedTableToolbar = useCallback((collapseSelection = false) => {
+    if (collapseSelection && editor?.view) {
+      const { state, view } = editor;
+      if (isAdvancedTableCellSelection(state.selection)) {
+        try {
+          const safePos = Math.max(0, Math.min(state.selection.from, state.doc.content.size));
+          const selection = TextSelection.near(state.doc.resolve(safePos));
+          view.dispatch(state.tr.setSelection(selection).scrollIntoView());
+        } catch {
+          // Selection can be invalid immediately after deleting the only row/column.
+        }
+      }
+    }
+    setShowAdvancedTableToolbar(false);
+    setAdvancedTableSelectionScope(null);
+    setAdvancedTablePopover(null);
+    setAdvancedTableEdgeIntent(null);
+  }, [editor, isAdvancedTableCellSelection]);
+
   const handleAdvancedTableMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
     if (!editor?.view || event.button !== 0) return;
     if (target?.closest('.qz-advanced-table-toolbar, .qz-table-edge-controls')) return;
-    if (isAdvancedTableColumnResizeHandleHit(target, event.clientX)) {
+    if (isAdvancedTableColumnResizeHandleHit(target, event.clientX) && startAdvancedTableColumnResize(event, target)) {
       advancedTableMouseDownRef.current = null;
       return;
     }
@@ -1163,7 +1290,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       event.preventDefault();
     }
     setAdvancedTablePopover(null);
-  }, [editor, isAdvancedTableColumnResizeHandleHit]);
+  }, [editor, isAdvancedTableColumnResizeHandleHit, startAdvancedTableColumnResize]);
 
   const handleAdvancedTableClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
@@ -1255,14 +1382,14 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         kind: 'column',
         commandPoint: { x: cellRect.left + cellRect.width / 2, y: safeCellY },
         button: { left: cellRect.right - 17, top: tableRect.top - 22 },
-        select: { left: cellRect.left - 8, top: tableRect.top - 32, width: Math.max(38, cellRect.width + 16), height: 36 },
+        select: { left: cellRect.left - 8, top: tableRect.top - 36, width: Math.max(38, cellRect.width + 16), height: 36 },
         line: { left: cellRect.right - 1, top: tableRect.top, width: 2, height: tableRect.height },
       },
       row: {
         kind: 'row',
         commandPoint: { x: safeCellX, y: cellRect.top + cellRect.height / 2 },
         button: { left: tableRect.left - 22, top: cellRect.bottom - 17 },
-        select: { left: tableRect.left - 32, top: cellRect.top - 8, width: 36, height: Math.max(38, cellRect.height + 16) },
+        select: { left: tableRect.left - 36, top: cellRect.top - 8, width: 36, height: Math.max(38, cellRect.height + 16) },
         line: { left: tableRect.left, top: cellRect.bottom - 1, width: tableRect.width, height: 2 },
       },
     });
@@ -2986,8 +3113,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => {
                           editor.chain().focus().deleteRow().run();
-                          setShowAdvancedTableToolbar(false);
-                          setAdvancedTableSelectionScope(null);
+                          closeAdvancedTableToolbar(true);
                         }}
                         className="qz-advanced-table-button qz-advanced-table-delete-row qz-advanced-table-danger"
                         title="删除整行"
@@ -3001,8 +3127,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => {
                           editor.chain().focus().deleteColumn().run();
-                          setShowAdvancedTableToolbar(false);
-                          setAdvancedTableSelectionScope(null);
+                          closeAdvancedTableToolbar(true);
                         }}
                         className="qz-advanced-table-button qz-advanced-table-delete-column qz-advanced-table-danger"
                         title="删除整列"
@@ -3150,6 +3275,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                         <button
                           type="button"
                           aria-label={`insert-advanced-table-${kind}`}
+                          data-qz-label={kind === 'row' ? '插入行' : '插入列'}
                           className={`qz-table-edge-button qz-table-edge-add-button is-${kind} ${isHot ? 'is-hot' : ''}`}
                           style={{
                             left: edge.button.left,

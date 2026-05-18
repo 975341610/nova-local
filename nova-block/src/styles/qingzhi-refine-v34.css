@@ -1430,20 +1430,43 @@ html:not([data-nv-theme]) {
 .qz-table-edge-button::after {
   content: "·" !important;
   display: grid !important;
-  width: 14px !important;
-  height: 14px !important;
+  width: 18px !important;
+  height: 18px !important;
   place-items: center !important;
-  border: 1px solid rgba(202, 168, 115, .2) !important;
+  border: 0 !important;
   border-radius: 999px !important;
-  background: rgba(255, 253, 248, .72) !important;
-  color: rgba(128, 168, 156, .86) !important;
+  background: transparent !important;
+  color: rgba(128, 168, 156, .7) !important;
   font-size: 16px !important;
   line-height: 1 !important;
-  box-shadow: 0 6px 14px rgba(42, 64, 58, .08), 0 0 0 2px rgba(255, 253, 248, .66) !important;
+  box-shadow: none !important;
+}
+
+.qz-table-edge-button::before {
+  content: attr(data-qz-label) !important;
+  position: absolute !important;
+  left: 50% !important;
+  bottom: calc(100% + 7px) !important;
+  display: none !important;
+  transform: translateX(-50%) !important;
+  border-radius: 7px !important;
+  background: rgba(35, 36, 38, .96) !important;
+  color: #fff !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  padding: 7px 9px !important;
+  white-space: nowrap !important;
+  box-shadow: 0 10px 24px rgba(35, 36, 38, .22) !important;
 }
 
 .qz-table-edge-button:hover {
   transform: scale(1.08) !important;
+}
+
+.qz-table-edge-button:hover::before,
+.qz-table-edge-button.is-hot::before {
+  display: block !important;
 }
 
 .qz-table-edge-button:hover::after,
@@ -1451,11 +1474,11 @@ html:not([data-nv-theme]) {
   content: "+" !important;
   width: 18px !important;
   height: 18px !important;
-  border-color: rgba(128, 168, 156, .46) !important;
-  background: rgba(220, 229, 222, .94) !important;
-  color: rgba(128, 168, 156, .96) !important;
+  border: 0 !important;
+  background: #3f74ff !important;
+  color: #fff !important;
   font-size: 12px !important;
-  box-shadow: 0 8px 20px rgba(42, 64, 58, .14), 0 0 0 2px rgba(255, 253, 248, .88) !important;
+  box-shadow: 0 8px 18px rgba(63, 116, 255, .28), 0 0 0 2px rgba(255, 255, 255, .92) !important;
 }
 
 .qz-table-edge-select-zone {
@@ -1463,51 +1486,55 @@ html:not([data-nv-theme]) {
   z-index: 131 !important;
   display: block !important;
   border: 0 !important;
-  border-radius: 999px !important;
+  border-radius: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
   pointer-events: auto !important;
   cursor: pointer !important;
-  transition: background .16s ease, border-color .16s ease, transform .16s ease !important;
+  transition: border-color .16s ease, box-shadow .16s ease !important;
 }
 
 .qz-table-edge-select-zone::after {
   content: "" !important;
   position: absolute !important;
-  border-radius: 999px !important;
-  background: rgba(128, 168, 156, .34) !important;
-  box-shadow: 0 0 0 1px rgba(255, 253, 248, .7) !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .qz-table-edge-select-zone.is-column::after {
-  left: 8px !important;
-  right: 8px !important;
-  top: 8px !important;
-  height: 5px !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  border-top: 5px solid rgba(190, 196, 194, .38) !important;
+  height: 0 !important;
 }
 
 .qz-table-edge-select-zone.is-row::after {
-  left: 8px !important;
-  top: 8px !important;
-  bottom: 8px !important;
-  width: 5px !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  border-left: 5px solid rgba(190, 196, 194, .38) !important;
+  width: 0 !important;
 }
 
 .qz-table-edge-select-zone:hover {
-  background: rgba(220, 229, 222, .28) !important;
-  transform: scale(1.06) !important;
+  background: transparent !important;
 }
 
-.qz-table-edge-select-zone:hover::after {
-  background: rgba(128, 168, 156, .58) !important;
+.qz-table-edge-select-zone.is-column:hover::after {
+  border-top-color: rgba(63, 116, 255, .52) !important;
+}
+
+.qz-table-edge-select-zone.is-row:hover::after {
+  border-left-color: rgba(63, 116, 255, .52) !important;
 }
 
 .qz-table-insert-line {
   position: fixed !important;
   z-index: 130 !important;
   border-radius: 999px !important;
-  background: rgba(128, 168, 156, .74) !important;
-  box-shadow: 0 0 0 1px rgba(202, 168, 115, .18) !important;
+  background: #3f74ff !important;
+  box-shadow: 0 0 0 1px rgba(63, 116, 255, .18) !important;
   pointer-events: none !important;
 }
 
@@ -1838,20 +1865,40 @@ html:not([data-nv-theme]) {
 .qz-editor-writing-surface .novablock-editor td.selectedCell,
 .qz-editor-writing-surface .novablock-editor th.selectedCell {
   position: relative !important;
-  background: rgba(128, 168, 156, .045) !important;
-  box-shadow: inset 0 0 0 1px rgba(128, 168, 156, .32) !important;
+  background: transparent !important;
+  box-shadow: inset 0 0 0 1px rgba(128, 168, 156, .46) !important;
   user-select: none !important;
 }
 
 .qz-editor-writing-surface .novablock-editor td.selectedCell::after,
 .qz-editor-writing-surface .novablock-editor th.selectedCell::after {
   pointer-events: none !important;
-  background: rgba(128, 168, 156, .035) !important;
-  border: 1px solid rgba(128, 168, 156, .2) !important;
+  background: transparent !important;
+  border: 1px solid rgba(128, 168, 156, .38) !important;
   content: '' !important;
   inset: 0 !important;
   position: absolute !important;
   z-index: 2 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor :is(td, th).selectedCell[data-qz-cell-bg="#f6f3ef"] {
+  background-color: #f6f3ef !important;
+}
+
+.qz-editor-writing-surface .novablock-editor :is(td, th).selectedCell[data-qz-cell-bg="#dce5de"] {
+  background-color: #dce5de !important;
+}
+
+.qz-editor-writing-surface .novablock-editor :is(td, th).selectedCell[data-qz-cell-bg="#f4ead5"] {
+  background-color: #f4ead5 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor :is(td, th).selectedCell[data-qz-cell-bg="#f5dccd"] {
+  background-color: #f5dccd !important;
+}
+
+.qz-editor-writing-surface .novablock-editor :is(td, th).selectedCell[data-qz-cell-bg="#e7f0ec"] {
+  background-color: #e7f0ec !important;
 }
 
 .qz-ai-compact-header {
