@@ -27,7 +27,7 @@ import {
     Underline, Eraser, Cpu, Strikethrough, Timer,
     Type, Heading1, Heading2, Heading3, CheckSquare, Table as TableIcon, Code, Quote, Sparkles, Zap, Waves,
     Link as LinkIcon, Highlighter, Trash2, Copy, Replace, ListPlus, Minus,
-    Trash, Columns, Rows, Film, Music, FileText, MonitorPlay, StickyNote as StickyNoteIcon,
+    Columns, Rows, Film, Music, FileText, MonitorPlay, StickyNote as StickyNoteIcon,
     List, ListOrdered, ArrowUpToLine, ArrowDownToLine, CopyPlus, StickyNote, Smile, X,
     Layout, Bot, Pencil, MessageSquare, Palette
 } from 'lucide-react';
@@ -639,6 +639,13 @@ interface NovaBlockEditorProps {
   onToggleTypewriter?: () => void;
 }
 
+type AdvancedTableEdgeIntent = null | {
+  kind: 'row' | 'column';
+  commandPoint: { x: number; y: number };
+  button: { left: number; top: number };
+  line: { left: number; top: number; width: number; height: number };
+};
+
 /**
  * NovaBlockEditor (Sprint 3 Core)
  * 鏋佽嚧鎬ц兘銆乽ipro 涓撲笟瑙嗚
@@ -668,6 +675,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [isHighlightColorOpen, setIsHighlightColorOpen] = useState(false);
   const [showAdvancedTableToolbar, setShowAdvancedTableToolbar] = useState(false);
   const [advancedTableSize, setAdvancedTableSize] = useState({ open: false, rows: 4, cols: 4 });
+  const [advancedTableEdgeIntent, setAdvancedTableEdgeIntent] = useState<AdvancedTableEdgeIntent>(null);
   const [textColorAnchor, setTextColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [highlightColorAnchor, setHighlightColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [backgroundPaper, setBackgroundPaper] = useState<BackgroundPaperType>(note?.background_paper || 'none');
@@ -939,6 +947,16 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     return stripLeadingDuplicateTitleBlockFromHtml(html, note?.title);
   }, [note?.content, note?.title]);
 
+  const handleAdvancedTableEditorContextMenu = useCallback((_view: any, nativeEvent: Event) => {
+    const event = nativeEvent as MouseEvent;
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest('td, th')) return false;
+    event.preventDefault();
+    setAdvancedTableEdgeIntent(null);
+    setShowAdvancedTableToolbar(true);
+    return true;
+  }, []);
+
   const editor = useEditor({
     extensions,
     content: normalizedNoteContent,
@@ -981,6 +999,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         autocorrect: 'off',
         autocapitalize: 'off',
       },
+      handleDOMEvents: {
+        contextmenu: handleAdvancedTableEditorContextMenu,
+      },
       handleKeyDown: (view, event) => {
         // `/e` + Enter -> 鎵撳紑琛ㄦ儏闈㈡澘锛堥樆姝㈡崲琛岋紝骞跺垹闄よЕ鍙戞枃鏈級
         if (event.key !== 'Enter') return false;
@@ -1006,7 +1027,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         return true;
       },
     }
-  }, [extensions, updateOutline]);
+  }, [extensions, updateOutline, handleAdvancedTableEditorContextMenu]);
 
   const isAdvancedTableCellSelection = useCallback((selection: any) => (
     selection instanceof CellSelection ||
@@ -1035,10 +1056,101 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     editor?.chain().focus().run();
   }, [editor]);
 
+  const clearCurrentTableCell = useCallback(() => {
+    if (!editor || editor.isDestroyed) return;
+    const { state, view } = editor;
+    const { $from } = state.selection;
+    let cellDepth = -1;
+
+    for (let depth = $from.depth; depth > 0; depth -= 1) {
+      const nodeName = $from.node(depth).type.name;
+      if (nodeName === 'tableCell' || nodeName === 'tableHeader') {
+        cellDepth = depth;
+        break;
+      }
+    }
+
+    if (cellDepth < 0) return;
+
+    const cellStart = $from.before(cellDepth);
+    const cell = $from.node(cellDepth);
+    const paragraph = state.schema.nodes.paragraph?.create();
+    if (!paragraph) return;
+
+    const tr = state.tr.replaceWith(cellStart + 1, cellStart + cell.nodeSize - 1, paragraph);
+    view.dispatch(tr.scrollIntoView());
+    view.focus();
+  }, [editor]);
+
+  const handleAdvancedTableMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!editor || showAdvancedTableToolbar) {
+      setAdvancedTableEdgeIntent(null);
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    const cell = target?.closest('td, th') as HTMLElement | null;
+    const table = cell?.closest('table') as HTMLElement | null;
+
+    if (!cell || !table) {
+      setAdvancedTableEdgeIntent(null);
+      return;
+    }
+
+    const tableRect = table.getBoundingClientRect();
+    const cellRect = cell.getBoundingClientRect();
+    const nearTopEdge = event.clientY >= tableRect.top - 18 && event.clientY <= tableRect.top + 24;
+    const nearLeftEdge = event.clientX >= tableRect.left - 18 && event.clientX <= tableRect.left + 24;
+
+    if (nearTopEdge) {
+      setAdvancedTableEdgeIntent({
+        kind: 'column',
+        commandPoint: { x: Math.min(cellRect.right - 2, cellRect.left + cellRect.width / 2), y: cellRect.top + Math.min(20, cellRect.height / 2) },
+        button: { left: cellRect.right - 14, top: tableRect.top - 16 },
+        line: { left: cellRect.right - 1, top: tableRect.top, width: 2, height: tableRect.height },
+      });
+      return;
+    }
+
+    if (nearLeftEdge) {
+      setAdvancedTableEdgeIntent({
+        kind: 'row',
+        commandPoint: { x: cellRect.left + Math.min(20, cellRect.width / 2), y: Math.min(cellRect.bottom - 2, cellRect.top + cellRect.height / 2) },
+        button: { left: tableRect.left - 16, top: cellRect.bottom - 14 },
+        line: { left: tableRect.left, top: cellRect.bottom - 1, width: tableRect.width, height: 2 },
+      });
+      return;
+    }
+
+    setAdvancedTableEdgeIntent(null);
+  }, [editor, showAdvancedTableToolbar]);
+
+  const insertAdvancedTableEdge = useCallback(() => {
+    if (!editor || !advancedTableEdgeIntent) return;
+    const coords = editor.view.posAtCoords({
+      left: advancedTableEdgeIntent.commandPoint.x,
+      top: advancedTableEdgeIntent.commandPoint.y,
+    });
+
+    if (coords) {
+      editor.chain().focus(coords.pos).run();
+    } else {
+      editor.chain().focus().run();
+    }
+
+    if (advancedTableEdgeIntent.kind === 'row') {
+      editor.chain().focus().addRowAfter().run();
+    } else {
+      editor.chain().focus().addColumnAfter().run();
+    }
+    setAdvancedTableEdgeIntent(null);
+  }, [advancedTableEdgeIntent, editor]);
+
   useEffect(() => {
     const openAdvancedTableSizePicker = () => {
       setAdvancedTableSize({ open: true, rows: 4, cols: 4 });
       setShowAdvancedTableToolbar(false);
+      setAdvancedTableEdgeIntent(null);
     };
     window.addEventListener('open-advanced-table-size-picker', openAdvancedTableSizePicker);
     return () => window.removeEventListener('open-advanced-table-size-picker', openAdvancedTableSizePicker);
@@ -1067,7 +1179,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       const target = event.target as HTMLElement | null;
       if (!target) return;
       if (target.closest('.qz-advanced-table-toolbar')) return;
-      if (target.closest('td, th')) return;
+      if (target.closest('td, th')) {
+        if (event.button === 0) {
+          setShowAdvancedTableToolbar(false);
+        }
+        return;
+      }
       setShowAdvancedTableToolbar(false);
     };
     document.addEventListener('mousedown', handlePointerDown);
@@ -2587,6 +2704,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               data-testid="qingzhi-editor-writing-surface"
               data-qz-handle-bridge="true"
               onContextMenu={handleAdvancedTableContextMenu}
+              onMouseMove={handleAdvancedTableMouseMove}
+              onMouseLeave={() => setAdvancedTableEdgeIntent(null)}
               className="qz-editor-writing-surface relative group/editor mt-2 w-full min-h-[500px] rounded-xl"
             >
               <BackgroundPaper type={backgroundPaper} />
@@ -2699,60 +2818,57 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
                   <div className="qz-advanced-table-divider" />
 
-                  <div className="qz-advanced-table-group qz-advanced-table-swatches">
-                    {ADVANCED_TABLE_CELL_COLORS.map((color) => (
+                  <div className="qz-advanced-table-group">
+                    <div className="qz-advanced-table-text-popover">
                       <button
-                        key={color.value}
                         type="button"
                         onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => (editor.chain().focus() as any).setCellAttribute('backgroundColor', color.value).run()}
-                        className="qz-advanced-table-swatch"
-                        style={{ background: color.value === 'transparent' ? 'transparent' : color.value }}
-                        title={`单元格底色：${color.label}`}
+                        className="qz-advanced-table-button"
+                        title="文字操作"
                       >
-                        {color.value === 'transparent' && <Palette size={11} />}
+                        <Type size={15} />
                       </button>
-                    ))}
-                  </div>
-
-                  <div className="qz-advanced-table-divider" />
-
-                  <div className="qz-advanced-table-group">
+                      <div className="qz-advanced-table-text-menu">
+                        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().toggleBold().run()} title="加粗"><Bold size={14} /></button>
+                        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().toggleItalic().run()} title="斜体"><Italic size={14} /></button>
+                        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().toggleUnderline().run()} title="下划线"><Underline size={14} /></button>
+                        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().toggleStrike().run()} title="删除线"><Strikethrough size={14} /></button>
+                        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().unsetAllMarks().run()} title="清除格式"><Eraser size={14} /></button>
+                      </div>
+                    </div>
+                    <div className="qz-advanced-table-color-popover">
+                      <button
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        className="qz-advanced-table-button"
+                        title="单元格底色"
+                      >
+                        <Palette size={15} />
+                      </button>
+                      <div className="qz-advanced-table-color-menu">
+                        {ADVANCED_TABLE_CELL_COLORS.map((color) => (
+                          <button
+                            key={color.value}
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => (editor.chain().focus() as any).setCellAttribute('backgroundColor', color.value).run()}
+                            className="qz-advanced-table-swatch"
+                            style={{ background: color.value === 'transparent' ? 'transparent' : color.value }}
+                            title={`单元格底色：${color.label}`}
+                          >
+                            {color.value === 'transparent' && <Palette size={11} />}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <button
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => editor.chain().focus().addColumnAfter().run()}
-                      className="qz-advanced-table-button"
-                      title="添加列"
+                      onClick={clearCurrentTableCell}
+                      className="qz-advanced-table-button qz-advanced-table-clear-cell"
+                      title="清空当前单元格"
                     >
-                      <Columns size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => editor.chain().focus().addRowAfter().run()}
-                      className="qz-advanced-table-button"
-                      title="添加行"
-                    >
-                      <Rows size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => editor.chain().focus().deleteColumn().run()}
-                      className="qz-advanced-table-button qz-advanced-table-danger"
-                      title="删除列"
-                    >
-                      <Trash size={14} className="rotate-90" />
-                    </button>
-                    <button
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => editor.chain().focus().deleteRow().run()}
-                      className="qz-advanced-table-button qz-advanced-table-danger"
-                      title="删除行"
-                    >
-                      <Trash size={14} />
+                      <Eraser size={15} />
                     </button>
                     <button
                       type="button"
@@ -2765,6 +2881,38 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                     </button>
                   </div>
                 </BubbleMenu>
+              )}
+
+              {advancedTableEdgeIntent && typeof document !== 'undefined' && createPortal(
+                <div
+                  className="qz-table-edge-controls"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setAdvancedTableEdgeIntent(advancedTableEdgeIntent)}
+                >
+                  <div
+                    className={`qz-table-insert-line is-${advancedTableEdgeIntent.kind}`}
+                    style={{
+                      left: advancedTableEdgeIntent.line.left,
+                      top: advancedTableEdgeIntent.line.top,
+                      width: advancedTableEdgeIntent.line.width,
+                      height: advancedTableEdgeIntent.line.height,
+                    }}
+                  />
+                  <button
+                    type="button"
+                    aria-label={`insert-advanced-table-${advancedTableEdgeIntent.kind}`}
+                    className={`qz-table-edge-button is-${advancedTableEdgeIntent.kind}`}
+                    style={{
+                      left: advancedTableEdgeIntent.button.left,
+                      top: advancedTableEdgeIntent.button.top,
+                    }}
+                    onClick={insertAdvancedTableEdge}
+                    title={advancedTableEdgeIntent.kind === 'row' ? '插入行' : '插入列'}
+                  >
+                    +
+                  </button>
+                </div>,
+                document.body,
               )}
 
               {advancedTableSize.open && typeof document !== 'undefined' && createPortal(

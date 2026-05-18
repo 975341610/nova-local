@@ -39,7 +39,7 @@ describe('BacklinksPanel', () => {
       />,
     )
 
-    expect(screen.getByText('Linked Target')).toBeTruthy()
-    expect(screen.getByText('Backlink Source')).toBeTruthy()
+    expect(screen.getAllByText('Linked Target').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Backlink Source').length).toBeGreaterThan(0)
   })
 })

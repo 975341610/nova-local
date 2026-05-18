@@ -1100,7 +1100,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
         )}
 
         {activeWorkbenchMode === 'ask' && visibleAskScopeId && (
-          <div className="qz-ai-scope-card qz-ai-compact-ask rounded-lg border border-border/30 bg-background/70 p-2 space-y-2">
+          <div className="qz-ai-shell-flat qz-ai-compact-ask space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs font-semibold text-foreground">{visibleChatTitle}</div>
               {importBatchMessages.length > 0 && (
@@ -1128,7 +1128,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
               </select>
               <ChevronDown size={12} aria-hidden="true" />
             </label>
-            {(activeImportSources.length > 0 || activeNoteAskId || isVaultAsk) && (
+            {activeImportSources.length > 0 && (
               <div data-testid="import-source-list" className="qz-ai-source-compact space-y-1">
                 <div className="text-[10px] font-semibold uppercase text-muted-foreground">{visibleChatSourceLabel}</div>
                 {isVaultAsk && (
@@ -1261,7 +1261,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
         {activeWorkbenchMode === 'write' && (
           <div
             data-testid="ai-write-panel"
-            className="rounded-lg border border-border/30 bg-background/70 p-3 space-y-3"
+            className="qz-ai-shell-flat qz-ai-write-panel space-y-3"
           >
             <div>
               <div className="text-xs font-semibold text-foreground">写作助手</div>
@@ -1269,7 +1269,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                 针对当前笔记进行摘要、提纲和行动项整理。
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-2">
+            <div className="qz-ai-write-actions flex gap-1.5">
               {AI_WRITE_ACTIONS.map((action) => (
                 <button
                   key={action.id}
@@ -1277,7 +1277,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                   aria-label={`run-ai-write-${action.id}`}
                   onClick={() => void handleRunWriteAction(action.id)}
                   disabled={!canAppendToSelectedNote || isAiWriting}
-                  className="min-h-8 rounded-lg border border-border/40 px-3 py-1.5 text-left text-[11px] font-medium text-foreground hover:bg-accent/40 disabled:opacity-50"
+                  className="qz-ai-write-chip"
                 >
                   {activeWriteActionId === action.id && isAiWriting ? '生成中...' : action.label}
                 </button>
@@ -1291,23 +1291,25 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
                 >
                   {aiWriteResult}
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="qz-ai-compact-action-bar flex gap-1.5">
                   <button
                     type="button"
                     aria-label="copy-ai-write-result"
+                    title="复制"
                     onClick={() => void handleCopyWriteResult()}
-                    className="min-h-8 rounded-lg border border-border/40 px-3 py-1.5 text-[11px] font-medium text-foreground hover:bg-accent/40"
+                    className="qz-ai-compact-action flex h-8 w-8 items-center justify-center rounded-lg border border-border/40 text-muted-foreground hover:bg-accent/40 hover:text-foreground"
                   >
-                    复制
+                    <Copy size={14} />
                   </button>
                   <button
                     type="button"
                     aria-label="insert-ai-write-result"
+                    title="插入当前笔记"
                     onClick={() => void handleInsertWriteResult()}
                     disabled={isAiWriting || !canAppendToSelectedNote}
-                    className="min-h-8 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
+                    className="qz-ai-compact-action flex h-8 w-8 items-center justify-center rounded-lg border border-border/40 text-muted-foreground hover:bg-accent/40 hover:text-foreground disabled:opacity-50"
                   >
-                    插入当前
+                    <TextCursorInput size={14} />
                   </button>
                 </div>
               </div>

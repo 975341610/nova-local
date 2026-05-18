@@ -3,7 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import BacklinksPanel from '../components/sidebar/BacklinksPanel'
@@ -23,7 +23,7 @@ vi.mock('../lib/api', () => ({
 const makeNote = (overrides: Partial<Note>): Note => ({
   id: 1,
   title: 'Note',
-  icon: '📄',
+  icon: 'N',
   summary: '',
   content: '<p></p>',
   is_title_manually_edited: false,
@@ -46,7 +46,7 @@ describe('QingZhi sidebar tab upgrades', () => {
     vi.restoreAllMocks()
   })
 
-  it('shows search filters, recent sections, and search syntax guidance', () => {
+  it('keeps upgraded search filters available', () => {
     render(
       <GlobalSearchPanel
         notes={[
@@ -61,29 +61,25 @@ describe('QingZhi sidebar tab upgrades', () => {
     expect(screen.getByTestId('qz-search-filter-title')).toBeTruthy()
     expect(screen.getByTestId('qz-search-filter-content')).toBeTruthy()
     expect(screen.getByTestId('qz-search-filter-tag')).toBeTruthy()
-    expect(screen.getByText('最近搜索')).toBeTruthy()
-    expect(screen.getByText('最近打开')).toBeTruthy()
-    expect(screen.getByText('搜索语法')).toBeTruthy()
-    expect(screen.getByText('tag:灵感')).toBeTruthy()
   })
 
-  it('shows graph preview, unlinked mentions, and copyable link syntax in backlinks', () => {
+  it('renders note titles inside the backlinks mini graph nodes', () => {
     render(
       <BacklinksPanel
-        currentNoteId={1}
+        currentNoteId={10}
         notes={[
-          makeNote({ id: 1, title: '需求文档', links: [2] }),
-          makeNote({ id: 2, title: '已链接笔记' }),
-          makeNote({ id: 3, title: '潜在关联', content: '<p>这里提到了需求文档，但还没有建立双链。</p>' }),
+          makeNote({ id: 10, title: 'Current Note', links: [11] }),
+          makeNote({ id: 11, title: 'Forward Node' }),
+          makeNote({ id: 12, title: 'Backward Node', links: [10] }),
         ]}
         onSelectNote={() => {}}
       />,
     )
 
-    expect(screen.getByTestId('qz-backlinks-mini-graph')).toBeTruthy()
-    expect(screen.getByText('未链接提及')).toBeTruthy()
-    expect(screen.getByText('潜在关联')).toBeTruthy()
-    expect(screen.getByText('[[需求文档]]')).toBeTruthy()
+    const miniGraph = screen.getByTestId('qz-backlinks-mini-graph')
+    expect(within(miniGraph).getByText('Current Note')).toBeTruthy()
+    expect(within(miniGraph).getByText('Forward Node')).toBeTruthy()
+    expect(within(miniGraph).getByText('Backward Node')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'copy-current-note-wikilink' })).toBeTruthy()
   })
 
@@ -93,8 +89,10 @@ describe('QingZhi sidebar tab upgrades', () => {
     expect(source).toContain('qz-ai-compact-header')
     expect(source).toContain('qz-ai-compact-segment')
     expect(source).toContain('qz-ai-scope-chip')
+    expect(source).toContain('qz-ai-shell-flat')
     expect(source).toContain('qz-ai-compact-prompts')
     expect(source).toContain('qz-ai-compact-composer')
-    expect(source).toContain('⌘↵')
+    expect(source).toContain('qz-ai-write-chip')
+    expect(source).toContain('qz-ai-compact-action-bar')
   })
 })

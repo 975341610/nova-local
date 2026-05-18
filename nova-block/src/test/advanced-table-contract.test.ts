@@ -31,7 +31,50 @@ describe('QingZhi advanced table', () => {
     expect(editorSource).toContain('showAdvancedTableToolbar')
     expect(editorSource).toContain('shouldShowAdvancedTableToolbar')
     expect(editorSource).toContain('handleAdvancedTableContextMenu')
+    expect(editorSource).toContain('handleAdvancedTableEditorContextMenu')
+    expect(editorSource).toContain('handleDOMEvents')
+    expect(editorSource).toContain('event.button === 0')
     expect(editorSource).not.toContain("shouldShow={({ editor }) => editor.isActive('table')}")
+  })
+
+  it('moves row and column operations to table edge controls', () => {
+    const editorSource = fs.readFileSync(
+      path.resolve(sourceRoot, 'components/novablock/NovaBlockEditor.tsx'),
+      'utf8',
+    )
+    const styleSource = fs.readFileSync(
+      path.resolve(sourceRoot, 'styles/qingzhi-refine-v34.css'),
+      'utf8',
+    )
+
+    expect(editorSource).toContain('advancedTableEdgeIntent')
+    expect(editorSource).toContain('handleAdvancedTableMouseMove')
+    expect(editorSource).toContain('insertAdvancedTableEdge')
+    expect(editorSource).toContain('qz-table-edge-controls')
+    expect(styleSource).toContain('.qz-table-edge-controls')
+    expect(styleSource).toContain('.qz-table-insert-line')
+    expect(editorSource).not.toContain('title="添加列"')
+    expect(editorSource).not.toContain('title="添加行"')
+    expect(editorSource).not.toContain('title="删除列"')
+    expect(editorSource).not.toContain('title="删除行"')
+  })
+
+  it('keeps toolbar focused on formatting, clearing cells, and hover color choices', () => {
+    const editorSource = fs.readFileSync(
+      path.resolve(sourceRoot, 'components/novablock/NovaBlockEditor.tsx'),
+      'utf8',
+    )
+    const styleSource = fs.readFileSync(
+      path.resolve(sourceRoot, 'styles/qingzhi-refine-v34.css'),
+      'utf8',
+    )
+
+    expect(editorSource).toContain('clearCurrentTableCell')
+    expect(editorSource).toContain('qz-advanced-table-clear-cell')
+    expect(editorSource).toContain('qz-advanced-table-text-popover')
+    expect(editorSource).toContain('qz-advanced-table-color-menu')
+    expect(styleSource).toContain('.qz-advanced-table-color-popover:hover .qz-advanced-table-color-menu')
+    expect(styleSource).toContain('.qz-advanced-table-text-popover:hover .qz-advanced-table-text-menu')
   })
 
   it('lets users choose advanced table size before insertion', () => {

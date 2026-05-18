@@ -60,7 +60,7 @@ describe('SidebarTree AI import generate entry', () => {
     expect(screen.getByTestId('ai-import-empty')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'ai-workbench-mode-ask' }))
-    expect(await screen.findByText('全部笔记')).toBeTruthy()
+    expect(await screen.findByRole('combobox', { name: 'ai-ask-scope-select' })).toBeTruthy()
     expect(screen.getByLabelText('ask-import-batch-input')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'ai-workbench-mode-write' }))
@@ -607,7 +607,6 @@ describe('SidebarTree AI import generate entry', () => {
 
     expect(await screen.findByText('当前笔记问答')).toBeTruthy()
     expect(screen.getByRole('combobox', { name: 'ai-ask-scope-select' })).toBeTruthy()
-    expect(screen.getByText('Project Note')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'ask-suggested-总结核心要点' })).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('ask-import-batch-input'), { target: { value: '这篇讲了什么？' } })

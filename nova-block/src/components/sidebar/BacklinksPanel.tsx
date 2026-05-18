@@ -293,7 +293,10 @@ const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNoteId, notes, o
       <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-5">
         <section className="qz-backlinks-overview space-y-3">
           <div data-testid="qz-backlinks-mini-graph" className="qz-backlinks-mini-graph">
-            <div className="qz-backlinks-node is-current" />
+            <div className="qz-backlinks-node is-current" title={currentNote?.title || '当前笔记'}>
+              <span className="qz-backlinks-node-dot" aria-hidden="true" />
+              <span className="qz-backlinks-node-label">{currentNote?.title || '当前笔记'}</span>
+            </div>
             {backlinks.slice(0, 3).map((note, index) => (
               <button
                 key={`back-${note.id}`}
@@ -302,7 +305,10 @@ const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNoteId, notes, o
                 className="qz-backlinks-node"
                 style={{ '--qz-node-index': index } as React.CSSProperties}
                 title={note.title || '无标题'}
-              />
+              >
+                <span className="qz-backlinks-node-dot" aria-hidden="true" />
+                <span className="qz-backlinks-node-label">{note.title || '无标题'}</span>
+              </button>
             ))}
             {links.slice(0, 3).map((note, index) => (
               <button
@@ -312,7 +318,10 @@ const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNoteId, notes, o
                 className="qz-backlinks-node is-forward"
                 style={{ '--qz-node-index': index + 3 } as React.CSSProperties}
                 title={note.title || '无标题'}
-              />
+              >
+                <span className="qz-backlinks-node-dot" aria-hidden="true" />
+                <span className="qz-backlinks-node-label">{note.title || '无标题'}</span>
+              </button>
             ))}
           </div>
           {wikiLink && (
