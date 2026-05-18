@@ -639,12 +639,18 @@ interface NovaBlockEditorProps {
   onToggleTypewriter?: () => void;
 }
 
-type AdvancedTableEdgeIntent = null | {
+type AdvancedTableEdgeControl = {
   kind: 'row' | 'column';
   commandPoint: { x: number; y: number };
   button: { left: number; top: number };
   select: { left: number; top: number; width: number; height: number };
   line: { left: number; top: number; width: number; height: number };
+};
+
+type AdvancedTableEdgeIntent = null | {
+  activeKind: 'row' | 'column' | null;
+  row: AdvancedTableEdgeControl;
+  column: AdvancedTableEdgeControl;
 };
 
 /**
@@ -679,6 +685,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [advancedTableEdgeIntent, setAdvancedTableEdgeIntent] = useState<AdvancedTableEdgeIntent>(null);
   const [advancedTableSelectionScope, setAdvancedTableSelectionScope] = useState<'cell' | 'row' | 'column' | null>(null);
   const [advancedTablePopover, setAdvancedTablePopover] = useState<'text' | 'color' | null>(null);
+  const [isAdvancedTableResizeCursor, setIsAdvancedTableResizeCursor] = useState(false);
   const [textColorAnchor, setTextColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [highlightColorAnchor, setHighlightColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [backgroundPaper, setBackgroundPaper] = useState<BackgroundPaperType>(note?.background_paper || 'none');
@@ -1008,6 +1015,19 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     return openAdvancedTableToolbarAtPoint(view, event.clientX, event.clientY);
   }, [openAdvancedTableToolbarAtPoint]);
 
+  const handleAdvancedTableEditorDragStart = useCallback((view: any, nativeEvent: Event) => {
+    const event = nativeEvent as DragEvent;
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest('td, th')) return false;
+    const selection = view?.state?.selection;
+    const isCellSelection = selection instanceof CellSelection ||
+      (selection && '$anchorCell' in selection && '$headCell' in selection);
+    if (!isCellSelection) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }, []);
+
   const editor = useEditor({
     extensions,
     content: normalizedNoteContent,
@@ -1052,6 +1072,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       },
       handleDOMEvents: {
         contextmenu: handleAdvancedTableEditorContextMenu,
+        dragstart: handleAdvancedTableEditorDragStart,
       },
       handleKeyDown: (view, event) => {
         // `/e` + Enter -> 鎵撳紑琛ㄦ儏闈㈡澘锛堥樆姝㈡崲琛岋紝骞跺垹闄よЕ鍙戞枃鏈級
@@ -1078,7 +1099,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         return true;
       },
     }
-  }, [extensions, updateOutline, handleAdvancedTableEditorContextMenu]);
+  }, [extensions, updateOutline, handleAdvancedTableEditorContextMenu, handleAdvancedTableEditorDragStart]);
 
   const isAdvancedTableCellSelection = useCallback((selection: any) => (
     selection instanceof CellSelection ||
@@ -1094,8 +1115,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
   const shouldShowAdvancedTableToolbar = useCallback((nextEditor: Editor) => {
     if (!nextEditor.isActive('table')) return false;
-    return showAdvancedTableToolbar || isAdvancedTableCellSelection(nextEditor.state.selection);
-  }, [isAdvancedTableCellSelection, showAdvancedTableToolbar]);
+    const scope = getAdvancedTableSelectionScope(nextEditor.state.selection);
+    if (showAdvancedTableToolbar) return true;
+    return scope === 'row' || scope === 'column';
+  }, [getAdvancedTableSelectionScope, showAdvancedTableToolbar]);
 
   const insertAdvancedTableWithSize = useCallback((rows: number, cols: number) => {
     if (!editor || editor.isDestroyed) return;
@@ -1127,11 +1150,18 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     const target = event.target as HTMLElement | null;
     if (!editor?.view || event.button !== 0) return;
     if (target?.closest('.qz-advanced-table-toolbar, .qz-table-edge-controls')) return;
-    if (isAdvancedTableColumnResizeHandleHit(target, event.clientX)) return;
+    if (isAdvancedTableColumnResizeHandleHit(target, event.clientX)) {
+      advancedTableMouseDownRef.current = null;
+      return;
+    }
     if (!target?.closest('td, th')) return;
 
+    setShowAdvancedTableToolbar(false);
     advancedTableMouseDownRef.current = { x: event.clientX, y: event.clientY, time: Date.now() };
     if (event.detail > 1) return;
+    if (target.closest('td.selectedCell, th.selectedCell')) {
+      event.preventDefault();
+    }
     setAdvancedTablePopover(null);
   }, [editor, isAdvancedTableColumnResizeHandleHit]);
 
@@ -1188,14 +1218,17 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   }, [editor]);
 
   const handleAdvancedTableMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (!editor || showAdvancedTableToolbar) {
+    const target = event.target as HTMLElement | null;
+    const isResizeHit = isAdvancedTableColumnResizeHandleHit(target, event.clientX);
+    setIsAdvancedTableResizeCursor(isResizeHit);
+
+    if (!editor) {
       setAdvancedTableEdgeIntent(null);
       return;
     }
 
-    const target = event.target as HTMLElement | null;
     if (target?.closest('.qz-table-edge-controls')) return;
-    if (isAdvancedTableColumnResizeHandleHit(target, event.clientX)) {
+    if (isResizeHit) {
       setAdvancedTableEdgeIntent(null);
       return;
     }
@@ -1210,47 +1243,44 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
     const tableRect = table.getBoundingClientRect();
     const cellRect = cell.getBoundingClientRect();
-    const nearTopEdge = event.clientY >= tableRect.top - 14 && event.clientY <= tableRect.top + 18;
-    const nearLeftEdge = event.clientX >= tableRect.left - 14 && event.clientX <= tableRect.left + 18;
+    const nearTopEdge = event.clientY >= tableRect.top - 28 && event.clientY <= tableRect.top + 30;
+    const nearLeftEdge = event.clientX >= tableRect.left - 28 && event.clientX <= tableRect.left + 30;
     const safeCellY = cellRect.top + Math.min(20, Math.max(8, cellRect.height / 2));
     const safeCellX = cellRect.left + Math.min(20, Math.max(8, cellRect.width / 2));
+    const activeKind = nearTopEdge ? 'column' : nearLeftEdge ? 'row' : null;
 
-    if (nearTopEdge) {
-      setAdvancedTableEdgeIntent({
+    setAdvancedTableEdgeIntent({
+      activeKind,
+      column: {
         kind: 'column',
         commandPoint: { x: cellRect.left + cellRect.width / 2, y: safeCellY },
-        button: { left: cellRect.right - 8, top: tableRect.top - 8 },
-        select: { left: cellRect.left + 6, top: tableRect.top - 9, width: Math.max(16, cellRect.width - 12), height: 7 },
+        button: { left: cellRect.right - 17, top: tableRect.top - 22 },
+        select: { left: cellRect.left - 8, top: tableRect.top - 32, width: Math.max(38, cellRect.width + 16), height: 36 },
         line: { left: cellRect.right - 1, top: tableRect.top, width: 2, height: tableRect.height },
-      });
-      return;
-    }
-
-    if (nearLeftEdge) {
-      setAdvancedTableEdgeIntent({
+      },
+      row: {
         kind: 'row',
         commandPoint: { x: safeCellX, y: cellRect.top + cellRect.height / 2 },
-        button: { left: tableRect.left - 8, top: cellRect.bottom - 8 },
-        select: { left: tableRect.left - 9, top: cellRect.top + 6, width: 7, height: Math.max(16, cellRect.height - 12) },
+        button: { left: tableRect.left - 22, top: cellRect.bottom - 17 },
+        select: { left: tableRect.left - 32, top: cellRect.top - 8, width: 36, height: Math.max(38, cellRect.height + 16) },
         line: { left: tableRect.left, top: cellRect.bottom - 1, width: tableRect.width, height: 2 },
-      });
-      return;
-    }
-
-    setAdvancedTableEdgeIntent(null);
-  }, [editor, isAdvancedTableColumnResizeHandleHit, showAdvancedTableToolbar]);
+      },
+    });
+  }, [editor, isAdvancedTableColumnResizeHandleHit]);
 
   const handleAdvancedTableSurfaceMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget as HTMLElement | null;
     if (nextTarget?.closest('.qz-table-edge-controls')) return;
+    setIsAdvancedTableResizeCursor(false);
     setAdvancedTableEdgeIntent(null);
   }, []);
 
-  const insertAdvancedTableEdge = useCallback(() => {
+  const insertAdvancedTableEdge = useCallback((kind: 'row' | 'column') => {
     if (!editor || !advancedTableEdgeIntent) return;
+    const edge = advancedTableEdgeIntent[kind];
     const coords = editor.view.posAtCoords({
-      left: advancedTableEdgeIntent.commandPoint.x,
-      top: advancedTableEdgeIntent.commandPoint.y,
+      left: edge.commandPoint.x,
+      top: edge.commandPoint.y,
     });
 
     if (coords) {
@@ -1259,7 +1289,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       editor.chain().focus().run();
     }
 
-    if (advancedTableEdgeIntent.kind === 'row') {
+    if (kind === 'row') {
       editor.chain().focus().addRowAfter().run();
     } else {
       editor.chain().focus().addColumnAfter().run();
@@ -1267,22 +1297,23 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     setAdvancedTableEdgeIntent(null);
   }, [advancedTableEdgeIntent, editor]);
 
-  const selectAdvancedTableEdge = useCallback(() => {
+  const selectAdvancedTableEdge = useCallback((kind: 'row' | 'column') => {
     if (!editor || !advancedTableEdgeIntent) return;
+    const edge = advancedTableEdgeIntent[kind];
     const { state, view } = editor;
     const cellPos = getAdvancedTableCellPosAtPoint(
       view,
-      advancedTableEdgeIntent.commandPoint.x,
-      advancedTableEdgeIntent.commandPoint.y,
+      edge.commandPoint.x,
+      edge.commandPoint.y,
     );
     if (cellPos === null) return;
     const $cell = state.doc.resolve(cellPos);
-    const selection = advancedTableEdgeIntent.kind === 'row'
+    const selection = kind === 'row'
       ? CellSelection.rowSelection($cell)
       : CellSelection.colSelection($cell);
     view.dispatch(state.tr.setSelection(selection).scrollIntoView());
     view.focus();
-    setAdvancedTableSelectionScope(advancedTableEdgeIntent.kind);
+    setAdvancedTableSelectionScope(kind);
     setShowAdvancedTableToolbar(true);
     setAdvancedTablePopover(null);
     setAdvancedTableEdgeIntent(null);
@@ -1309,7 +1340,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       }
       const scope = getAdvancedTableSelectionScope(nextEditor.state.selection);
       setAdvancedTableSelectionScope(scope);
-      if (scope) {
+      if (scope === 'row' || scope === 'column') {
         setShowAdvancedTableToolbar(true);
       }
     };
@@ -2858,7 +2889,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               onDoubleClick={handleAdvancedTableDoubleClick}
               onMouseMove={handleAdvancedTableMouseMove}
               onMouseLeave={handleAdvancedTableSurfaceMouseLeave}
-              className="qz-editor-writing-surface relative group/editor mt-2 w-full min-h-[500px] rounded-xl"
+              className={`qz-editor-writing-surface relative group/editor mt-2 w-full min-h-[500px] rounded-xl ${isAdvancedTableResizeCursor ? 'qz-table-resize-cursor' : ''}`}
             >
               <BackgroundPaper type={backgroundPaper} />
               {/* QingZhi custom block handle overlay: independent from Tiptap plugin visibility. */}
@@ -3080,49 +3111,60 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setAdvancedTableEdgeIntent(advancedTableEdgeIntent)}
                 >
-                  <div
-                    className={`qz-table-insert-line is-${advancedTableEdgeIntent.kind}`}
-                    style={{
-                      left: advancedTableEdgeIntent.line.left,
-                      top: advancedTableEdgeIntent.line.top,
-                      width: advancedTableEdgeIntent.line.width,
-                      height: advancedTableEdgeIntent.line.height,
-                    }}
-                  />
-                  <button
-                    type="button"
-                    aria-label={`select-advanced-table-${advancedTableEdgeIntent.kind}`}
-                    className={`qz-table-edge-select-zone is-${advancedTableEdgeIntent.kind}`}
-                    style={{
-                      left: advancedTableEdgeIntent.select.left,
-                      top: advancedTableEdgeIntent.select.top,
-                      width: advancedTableEdgeIntent.select.width,
-                      height: advancedTableEdgeIntent.select.height,
-                    }}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      selectAdvancedTableEdge();
-                    }}
-                    title={advancedTableEdgeIntent.kind === 'row' ? '选择整行' : '选择整列'}
-                  />
-                  <button
-                    type="button"
-                    aria-label={`insert-advanced-table-${advancedTableEdgeIntent.kind}`}
-                    className={`qz-table-edge-button qz-table-edge-add-button is-${advancedTableEdgeIntent.kind}`}
-                    style={{
-                      left: advancedTableEdgeIntent.button.left,
-                      top: advancedTableEdgeIntent.button.top,
-                    }}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      insertAdvancedTableEdge();
-                    }}
-                    title={advancedTableEdgeIntent.kind === 'row' ? '插入行' : '插入列'}
-                  >
-                    +
-                  </button>
+                  {advancedTableEdgeIntent.activeKind && (() => {
+                    const edge = advancedTableEdgeIntent[advancedTableEdgeIntent.activeKind];
+                    return (
+                      <div
+                        className={`qz-table-insert-line is-${edge.kind}`}
+                        style={{
+                          left: edge.line.left,
+                          top: edge.line.top,
+                          width: edge.line.width,
+                          height: edge.line.height,
+                        }}
+                      />
+                    );
+                  })()}
+                  {(['column', 'row'] as const).map((kind) => {
+                    const edge = advancedTableEdgeIntent[kind];
+                    const isHot = advancedTableEdgeIntent.activeKind === kind;
+                    return (
+                      <React.Fragment key={kind}>
+                        <button
+                          type="button"
+                          aria-label={`select-advanced-table-${kind}`}
+                          className={`qz-table-edge-select-zone is-${kind}`}
+                          style={{
+                            left: edge.select.left,
+                            top: edge.select.top,
+                            width: edge.select.width,
+                            height: edge.select.height,
+                          }}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            selectAdvancedTableEdge(kind);
+                          }}
+                          title={kind === 'row' ? '选择整行' : '选择整列'}
+                        />
+                        <button
+                          type="button"
+                          aria-label={`insert-advanced-table-${kind}`}
+                          className={`qz-table-edge-button qz-table-edge-add-button is-${kind} ${isHot ? 'is-hot' : ''}`}
+                          style={{
+                            left: edge.button.left,
+                            top: edge.button.top,
+                          }}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            insertAdvancedTableEdge(kind);
+                          }}
+                          title={kind === 'row' ? '插入行' : '插入列'}
+                        />
+                      </React.Fragment>
+                    );
+                  })}
                 </div>,
                 document.body,
               )}

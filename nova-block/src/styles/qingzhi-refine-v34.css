@@ -1413,24 +1413,49 @@ html:not([data-nv-theme]) {
   position: fixed !important;
   z-index: 131 !important;
   display: grid !important;
-  width: 16px !important;
-  height: 16px !important;
+  width: 34px !important;
+  height: 34px !important;
   place-items: center !important;
-  border: 1px solid rgba(202, 168, 115, .36) !important;
+  border: 0 !important;
   border-radius: 999px !important;
-  background: rgba(255, 253, 248, .96) !important;
-  color: rgba(128, 168, 156, .96) !important;
+  background: transparent !important;
+  color: transparent !important;
   font-size: 12px !important;
   font-weight: 700 !important;
   line-height: 1 !important;
-  box-shadow: 0 8px 20px rgba(42, 64, 58, .14), 0 0 0 2px rgba(255, 253, 248, .88) !important;
+  box-shadow: none !important;
   pointer-events: auto !important;
 }
 
+.qz-table-edge-button::after {
+  content: "·" !important;
+  display: grid !important;
+  width: 14px !important;
+  height: 14px !important;
+  place-items: center !important;
+  border: 1px solid rgba(202, 168, 115, .2) !important;
+  border-radius: 999px !important;
+  background: rgba(255, 253, 248, .72) !important;
+  color: rgba(128, 168, 156, .86) !important;
+  font-size: 16px !important;
+  line-height: 1 !important;
+  box-shadow: 0 6px 14px rgba(42, 64, 58, .08), 0 0 0 2px rgba(255, 253, 248, .66) !important;
+}
+
 .qz-table-edge-button:hover {
+  transform: scale(1.08) !important;
+}
+
+.qz-table-edge-button:hover::after,
+.qz-table-edge-button.is-hot::after {
+  content: "+" !important;
+  width: 18px !important;
+  height: 18px !important;
   border-color: rgba(128, 168, 156, .46) !important;
   background: rgba(220, 229, 222, .94) !important;
-  transform: scale(1.08) !important;
+  color: rgba(128, 168, 156, .96) !important;
+  font-size: 12px !important;
+  box-shadow: 0 8px 20px rgba(42, 64, 58, .14), 0 0 0 2px rgba(255, 253, 248, .88) !important;
 }
 
 .qz-table-edge-select-zone {
@@ -1449,10 +1474,23 @@ html:not([data-nv-theme]) {
 .qz-table-edge-select-zone::after {
   content: "" !important;
   position: absolute !important;
-  inset: 1px !important;
   border-radius: 999px !important;
   background: rgba(128, 168, 156, .34) !important;
   box-shadow: 0 0 0 1px rgba(255, 253, 248, .7) !important;
+}
+
+.qz-table-edge-select-zone.is-column::after {
+  left: 8px !important;
+  right: 8px !important;
+  top: 8px !important;
+  height: 5px !important;
+}
+
+.qz-table-edge-select-zone.is-row::after {
+  left: 8px !important;
+  top: 8px !important;
+  bottom: 8px !important;
+  width: 5px !important;
 }
 
 .qz-table-edge-select-zone:hover {
@@ -1475,12 +1513,19 @@ html:not([data-nv-theme]) {
 
 .qz-editor-writing-surface .novablock-editor .column-resize-handle,
 .qz-editor-writing-surface .novablock-editor .tableWrapper .column-resize-handle {
-  width: 3px !important;
-  right: -2px !important;
+  width: 8px !important;
+  right: -4px !important;
   cursor: col-resize !important;
   pointer-events: auto !important;
   background: rgba(128, 168, 156, .72) !important;
-  z-index: 80 !important;
+  z-index: 300 !important;
+  touch-action: none !important;
+  user-select: none !important;
+}
+
+.qz-editor-writing-surface.qz-table-resize-cursor,
+.qz-editor-writing-surface.qz-table-resize-cursor * {
+  cursor: col-resize !important;
 }
 
 .qz-editor-writing-surface .novablock-editor :is(td, th)[data-qz-cell-bg="#f6f3ef"] {
@@ -1793,15 +1838,16 @@ html:not([data-nv-theme]) {
 .qz-editor-writing-surface .novablock-editor td.selectedCell,
 .qz-editor-writing-surface .novablock-editor th.selectedCell {
   position: relative !important;
-  background: rgba(37, 99, 235, .14) !important;
-  box-shadow: inset 0 0 0 2px rgba(37, 99, 235, .78) !important;
+  background: rgba(128, 168, 156, .045) !important;
+  box-shadow: inset 0 0 0 1px rgba(128, 168, 156, .32) !important;
+  user-select: none !important;
 }
 
 .qz-editor-writing-surface .novablock-editor td.selectedCell::after,
 .qz-editor-writing-surface .novablock-editor th.selectedCell::after {
   pointer-events: none !important;
-  background: rgba(37, 99, 235, .10) !important;
-  border: 1px solid rgba(37, 99, 235, .5) !important;
+  background: rgba(128, 168, 156, .035) !important;
+  border: 1px solid rgba(128, 168, 156, .2) !important;
   content: '' !important;
   inset: 0 !important;
   position: absolute !important;
