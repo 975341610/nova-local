@@ -28,11 +28,15 @@ describe('QingZhi advanced table', () => {
     )
 
     expect(editorSource).toContain('CellSelection')
+    expect(editorSource).toContain('TextSelection')
     expect(editorSource).toContain('showAdvancedTableToolbar')
     expect(editorSource).toContain('shouldShowAdvancedTableToolbar')
+    expect(editorSource).toContain('openAdvancedTableToolbarAtPoint')
     expect(editorSource).toContain('handleAdvancedTableContextMenu')
     expect(editorSource).toContain('handleAdvancedTableEditorContextMenu')
     expect(editorSource).toContain('handleDOMEvents')
+    expect(editorSource).toContain('posAtCoords')
+    expect(editorSource).toContain('TextSelection.near')
     expect(editorSource).toContain('event.button === 0')
     expect(editorSource).not.toContain("shouldShow={({ editor }) => editor.isActive('table')}")
   })
@@ -50,9 +54,16 @@ describe('QingZhi advanced table', () => {
     expect(editorSource).toContain('advancedTableEdgeIntent')
     expect(editorSource).toContain('handleAdvancedTableMouseMove')
     expect(editorSource).toContain('insertAdvancedTableEdge')
+    expect(editorSource).toContain('selectAdvancedTableEdge')
+    expect(editorSource).toContain('CellSelection.rowSelection')
+    expect(editorSource).toContain('CellSelection.colSelection')
     expect(editorSource).toContain('qz-table-edge-controls')
+    expect(editorSource).toContain('qz-table-edge-select-zone')
+    expect(editorSource).toContain('qz-table-edge-add-button')
     expect(styleSource).toContain('.qz-table-edge-controls')
     expect(styleSource).toContain('.qz-table-insert-line')
+    expect(styleSource).toContain('.qz-table-edge-select-zone')
+    expect(styleSource).toContain('rgba(128, 168, 156')
     expect(editorSource).not.toContain('title="添加列"')
     expect(editorSource).not.toContain('title="添加行"')
     expect(editorSource).not.toContain('title="删除列"')
@@ -73,8 +84,21 @@ describe('QingZhi advanced table', () => {
     expect(editorSource).toContain('qz-advanced-table-clear-cell')
     expect(editorSource).toContain('qz-advanced-table-text-popover')
     expect(editorSource).toContain('qz-advanced-table-color-menu')
+    expect(editorSource).not.toContain('qz-advanced-table-toolbar flex overflow-hidden')
+    expect(styleSource).toContain('overflow: visible !important')
     expect(styleSource).toContain('.qz-advanced-table-color-popover:hover .qz-advanced-table-color-menu')
     expect(styleSource).toContain('.qz-advanced-table-text-popover:hover .qz-advanced-table-text-menu')
+  })
+
+  it('keeps native column resizing reachable while table edge controls are active', () => {
+    const styleSource = fs.readFileSync(
+      path.resolve(sourceRoot, 'styles/qingzhi-refine-v34.css'),
+      'utf8',
+    )
+
+    expect(styleSource).toContain('.qz-editor-writing-surface .novablock-editor .column-resize-handle')
+    expect(styleSource).toContain('cursor: col-resize')
+    expect(styleSource).toContain('pointer-events: auto')
   })
 
   it('lets users choose advanced table size before insertion', () => {

@@ -1280,7 +1280,7 @@ html:not([data-nv-theme]) {
   align-items: center !important;
   gap: 6px !important;
   max-width: min(92vw, 760px) !important;
-  overflow-x: auto !important;
+  overflow: visible !important;
   scrollbar-width: none !important;
 }
 
@@ -1360,7 +1360,9 @@ html:not([data-nv-theme]) {
 }
 
 .qz-advanced-table-color-popover:hover .qz-advanced-table-color-menu,
-.qz-advanced-table-text-popover:hover .qz-advanced-table-text-menu {
+.qz-advanced-table-color-popover:focus-within .qz-advanced-table-color-menu,
+.qz-advanced-table-text-popover:hover .qz-advanced-table-text-menu,
+.qz-advanced-table-text-popover:focus-within .qz-advanced-table-text-menu {
   display: flex !important;
 }
 
@@ -1393,20 +1395,42 @@ html:not([data-nv-theme]) {
   position: fixed !important;
   z-index: 131 !important;
   display: grid !important;
-  width: 28px !important;
-  height: 28px !important;
+  width: 18px !important;
+  height: 18px !important;
   place-items: center !important;
-  border: 1px solid rgba(37, 99, 235, .34) !important;
+  border: 1px solid rgba(202, 168, 115, .36) !important;
   border-radius: 999px !important;
-  background: rgba(37, 99, 235, .96) !important;
-  color: white !important;
-  font-size: 18px !important;
+  background: rgba(255, 253, 248, .96) !important;
+  color: rgba(128, 168, 156, .96) !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
   line-height: 1 !important;
-  box-shadow: 0 10px 24px rgba(37, 99, 235, .28) !important;
+  box-shadow: 0 8px 20px rgba(42, 64, 58, .14), 0 0 0 2px rgba(255, 253, 248, .88) !important;
   pointer-events: auto !important;
 }
 
 .qz-table-edge-button:hover {
+  border-color: rgba(128, 168, 156, .46) !important;
+  background: rgba(220, 229, 222, .94) !important;
+  transform: scale(1.08) !important;
+}
+
+.qz-table-edge-select-zone {
+  position: fixed !important;
+  z-index: 131 !important;
+  display: block !important;
+  border: 1px solid rgba(128, 168, 156, .22) !important;
+  border-radius: 999px !important;
+  background: rgba(220, 229, 222, .68) !important;
+  box-shadow: 0 0 0 2px rgba(255, 253, 248, .72) !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease !important;
+}
+
+.qz-table-edge-select-zone:hover {
+  border-color: rgba(128, 168, 156, .42) !important;
+  background: rgba(128, 168, 156, .32) !important;
   transform: scale(1.06) !important;
 }
 
@@ -1414,9 +1438,17 @@ html:not([data-nv-theme]) {
   position: fixed !important;
   z-index: 130 !important;
   border-radius: 999px !important;
-  background: rgba(37, 99, 235, .9) !important;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, .14) !important;
+  background: rgba(128, 168, 156, .74) !important;
+  box-shadow: 0 0 0 1px rgba(202, 168, 115, .18) !important;
   pointer-events: none !important;
+}
+
+.qz-editor-writing-surface .novablock-editor .column-resize-handle {
+  width: 3px !important;
+  cursor: col-resize !important;
+  pointer-events: auto !important;
+  background: rgba(128, 168, 156, .72) !important;
+  z-index: 80 !important;
 }
 
 .qz-editor-writing-surface .novablock-editor :is(td, th)[data-qz-cell-bg="#f6f3ef"] {
