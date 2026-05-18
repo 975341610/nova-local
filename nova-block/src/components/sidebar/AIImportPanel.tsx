@@ -1086,7 +1086,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
         )}
 
         {activeWorkbenchMode === 'ask' && visibleAskScopeId && (
-          <div className="rounded-lg border border-border/30 bg-background/70 p-3 space-y-2">
+          <div className="qz-ai-scope-card rounded-lg border border-border/30 bg-background/70 p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs font-semibold text-foreground">{visibleChatTitle}</div>
               {importBatchMessages.length > 0 && (
@@ -1146,7 +1146,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
             {importBatchMessages.length === 0 && (
               <div className="space-y-1">
                 <div className="text-[10px] font-semibold uppercase text-muted-foreground">推荐问题</div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="qz-ai-prompt-grid flex flex-wrap gap-1.5">
                   {SUGGESTED_ASK_PROMPTS.map((prompt) => (
                     <button
                       key={prompt}
@@ -1313,7 +1313,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
             写作模式会基于当前笔记生成结果，可在上方复制或插入当前笔记。
           </div>
         ) : (
-        <div className="flex items-end gap-2">
+        <div className="qz-ai-composer flex items-end gap-2">
           <button
             type="button"
             aria-label="upload-ai-import-file"

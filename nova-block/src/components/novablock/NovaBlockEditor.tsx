@@ -89,6 +89,15 @@ import {
   shouldKeepDragHandlePositionOnNodeLoss,
 } from './dragHandlePositioning';
 
+const ADVANCED_TABLE_CELL_COLORS = [
+  { label: '无', value: 'transparent' },
+  { label: '宣纸', value: '#f6f3ef' },
+  { label: '雾绿', value: '#dce5de' },
+  { label: '浅金', value: '#f4ead5' },
+  { label: '朱砂', value: '#f5dccd' },
+  { label: '玉色', value: '#e7f0ec' },
+];
+
 const NOVA_BLOCK_SLASH_ITEMS = [
   {
     label: 'AI 写作',
@@ -272,6 +281,14 @@ const NOVA_BLOCK_SLASH_ITEMS = [
     icon: <TableIcon size={18} />,
     keywords: ['table'],
     action: (chain: ChainedCommands) => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }),
+  },
+  {
+    label: '高级表格',
+    description: '插入带表头、配色和合并工具的表格',
+    group: '插入',
+    icon: <TableIcon size={18} className="text-primary" />,
+    keywords: ['advanced-table', 'table', 'sheet', 'gaoji'],
+    action: (chain: ChainedCommands) => chain.insertTable({ rows: 4, cols: 4, withHeaderRow: true }),
   },
   {
     label: '代码块',
@@ -2544,70 +2561,136 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                 document.body,
               )}
 
-              {/* 琛ㄦ牸娴姩鑿滃崟 */}
+              {/* 表格高级工具条 */}
               {editor && (
                 <BubbleMenu 
                   editor={editor} 
                   shouldShow={({ editor }) => editor.isActive('table')}
-                  className="flex overflow-hidden rounded-2xl border border-border/20 bg-popover/80 backdrop-blur-2xl shadow-soft p-1.5"
+                  className="qz-advanced-table-toolbar flex overflow-hidden rounded-2xl border border-border/20 bg-popover/90 backdrop-blur-2xl shadow-soft p-1.5"
                 >
-                <div className="flex items-center gap-1">
-                  <button 
-                    onClick={() => editor.chain().focus().addColumnBefore().run()}
-                    className="p-2 rounded-xl hover:bg-accent text-muted-foreground transition-all duration-300"
-                    title="在前插入列"
-                  >
-                    <Columns size={16} className="rotate-180" />
-                  </button>
-                  <button 
-                    onClick={() => editor.chain().focus().addColumnAfter().run()}
-                    className="p-2 rounded-xl hover:bg-accent text-muted-foreground transition-all duration-300"
-                    title="在后插入列"
-                  >
-                    <Columns size={16} />
-                  </button>
-                  <button 
-                    onClick={() => editor.chain().focus().deleteColumn().run()}
-                    className="p-2 rounded-xl hover:bg-destructive/10 text-destructive/70 hover:text-destructive transition-all duration-300"
-                    title="删除列"
-                  >
-                    <Trash size={14} className="rotate-90" />
-                  </button>
-                  
-                  <div className="w-px h-5 bg-border/20 mx-1" />
+                  <div className="qz-advanced-table-group">
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => (editor.chain().focus() as any).toggleHeaderRow().run()}
+                      className="qz-advanced-table-button"
+                      title="切换表头行"
+                    >
+                      <Rows size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => (editor.chain().focus() as any).toggleHeaderColumn().run()}
+                      className="qz-advanced-table-button"
+                      title="切换表头列"
+                    >
+                      <Columns size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => (editor.chain().focus() as any).mergeCells().run()}
+                      className="qz-advanced-table-button"
+                      title="合并单元格"
+                    >
+                      <CopyPlus size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => (editor.chain().focus() as any).splitCell().run()}
+                      className="qz-advanced-table-button"
+                      title="拆分单元格"
+                    >
+                      <Layout size={15} />
+                    </button>
+                  </div>
 
-                  <button 
-                    onClick={() => editor.chain().focus().addRowBefore().run()}
-                    className="p-2 rounded-xl hover:bg-accent text-muted-foreground transition-all duration-300"
-                    title="在前插入行"
-                  >
-                    <Rows size={16} className="rotate-180" />
-                  </button>
-                  <button 
-                    onClick={() => editor.chain().focus().addRowAfter().run()}
-                    className="p-2 rounded-xl hover:bg-accent text-muted-foreground transition-all duration-300"
-                    title="在后插入行"
-                  >
-                    <Rows size={16} />
-                  </button>
-                  <button 
-                    onClick={() => editor.chain().focus().deleteRow().run()}
-                    className="p-2 rounded-xl hover:bg-destructive/10 text-destructive/70 hover:text-destructive transition-all duration-300"
-                    title="删除行"
-                  >
-                    <Trash size={14} />
-                  </button>
+                  <div className="qz-advanced-table-divider" />
 
-                  <div className="w-px h-5 bg-border/20 mx-1" />
+                  <div className="qz-advanced-table-group">
+                    {(['left', 'center', 'right'] as const).map((align) => (
+                      <button
+                        key={align}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => (editor.chain().focus() as any).setCellAttribute('textAlign', align).run()}
+                        className="qz-advanced-table-button qz-advanced-table-align"
+                        title={align === 'left' ? '左对齐' : align === 'center' ? '居中对齐' : '右对齐'}
+                      >
+                        {align === 'left' ? '左' : align === 'center' ? '中' : '右'}
+                      </button>
+                    ))}
+                  </div>
 
-                  <button 
-                    onClick={() => editor.chain().focus().deleteTable().run()}
-                    className="p-2 rounded-xl hover:bg-destructive/10 text-destructive/70 hover:text-destructive transition-all duration-300"
-                    title="删除表格"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+                  <div className="qz-advanced-table-divider" />
+
+                  <div className="qz-advanced-table-group qz-advanced-table-swatches">
+                    {ADVANCED_TABLE_CELL_COLORS.map((color) => (
+                      <button
+                        key={color.value}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => (editor.chain().focus() as any).setCellAttribute('backgroundColor', color.value).run()}
+                        className="qz-advanced-table-swatch"
+                        style={{ background: color.value === 'transparent' ? 'transparent' : color.value }}
+                        title={`单元格底色：${color.label}`}
+                      >
+                        {color.value === 'transparent' && <Palette size={11} />}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="qz-advanced-table-divider" />
+
+                  <div className="qz-advanced-table-group">
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => editor.chain().focus().addColumnAfter().run()}
+                      className="qz-advanced-table-button"
+                      title="添加列"
+                    >
+                      <Columns size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => editor.chain().focus().addRowAfter().run()}
+                      className="qz-advanced-table-button"
+                      title="添加行"
+                    >
+                      <Rows size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => editor.chain().focus().deleteColumn().run()}
+                      className="qz-advanced-table-button qz-advanced-table-danger"
+                      title="删除列"
+                    >
+                      <Trash size={14} className="rotate-90" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => editor.chain().focus().deleteRow().run()}
+                      className="qz-advanced-table-button qz-advanced-table-danger"
+                      title="删除行"
+                    >
+                      <Trash size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => editor.chain().focus().deleteTable().run()}
+                      className="qz-advanced-table-button qz-advanced-table-danger"
+                      title="删除表格"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 </BubbleMenu>
               )}
 

@@ -80,6 +80,10 @@ function extractExcerpt(content?: string | null, max = 160): string {
   return stripped.slice(0, max) + '…';
 }
 
+function stripContent(content?: string | null): string {
+  return extractExcerpt(content, 10000).toLowerCase();
+}
+
 interface LinkRowProps {
   note: Note;
   expanded: boolean;
@@ -178,24 +182,44 @@ const LinkRow: React.FC<LinkRowProps> = ({ note, expanded, onToggleExpand, onSel
 const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNoteId, notes, onSelectNote }) => {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
-  const { links, backlinks } = useMemo(() => {
+  const { currentNote, links, backlinks, unlinkedMentions } = useMemo(() => {
     if (!currentNoteId) {
-      return { links: [] as Note[], backlinks: [] as Note[] };
+      return {
+        currentNote: null as Note | null,
+        links: [] as Note[],
+        backlinks: [] as Note[],
+        unlinkedMentions: [] as Note[],
+      };
     }
 
     try {
       const current = notes.find((note) => note.id === currentNoteId);
       const forwardLinkIds = extractLinkedIds(current);
+      const backwardNotes = notes.filter(
+        (note) => note.id !== currentNoteId && extractLinkedIds(note).includes(currentNoteId),
+      );
+      const linkedIds = new Set([...forwardLinkIds, ...backwardNotes.map((note) => note.id), currentNoteId]);
+      const currentTitle = (current?.title || '').trim().toLowerCase();
 
       return {
+        currentNote: current || null,
         links: notes.filter((note) => forwardLinkIds.includes(note.id)),
-        backlinks: notes.filter(
-          (note) => note.id !== currentNoteId && extractLinkedIds(note).includes(currentNoteId),
-        ),
+        backlinks: backwardNotes,
+        unlinkedMentions: currentTitle
+          ? notes.filter((note) => {
+            if (linkedIds.has(note.id)) return false;
+            return stripContent(`${note.title || ''} ${note.content || ''}`).includes(currentTitle);
+          })
+          : [],
       };
     } catch (error) {
       console.error('Failed to parse links:', error);
-      return { links: [] as Note[], backlinks: [] as Note[] };
+      return {
+        currentNote: null as Note | null,
+        links: [] as Note[],
+        backlinks: [] as Note[],
+        unlinkedMentions: [] as Note[],
+      };
     }
   }, [currentNoteId, notes]);
 
@@ -220,6 +244,15 @@ const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNoteId, notes, o
     } else {
       setExpandedIds(new Set(allIds));
     }
+  };
+
+  const wikiLink = currentNote?.title ? `[[${currentNote.title}]]` : '';
+
+  const copyWikiLink = () => {
+    if (!wikiLink) return;
+    void navigator.clipboard?.writeText(wikiLink).catch((error) => {
+      console.error('Failed to copy wiki link:', error);
+    });
   };
 
   if (!currentNoteId) {
@@ -257,7 +290,46 @@ const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNoteId, notes, o
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-6">
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-5">
+        <section className="qz-backlinks-overview space-y-3">
+          <div data-testid="qz-backlinks-mini-graph" className="qz-backlinks-mini-graph">
+            <div className="qz-backlinks-node is-current" />
+            {backlinks.slice(0, 3).map((note, index) => (
+              <button
+                key={`back-${note.id}`}
+                type="button"
+                onClick={() => onSelectNote(note)}
+                className="qz-backlinks-node"
+                style={{ '--qz-node-index': index } as React.CSSProperties}
+                title={note.title || '无标题'}
+              />
+            ))}
+            {links.slice(0, 3).map((note, index) => (
+              <button
+                key={`forward-${note.id}`}
+                type="button"
+                onClick={() => onSelectNote(note)}
+                className="qz-backlinks-node is-forward"
+                style={{ '--qz-node-index': index + 3 } as React.CSSProperties}
+                title={note.title || '无标题'}
+              />
+            ))}
+          </div>
+          {wikiLink && (
+            <div className="qz-backlinks-wikilink">
+              <code>{wikiLink}</code>
+              <button
+                type="button"
+                aria-label="copy-current-note-wikilink"
+                onClick={copyWikiLink}
+                title="复制双链语法"
+              >
+                复制
+              </button>
+            </div>
+          )}
+        </section>
+
         <section className="space-y-3">
           <h4 className="px-2 text-[10px] font-semibold text-primary/60 flex items-center gap-1.5">
             <LinkIcon size={10} className="rotate-45" />
@@ -309,6 +381,34 @@ const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNoteId, notes, o
             ) : (
               <div className="px-3 py-4 text-[10px] text-muted-foreground/40 italic">
                 这篇笔记没有引用其他笔记
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h4 className="px-2 text-[10px] font-semibold text-muted-foreground/60 flex items-center gap-1.5">
+            <LinkIcon size={10} className="-rotate-12" />
+            未链接提及
+            {unlinkedMentions.length > 0 && (
+              <span className="text-muted-foreground/40 font-normal ml-1">({unlinkedMentions.length})</span>
+            )}
+          </h4>
+          <div className="space-y-1">
+            {unlinkedMentions.length > 0 ? (
+              unlinkedMentions.map((note) => (
+                <LinkRow
+                  key={note.id}
+                  note={note}
+                  expanded={expandedIds.has(note.id)}
+                  onToggleExpand={() => toggleExpand(note.id)}
+                  onSelect={() => onSelectNote(note)}
+                  accent="forward"
+                />
+              ))
+            ) : (
+              <div className="px-3 py-4 text-[10px] text-muted-foreground/40 italic">
+                暂时没有发现未建立双链的提及
               </div>
             )}
           </div>

@@ -526,11 +526,43 @@ const propertyTypeAttr = {
   },
 };
 
+const advancedTableCellAttrs = {
+  backgroundColor: {
+    default: '',
+    parseHTML: (element: HTMLElement) =>
+      element.getAttribute('data-qz-cell-bg') ||
+      element.style.getPropertyValue('background-color') ||
+      '',
+    renderHTML: (attributes: { backgroundColor?: string }) => {
+      const value = attributes.backgroundColor?.trim();
+      if (!value || value === 'transparent') {
+        return {};
+      }
+      return { 'data-qz-cell-bg': value };
+    },
+  },
+  textAlign: {
+    default: '',
+    parseHTML: (element: HTMLElement) =>
+      element.getAttribute('data-qz-cell-align') ||
+      element.style.getPropertyValue('text-align') ||
+      '',
+    renderHTML: (attributes: { textAlign?: string }) => {
+      const value = attributes.textAlign?.trim();
+      if (!value) {
+        return {};
+      }
+      return { 'data-qz-cell-align': value };
+    },
+  },
+};
+
 export const DatabaseTableHeader = BaseTableHeader.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
       ...propertyTypeAttr,
+      ...advancedTableCellAttrs,
     };
   },
 });
@@ -540,6 +572,7 @@ export const DatabaseTableCell = BaseTableCell.extend({
     return {
       ...this.parent?.(),
       ...propertyTypeAttr,
+      ...advancedTableCellAttrs,
     };
   },
 });
