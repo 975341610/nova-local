@@ -100,7 +100,7 @@ export function FindReplacePanel({ open, onClose, editor }: FindReplacePanelProp
   return (
     <div
       data-testid="qingzhi-find-replace-panel"
-      className="absolute top-2 right-2 z-40 w-[320px] rounded-xl border border-border/40 bg-background/95 p-3 shadow-xl backdrop-blur-md"
+      className="absolute top-14 right-2 z-40 w-[320px] rounded-xl border border-border/40 bg-background/95 p-3 shadow-xl backdrop-blur-md"
     >
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">

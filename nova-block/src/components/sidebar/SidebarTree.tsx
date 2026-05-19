@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Settings, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout, Sparkles } from 'lucide-react';
 import { buildTree, moveNode, isDescendant, flattenTree, normalizeSelectedRoots } from '../../lib/novablock/treeUtils';
-import type { TreeNode } from '../../lib/novablock/treeUtils';
+import type { TreeNode, FlattenedNode } from '../../lib/novablock/treeUtils';
 import { TreeNodeItem } from './TreeNodeItem';
 import GlobalSearchPanel from './GlobalSearchPanel';
 import BacklinksPanel from './BacklinksPanel';
@@ -119,7 +119,13 @@ export const SidebarTree = ({
       } else if (sortMode === 'opened') {
         sortKey = tsToInvKey(getLastOpened(id));
       } else {
-        sortKey = n.position?.toString() || 'm';
+        // F2 bug 2b: 优先使用 sort_key (后端真相),回退到 position
+        const sk = (n as { sort_key?: string | null }).sort_key;
+        if (sk != null && sk !== '') {
+          sortKey = String(sk);
+        } else {
+          sortKey = n.position?.toString() || 'm';
+        }
       }
       return {
         ...n,
@@ -201,6 +207,62 @@ export const SidebarTree = ({
   const tree = useMemo(() => buildTree(nodes), [nodes]);
   const visibleNodes = useMemo(() => flattenTree(tree, expandedIds), [tree, expandedIds]);
 
+  // F3 bug · 排序按日期分组 (今天/昨天/更早)
+  // 仅当 sortMode 选择了 created/updated/opened 时,把 visibleNodes 按日期桶分段,
+  // 在每段前插入一行 group header (id 以 __group__: 开头, 渲染时显式区分)。
+  type GroupBucket = 'today' | 'yesterday' | 'earlier';
+  type GroupHeaderRow = { __isGroupHeader: true; id: string; title: string; bucket: GroupBucket };
+  type RowItem = FlattenedNode | GroupHeaderRow;
+
+  const groupedRows: RowItem[] = useMemo(() => {
+    if (sortMode === 'manual') return visibleNodes as RowItem[];
+    // 计算今天 0 点
+    const now = Date.now();
+    const today0 = new Date(now);
+    today0.setHours(0, 0, 0, 0);
+    const todayStart = today0.getTime();
+    const yesterdayStart = todayStart - 24 * 3600 * 1000;
+    const tomorrowStart = todayStart + 24 * 3600 * 1000;
+
+    const tsForNode = (n: TreeNode): number => {
+      const id = String(n.id);
+      if (sortMode === 'opened') return getLastOpened(id);
+      if (sortMode === 'created')
+        return parseTs((n as { created_at?: string | number }).created_at);
+      if (sortMode === 'updated')
+        return parseTs((n as { updated_at?: string | number }).updated_at);
+      return 0;
+    };
+    const bucketOf = (ts: number): GroupBucket => {
+      if (ts >= todayStart && ts < tomorrowStart) return 'today';
+      if (ts >= yesterdayStart && ts < todayStart) return 'yesterday';
+      return 'earlier';
+    };
+    const labelOf = (b: GroupBucket): string =>
+      b === 'today' ? '今天' : b === 'yesterday' ? '昨天' : '更早';
+
+    const rows: RowItem[] = [];
+    let lastBucket: GroupBucket | null = null;
+    for (const n of visibleNodes) {
+      // 仅在 root 层(depth=0,即没有 parentId 的可见节点)插入分组头,
+      // 子节点跟随其父级,不重复分组。
+      if (n.parentId == null) {
+        const b = bucketOf(tsForNode(n));
+        if (b !== lastBucket) {
+          rows.push({
+            __isGroupHeader: true,
+            id: `__group__:${b}`,
+            title: labelOf(b),
+            bucket: b,
+          });
+          lastBucket = b;
+        }
+      }
+      rows.push(n);
+    }
+    return rows;
+  }, [visibleNodes, sortMode]);
+
   const handleToggle = (nodeId: string) => {
     setExpandedIds(prev => {
       const next = new Set(prev);
@@ -221,6 +283,27 @@ export const SidebarTree = ({
     // 如果目标是 nodeId 的子孙，则拦截
     if (isDescendant(nodes, targetId, nodeId)) {
       console.warn('Cannot move a parent node into its own descendant');
+      return;
+    }
+
+    // F2 bug 2a: 如果被拖拽的节点处于多选集合 (size>=2),走批量移动而非单条移动。
+    // 仅当 position === 'into' 时支持(批量 only 接受 parentId,不区分 before/after)。
+    if (multiSelected.has(nodeId) && multiSelected.size >= 2 && position === 'into') {
+      const ids = normalizeSelectedRoots(nodes, multiSelected);
+      // 拒绝把多选集合中的祖先移动到自己的子孙
+      const blocked = ids.some((id) => isDescendant(nodes, targetId, id));
+      if (blocked) {
+        console.warn('Cannot bulk-move into a descendant of selected nodes');
+        return;
+      }
+      onNodesBulkMove?.(ids, targetId);
+      // 自动展开目标文件夹
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.add(targetId);
+        return next;
+      });
+      setMultiSelected(new Set());
       return;
     }
 
@@ -490,6 +573,12 @@ export const SidebarTree = ({
             {!isCollapsed && (
               <div
                 data-sidebar-tree-canvas
+                onClick={(e) => {
+                  // F2 bug 2c: 点击空白区域(非节点本身)→ 清空多选
+                  const target = e.target as HTMLElement;
+                  if (target.closest('[data-tree-node-id]')) return;
+                  if (multiSelected.size > 0) setMultiSelected(new Set());
+                }}
                 onContextMenu={(e) => {
                   const target = e.target as HTMLElement;
                   if (target.closest('[data-tree-node-id]')) return;
@@ -501,65 +590,80 @@ export const SidebarTree = ({
                 style={{ height: '100%', minHeight: 400 }}
               >
                 <div style={{ height: '100%' }}>
-                  {visibleNodes.map((node) => (
-                    <TreeNodeItem
-                      key={node.id}
-                      node={node}
-                      onMove={handleMove}
-                      onSelect={handleSelect}
-                      onToggle={handleToggle}
-                      selectedId={selectedId}
-                      editingId={editingId}
-                      isMultiSelected={multiSelected.has(node.id)}
-                      onItemClick={(e, n) => {
-                        // F2b 多选交互: Ctrl/Cmd toggle, Shift range, plain → 清空多选
-                        const isMod = e.ctrlKey || e.metaKey;
-                        if (isMod) {
-                          setMultiSelected((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(n.id)) next.delete(n.id);
-                            else next.add(n.id);
-                            return next;
-                          });
-                          setRangeAnchor(n.id);
-                          return true;
-                        }
-                        if (e.shiftKey && rangeAnchor) {
-                          const ids = visibleNodes.map((v) => v.id);
-                          const a = ids.indexOf(rangeAnchor);
-                          const b = ids.indexOf(n.id);
-                          if (a >= 0 && b >= 0) {
-                            const [from, to] = a < b ? [a, b] : [b, a];
-                            const range = ids.slice(from, to + 1);
+                  {groupedRows.map((row) => {
+                    if ('__isGroupHeader' in row && row.__isGroupHeader) {
+                      return (
+                        <div
+                          key={row.id}
+                          data-testid="qingzhi-sidebar-group-header"
+                          data-group-bucket={row.bucket}
+                          className="qz-sidebar-group-header px-3 pt-3 pb-1 text-[10px] font-semibold tracking-widest text-muted-foreground/60 uppercase select-none"
+                        >
+                          {row.title}
+                        </div>
+                      );
+                    }
+                    const node = row as FlattenedNode;
+                    return (
+                      <TreeNodeItem
+                        key={node.id}
+                        node={node}
+                        onMove={handleMove}
+                        onSelect={handleSelect}
+                        onToggle={handleToggle}
+                        selectedId={selectedId}
+                        editingId={editingId}
+                        isMultiSelected={multiSelected.has(node.id)}
+                        onItemClick={(e, n) => {
+                          // F2b 多选交互: Ctrl/Cmd toggle, Shift range, plain → 清空多选
+                          const isMod = e.ctrlKey || e.metaKey;
+                          if (isMod) {
                             setMultiSelected((prev) => {
                               const next = new Set(prev);
-                              range.forEach((id) => next.add(id));
+                              if (next.has(n.id)) next.delete(n.id);
+                              else next.add(n.id);
                               return next;
                             });
+                            setRangeAnchor(n.id);
+                            return true;
                           }
-                          return true;
-                        }
-                        // plain click → 清空多选,让默认行为继续 (toggle/select)
-                        if (multiSelected.size > 0) setMultiSelected(new Set());
-                        setRangeAnchor(n.id);
-                        return false;
-                      }}
-                      onContextMenu={(e, n) => {
-                        // F2b: 若右击节点本身处于多选集合且 size>=2 → 弹批量菜单
-                        if (multiSelected.has(n.id) && multiSelected.size >= 2) {
-                          setBulkContextMenu({ x: e.clientX, y: e.clientY });
-                          return;
-                        }
-                        setContextMenu({ x: e.clientX, y: e.clientY, node: n });
-                      }}
-                      onRenameSubmit={(nodeId, newTitle) => {
-                        setEditingId(null);
-                        if (newTitle.trim() && newTitle !== node.title) {
-                          onNodeRename?.(nodeId, newTitle);
-                        }
-                      }}
-                    />
-                  ))}
+                          if (e.shiftKey && rangeAnchor) {
+                            const ids = visibleNodes.map((v) => v.id);
+                            const a = ids.indexOf(rangeAnchor);
+                            const b = ids.indexOf(n.id);
+                            if (a >= 0 && b >= 0) {
+                              const [from, to] = a < b ? [a, b] : [b, a];
+                              const range = ids.slice(from, to + 1);
+                              setMultiSelected((prev) => {
+                                const next = new Set(prev);
+                                range.forEach((id) => next.add(id));
+                                return next;
+                              });
+                            }
+                            return true;
+                          }
+                          // plain click → 清空多选,让默认行为继续 (toggle/select)
+                          if (multiSelected.size > 0) setMultiSelected(new Set());
+                          setRangeAnchor(n.id);
+                          return false;
+                        }}
+                        onContextMenu={(e, n) => {
+                          // F2b: 若右击节点本身处于多选集合且 size>=2 → 弹批量菜单
+                          if (multiSelected.has(n.id) && multiSelected.size >= 2) {
+                            setBulkContextMenu({ x: e.clientX, y: e.clientY });
+                            return;
+                          }
+                          setContextMenu({ x: e.clientX, y: e.clientY, node: n });
+                        }}
+                        onRenameSubmit={(nodeId, newTitle) => {
+                          setEditingId(null);
+                          if (newTitle.trim() && newTitle !== node.title) {
+                            onNodeRename?.(nodeId, newTitle);
+                          }
+                        }}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -854,6 +958,12 @@ export const SidebarTree = ({
                       key={folder.id}
                       onClick={() => {
                         onNodesBulkMove?.(bulkMoveModal.ids, folder.id);
+                        // F2 bug 2b: 自动展开目标文件夹,避免移动后看不到结果
+                        setExpandedIds((prev) => {
+                          const next = new Set(prev);
+                          next.add(folder.id);
+                          return next;
+                        });
                         setBulkMoveModal(null);
                         setMultiSelected(new Set());
                       }}
