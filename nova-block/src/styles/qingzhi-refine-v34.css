@@ -1409,9 +1409,15 @@ html:not([data-nv-theme]) {
   pointer-events: none !important;
 }
 
-.qz-table-edge-button {
+.qz-table-edge-button,
+.qz-table-edge-select-zone {
+  --qz-table-tooltip-delay: 3s;
   position: fixed !important;
-  z-index: 131 !important;
+  pointer-events: auto !important;
+}
+
+.qz-table-edge-button {
+  z-index: 132 !important;
   display: grid !important;
   width: 34px !important;
   height: 34px !important;
@@ -1424,7 +1430,6 @@ html:not([data-nv-theme]) {
   font-weight: 700 !important;
   line-height: 1 !important;
   box-shadow: none !important;
-  pointer-events: auto !important;
 }
 
 .qz-table-edge-button::after {
@@ -1436,19 +1441,19 @@ html:not([data-nv-theme]) {
   border: 0 !important;
   border-radius: 999px !important;
   background: transparent !important;
-  color: rgba(128, 168, 156, .7) !important;
+  color: rgba(128, 168, 156, .72) !important;
   font-size: 16px !important;
   line-height: 1 !important;
   box-shadow: none !important;
 }
 
-.qz-table-edge-button::before {
+.qz-table-edge-button::before,
+.qz-table-edge-select-zone::before {
   content: attr(data-qz-label) !important;
   position: absolute !important;
   left: 50% !important;
   bottom: calc(100% + 7px) !important;
-  display: none !important;
-  transform: translateX(-50%) !important;
+  transform: translateX(-50%) translateY(2px) !important;
   border-radius: 7px !important;
   background: rgba(35, 36, 38, .96) !important;
   color: #fff !important;
@@ -1458,6 +1463,10 @@ html:not([data-nv-theme]) {
   padding: 7px 9px !important;
   white-space: nowrap !important;
   box-shadow: 0 10px 24px rgba(35, 36, 38, .22) !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transition: opacity .12s ease var(--qz-table-tooltip-delay), visibility 0s linear var(--qz-table-tooltip-delay), transform .12s ease var(--qz-table-tooltip-delay) !important;
+  pointer-events: none !important;
 }
 
 .qz-table-edge-button:hover {
@@ -1465,11 +1474,13 @@ html:not([data-nv-theme]) {
 }
 
 .qz-table-edge-button:hover::before,
-.qz-table-edge-button.is-hot::before {
-  display: block !important;
+.qz-table-edge-button.is-hot::before,
+.qz-table-edge-select-zone:hover::before {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateX(-50%) translateY(0) !important;
 }
 
-.qz-table-edge-button:hover::after,
 .qz-table-edge-button.is-hot::after {
   content: "+" !important;
   width: 18px !important;
@@ -1482,14 +1493,12 @@ html:not([data-nv-theme]) {
 }
 
 .qz-table-edge-select-zone {
-  position: fixed !important;
   z-index: 131 !important;
   display: block !important;
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
-  pointer-events: auto !important;
   cursor: pointer !important;
   transition: border-color .16s ease, box-shadow .16s ease !important;
 }
@@ -1519,14 +1528,6 @@ html:not([data-nv-theme]) {
 
 .qz-table-edge-select-zone:hover {
   background: transparent !important;
-}
-
-.qz-table-edge-select-zone.is-column:hover::after {
-  border-top-color: rgba(63, 116, 255, .52) !important;
-}
-
-.qz-table-edge-select-zone.is-row:hover::after {
-  border-left-color: rgba(63, 116, 255, .52) !important;
 }
 
 .qz-table-insert-line {

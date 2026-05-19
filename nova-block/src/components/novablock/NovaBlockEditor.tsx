@@ -639,16 +639,21 @@ interface NovaBlockEditorProps {
   onToggleTypewriter?: () => void;
 }
 
-type AdvancedTableEdgeControl = {
-  kind: 'row' | 'column';
+type AdvancedTableEdgeDot = {
+  key: string;
+  left: number;
+  top: number;
   commandPoint: { x: number; y: number };
-  button: { left: number; top: number };
-  select: { left: number; top: number; width: number; height: number };
   line: { left: number; top: number; width: number; height: number };
 };
 
+type AdvancedTableEdgeControl = {
+  kind: 'row' | 'column';
+  select: { left: number; top: number; width: number; height: number };
+  dots: AdvancedTableEdgeDot[];
+};
+
 type AdvancedTableEdgeIntent = null | {
-  activeKind: 'row' | 'column' | null;
   row: AdvancedTableEdgeControl;
   column: AdvancedTableEdgeControl;
 };
@@ -683,6 +688,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [showAdvancedTableToolbar, setShowAdvancedTableToolbar] = useState(false);
   const [advancedTableSize, setAdvancedTableSize] = useState({ open: false, rows: 4, cols: 4 });
   const [advancedTableEdgeIntent, setAdvancedTableEdgeIntent] = useState<AdvancedTableEdgeIntent>(null);
+  // The blue insertion line and "+" affordance are gated by hovering a specific
+  // persistent dot (identified by its key), never by merely touching a table
+  // row/column border.
+  const [hoveredInsertTarget, setHoveredInsertTarget] = useState<{ kind: 'row' | 'column'; key: string } | null>(null);
   const [advancedTableSelectionScope, setAdvancedTableSelectionScope] = useState<'cell' | 'row' | 'column' | null>(null);
   const [advancedTablePopover, setAdvancedTablePopover] = useState<'text' | 'color' | null>(null);
   const [isAdvancedTableResizeCursor, setIsAdvancedTableResizeCursor] = useState(false);
@@ -977,6 +986,27 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const selectAdvancedTableCellAtPoint = useCallback((view: any, clientX: number, clientY: number) => {
     const cellPos = getAdvancedTableCellPosAtPoint(view, clientX, clientY);
     if (cellPos === null) return false;
+    // Bug fix (right-click after left-click): if the same cell is already
+    // CellSelection-selected, dispatching an identical CellSelection produces
+    // a no-op transaction that does NOT emit selectionUpdate, so BubbleMenu's
+    // shouldShow never re-runs and the advanced table toolbar fails to appear.
+    // Force a selection delta by collapsing through a TextSelection first.
+    const currentSelection = view.state.selection;
+    const isSameCellSelection =
+      currentSelection instanceof CellSelection &&
+      currentSelection.$anchorCell &&
+      currentSelection.$headCell &&
+      currentSelection.$anchorCell.pos === currentSelection.$headCell.pos &&
+      currentSelection.$anchorCell.pos === cellPos;
+    if (isSameCellSelection) {
+      try {
+        const $cell = view.state.doc.resolve(cellPos);
+        const textSel = TextSelection.near($cell);
+        view.dispatch(view.state.tr.setSelection(textSel));
+      } catch {
+        // best-effort; fall through to CellSelection re-apply
+      }
+    }
     const selection = CellSelection.create(view.state.doc, cellPos);
     view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
     view.focus();
@@ -1016,7 +1046,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       }
     }
     setAdvancedTableEdgeIntent(null);
-    setShowAdvancedTableToolbar(true);
+    // Bug fix: force BubbleMenu to re-evaluate shouldShow even if the toolbar
+    // visibility flag was already true (e.g. opened, dismissed by an outside
+    // click that didn't reach this state, then re-opened on the same cell).
+    setShowAdvancedTableToolbar(false);
+    Promise.resolve().then(() => setShowAdvancedTableToolbar(true));
     return true;
   }, [selectAdvancedTableCellAtPoint]);
 
@@ -1127,12 +1161,29 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     return 'cell';
   }, [isAdvancedTableCellSelection]);
 
+  const advancedTableCellSelectionSize = useCallback((selection: any): number => {
+    if (!isAdvancedTableCellSelection(selection)) return 0;
+    let count = 0;
+    try {
+      selection.forEachCell(() => { count += 1; });
+    } catch {
+      count = 0;
+    }
+    return count;
+  }, [isAdvancedTableCellSelection]);
+
   const shouldShowAdvancedTableToolbar = useCallback((nextEditor: Editor) => {
     if (!nextEditor.isActive('table')) return false;
     const scope = getAdvancedTableSelectionScope(nextEditor.state.selection);
     if (showAdvancedTableToolbar) return true;
-    return scope === 'row' || scope === 'column';
-  }, [getAdvancedTableSelectionScope, showAdvancedTableToolbar]);
+    if (scope === 'row' || scope === 'column') return true;
+    // Bug fix #1: any multi-cell drag selection (>=2 cells) should also pop the toolbar,
+    // not only full-row / full-column selections.
+    if (scope === 'cell' && advancedTableCellSelectionSize(nextEditor.state.selection) >= 2) {
+      return true;
+    }
+    return false;
+  }, [getAdvancedTableSelectionScope, showAdvancedTableToolbar, advancedTableCellSelectionSize]);
 
   const insertAdvancedTableWithSize = useCallback((rows: number, cols: number) => {
     if (!editor || editor.isDestroyed) return;
@@ -1318,31 +1369,67 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     enterAdvancedTableCellAtPoint(editor.view, event.clientX, event.clientY);
   }, [editor, enterAdvancedTableCellAtPoint, isAdvancedTableColumnResizeHandleHit]);
 
-  const clearCurrentTableCell = useCallback(() => {
-    if (!editor || editor.isDestroyed) return;
-    const { state, view } = editor;
-    const { $from } = state.selection;
-    let cellDepth = -1;
-
+  // Walks every cell touched by the current selection. For CellSelection (multi-cell
+  // marquee), this enumerates every covered cell; for ordinary TextSelection, it
+  // emits the single ancestor cell at $from. Used so that "clear cell" / "set
+  // background color" buttons act on the entire marquee, not just the anchor cell.
+  const forEachCellInSelection = useCallback((
+    state: any,
+    fn: (node: any, pos: number) => void,
+  ) => {
+    const { selection } = state;
+    if (selection instanceof CellSelection) {
+      const cells: Array<{ node: any; pos: number }> = [];
+      selection.forEachCell((node: any, pos: number) => {
+        cells.push({ node, pos });
+      });
+      // Process in reverse doc order so earlier replacements don't shift later positions.
+      cells.sort((a, b) => b.pos - a.pos);
+      cells.forEach(({ node, pos }) => fn(node, pos));
+      return cells.length;
+    }
+    const { $from } = selection;
     for (let depth = $from.depth; depth > 0; depth -= 1) {
       const nodeName = $from.node(depth).type.name;
       if (nodeName === 'tableCell' || nodeName === 'tableHeader') {
-        cellDepth = depth;
-        break;
+        const pos = $from.before(depth);
+        fn($from.node(depth), pos);
+        return 1;
       }
     }
+    return 0;
+  }, []);
 
-    if (cellDepth < 0) return;
-
-    const cellStart = $from.before(cellDepth);
-    const cell = $from.node(cellDepth);
+  const clearAdvancedTableSelectedCells = useCallback(() => {
+    if (!editor || editor.isDestroyed) return;
+    const { state, view } = editor;
     const paragraph = state.schema.nodes.paragraph?.create();
     if (!paragraph) return;
-
-    const tr = state.tr.replaceWith(cellStart + 1, cellStart + cell.nodeSize - 1, paragraph);
+    const tr = state.tr;
+    const count = forEachCellInSelection(state, (node, pos) => {
+      tr.replaceWith(pos + 1, pos + node.nodeSize - 1, paragraph);
+    });
+    if (count === 0) return;
     view.dispatch(tr.scrollIntoView());
     view.focus();
-  }, [editor]);
+  }, [editor, forEachCellInSelection]);
+
+  // setCellAttribute already supports CellSelection in prosemirror-tables, but in
+  // practice the popover button click path can collapse the CellSelection back to
+  // a TextSelection (focus() side-effect, hover-out, etc.) before the chain runs.
+  // To make the behaviour deterministic we drive the transaction ourselves: walk
+  // the marquee, setNodeMarkup on every cell, dispatch once.
+  const applyAdvancedTableCellBackground = useCallback((value: string) => {
+    if (!editor || editor.isDestroyed) return;
+    const { state, view } = editor;
+    const tr = state.tr;
+    const count = forEachCellInSelection(state, (node, pos) => {
+      tr.setNodeMarkup(pos, undefined, { ...node.attrs, backgroundColor: value });
+    });
+    if (count === 0) return;
+    view.dispatch(tr.scrollIntoView());
+    view.focus();
+  }, [editor, forEachCellInSelection]);
 
   const handleAdvancedTableMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
@@ -1361,7 +1448,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }
 
     const cell = target?.closest('td, th') as HTMLElement | null;
-    const table = cell?.closest('table') as HTMLElement | null;
+    const table = cell?.closest('table') as HTMLTableElement | null;
 
     if (!cell || !table) {
       setAdvancedTableEdgeIntent(null);
@@ -1369,28 +1456,53 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }
 
     const tableRect = table.getBoundingClientRect();
-    const cellRect = cell.getBoundingClientRect();
-    const nearTopEdge = event.clientY >= tableRect.top - 28 && event.clientY <= tableRect.top + 30;
-    const nearLeftEdge = event.clientX >= tableRect.left - 28 && event.clientX <= tableRect.left + 30;
-    const safeCellY = cellRect.top + Math.min(20, Math.max(8, cellRect.height / 2));
-    const safeCellX = cellRect.left + Math.min(20, Math.max(8, cellRect.width / 2));
-    const activeKind = nearTopEdge ? 'column' : nearLeftEdge ? 'row' : null;
+    const rows = Array.from(table.rows);
+    if (rows.length === 0) {
+      setAdvancedTableEdgeIntent(null);
+      return;
+    }
+    const headerCells = Array.from(rows[0].cells);
+
+    // Persistent dots cover every row (left edge) and every column (top edge)
+    // simultaneously, regardless of which cell the cursor is currently over.
+    const columnDots: AdvancedTableEdgeDot[] = headerCells.map((headerCell, index) => {
+      const r = headerCell.getBoundingClientRect();
+      const safeY = r.top + Math.min(20, Math.max(8, r.height / 2));
+      return {
+        key: `col-${index}`,
+        left: r.right - 17,
+        top: tableRect.top - 40,
+        commandPoint: { x: r.left + r.width / 2, y: safeY },
+        line: { left: r.right - 1, top: tableRect.top, width: 2, height: tableRect.height },
+      };
+    });
+
+    const rowDots: AdvancedTableEdgeDot[] = rows.map((rowEl, index) => {
+      const firstCell = rowEl.cells[0];
+      if (!firstCell) {
+        return null;
+      }
+      const r = firstCell.getBoundingClientRect();
+      const safeX = r.left + Math.min(20, Math.max(8, r.width / 2));
+      return {
+        key: `row-${index}`,
+        left: tableRect.left - 40,
+        top: r.bottom - 17,
+        commandPoint: { x: safeX, y: r.top + r.height / 2 },
+        line: { left: tableRect.left, top: r.bottom - 1, width: tableRect.width, height: 2 },
+      };
+    }).filter((dot): dot is AdvancedTableEdgeDot => dot !== null);
 
     setAdvancedTableEdgeIntent({
-      activeKind,
       column: {
         kind: 'column',
-        commandPoint: { x: cellRect.left + cellRect.width / 2, y: safeCellY },
-        button: { left: cellRect.right - 17, top: tableRect.top - 22 },
-        select: { left: cellRect.left - 8, top: tableRect.top - 36, width: Math.max(38, cellRect.width + 16), height: 36 },
-        line: { left: cellRect.right - 1, top: tableRect.top, width: 2, height: tableRect.height },
+        select: { left: tableRect.left, top: tableRect.top - 28, width: tableRect.width, height: 28 },
+        dots: columnDots,
       },
       row: {
         kind: 'row',
-        commandPoint: { x: safeCellX, y: cellRect.top + cellRect.height / 2 },
-        button: { left: tableRect.left - 22, top: cellRect.bottom - 17 },
-        select: { left: tableRect.left - 36, top: cellRect.top - 8, width: 36, height: Math.max(38, cellRect.height + 16) },
-        line: { left: tableRect.left, top: cellRect.bottom - 1, width: tableRect.width, height: 2 },
+        select: { left: tableRect.left - 28, top: tableRect.top, width: 28, height: tableRect.height },
+        dots: rowDots,
       },
     });
   }, [editor, isAdvancedTableColumnResizeHandleHit]);
@@ -1402,13 +1514,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     setAdvancedTableEdgeIntent(null);
   }, []);
 
-  const insertAdvancedTableEdge = useCallback((kind: 'row' | 'column') => {
-    if (!editor || !advancedTableEdgeIntent) return;
-    const edge = advancedTableEdgeIntent[kind];
-    const coords = editor.view.posAtCoords({
-      left: edge.commandPoint.x,
-      top: edge.commandPoint.y,
-    });
+  const insertAdvancedTableEdgeAtPoint = useCallback((kind: 'row' | 'column', x: number, y: number) => {
+    if (!editor) return;
+    const coords = editor.view.posAtCoords({ left: x, top: y });
 
     if (coords) {
       editor.chain().focus(coords.pos).run();
@@ -1422,17 +1530,24 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       editor.chain().focus().addColumnAfter().run();
     }
     setAdvancedTableEdgeIntent(null);
-  }, [advancedTableEdgeIntent, editor]);
+  }, [editor]);
 
-  const selectAdvancedTableEdge = useCallback((kind: 'row' | 'column') => {
+  const selectAdvancedTableEdge = useCallback((kind: 'row' | 'column', clientX?: number, clientY?: number) => {
     if (!editor || !advancedTableEdgeIntent) return;
     const edge = advancedTableEdgeIntent[kind];
     const { state, view } = editor;
-    const cellPos = getAdvancedTableCellPosAtPoint(
-      view,
-      edge.commandPoint.x,
-      edge.commandPoint.y,
-    );
+    // For row strips we must keep the X anchored to the inside of the table (the strip
+    // sits OUTSIDE the table); analogously for column strips on Y. Fall back to a point
+    // just inside the table edge derived from the select-strip geometry.
+    const fallbackX = edge.select.left + edge.select.width + 8;
+    const fallbackY = edge.select.top + edge.select.height + 8;
+    const probeX = kind === 'row'
+      ? fallbackX
+      : (clientX !== undefined ? clientX : edge.select.left + edge.select.width / 2);
+    const probeY = kind === 'column'
+      ? fallbackY
+      : (clientY !== undefined ? clientY : edge.select.top + edge.select.height / 2);
+    const cellPos = getAdvancedTableCellPosAtPoint(view, probeX, probeY);
     if (cellPos === null) return;
     const $cell = state.doc.resolve(cellPos);
     const selection = kind === 'row'
@@ -1469,13 +1584,32 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       setAdvancedTableSelectionScope(scope);
       if (scope === 'row' || scope === 'column') {
         setShowAdvancedTableToolbar(true);
+      } else if (scope === 'cell' && advancedTableCellSelectionSize(nextEditor.state.selection) >= 2) {
+        // Bug fix #1: drag-selection across multiple cells should reveal the toolbar.
+        setShowAdvancedTableToolbar(true);
       }
     };
     editor.on('selectionUpdate', handleSelectionUpdate);
     return () => {
       editor.off('selectionUpdate', handleSelectionUpdate);
     };
-  }, [editor, getAdvancedTableSelectionScope]);
+  }, [editor, getAdvancedTableSelectionScope, advancedTableCellSelectionSize]);
+
+  // Round-3 fix #4: edge controls are positioned in viewport space (position: fixed).
+  // When the editor surface or any ancestor scrolls without a mousemove event, the
+  // cached positions go stale and the +buttons / select-zone visually detach from the
+  // table. Solution: dismiss the edge intent on any scroll inside the editor; the next
+  // mousemove will recompute fresh coordinates against the current viewport.
+  useEffect(() => {
+    const dismiss = () => {
+      setAdvancedTableEdgeIntent(null);
+      setHoveredInsertTarget(null);
+    };
+    window.addEventListener('scroll', dismiss, true);
+    return () => {
+      window.removeEventListener('scroll', dismiss, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (!showAdvancedTableToolbar) return;
@@ -3197,7 +3331,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                             key={color.value}
                             type="button"
                             onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => (editor.chain().focus() as any).setCellAttribute('backgroundColor', color.value).run()}
+                            onClick={() => applyAdvancedTableCellBackground(color.value)}
                             className="qz-advanced-table-swatch"
                             data-transparent={color.value === 'transparent' ? 'true' : undefined}
                             style={{ '--qz-table-swatch': color.value } as React.CSSProperties}
@@ -3211,9 +3345,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                     <button
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
-                      onClick={clearCurrentTableCell}
+                      onClick={clearAdvancedTableSelectedCells}
                       className="qz-advanced-table-button qz-advanced-table-clear-cell"
-                      title="清空当前单元格"
+                      title="清空选中单元格"
                     >
                       <Eraser size={15} />
                     </button>
@@ -3236,28 +3370,30 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setAdvancedTableEdgeIntent(advancedTableEdgeIntent)}
                 >
-                  {advancedTableEdgeIntent.activeKind && (() => {
-                    const edge = advancedTableEdgeIntent[advancedTableEdgeIntent.activeKind];
+                  {hoveredInsertTarget && (() => {
+                    const edge = advancedTableEdgeIntent[hoveredInsertTarget.kind];
+                    const dot = edge.dots.find((d) => d.key === hoveredInsertTarget.key);
+                    if (!dot) return null;
                     return (
                       <div
                         className={`qz-table-insert-line is-${edge.kind}`}
                         style={{
-                          left: edge.line.left,
-                          top: edge.line.top,
-                          width: edge.line.width,
-                          height: edge.line.height,
+                          left: dot.line.left,
+                          top: dot.line.top,
+                          width: dot.line.width,
+                          height: dot.line.height,
                         }}
                       />
                     );
                   })()}
                   {(['column', 'row'] as const).map((kind) => {
                     const edge = advancedTableEdgeIntent[kind];
-                    const isHot = advancedTableEdgeIntent.activeKind === kind;
                     return (
                       <React.Fragment key={kind}>
                         <button
                           type="button"
                           aria-label={`select-advanced-table-${kind}`}
+                          data-qz-label={kind === 'row' ? '选择整行' : '选择整列'}
                           className={`qz-table-edge-select-zone is-${kind}`}
                           style={{
                             left: edge.select.left,
@@ -3268,26 +3404,38 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                           onMouseDown={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            selectAdvancedTableEdge(kind);
+                            selectAdvancedTableEdge(kind, event.clientX, event.clientY);
                           }}
-                          title={kind === 'row' ? '选择整行' : '选择整列'}
                         />
-                        <button
-                          type="button"
-                          aria-label={`insert-advanced-table-${kind}`}
-                          data-qz-label={kind === 'row' ? '插入行' : '插入列'}
-                          className={`qz-table-edge-button qz-table-edge-add-button is-${kind} ${isHot ? 'is-hot' : ''}`}
-                          style={{
-                            left: edge.button.left,
-                            top: edge.button.top,
-                          }}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            insertAdvancedTableEdge(kind);
-                          }}
-                          title={kind === 'row' ? '插入行' : '插入列'}
-                        />
+                        {edge.dots.map((dot) => {
+                          const isHot =
+                            hoveredInsertTarget?.kind === kind && hoveredInsertTarget?.key === dot.key;
+                          return (
+                            <button
+                              key={dot.key}
+                              type="button"
+                              aria-label={`insert-advanced-table-${kind}`}
+                              data-qz-label={kind === 'row' ? '插入行' : '插入列'}
+                              className={`qz-table-edge-button qz-table-edge-dot qz-table-edge-add-button is-${kind} ${isHot ? 'is-hot' : ''}`}
+                              style={{
+                                left: dot.left,
+                                top: dot.top,
+                              }}
+                              onMouseEnter={() => setHoveredInsertTarget({ kind, key: dot.key })}
+                              onMouseLeave={() =>
+                                setHoveredInsertTarget((prev) =>
+                                  prev && prev.kind === kind && prev.key === dot.key ? null : prev,
+                                )
+                              }
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setHoveredInsertTarget(null);
+                                insertAdvancedTableEdgeAtPoint(kind, dot.commandPoint.x, dot.commandPoint.y);
+                              }}
+                            />
+                          );
+                        })}
                       </React.Fragment>
                     );
                   })}
