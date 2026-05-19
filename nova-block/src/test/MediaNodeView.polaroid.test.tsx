@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @vitest-environment jsdom
  *
  * F4-T1 · 取消媒体"拍立得相框"边框
@@ -9,11 +9,6 @@
  */
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
-import { Editor, EditorContent } from '@tiptap/react'
-import { useEditor } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import { Node, mergeAttributes } from '@tiptap/core'
-import { ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react'
 import { MediaNodeView } from '../components/MediaNodeView'
 
 // 我们直接 mount MediaNodeView 来检查渲染产物的 className,

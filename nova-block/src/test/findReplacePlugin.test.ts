@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @vitest-environment jsdom
  *
  * F1-T1 · 查找替换 ProseMirror 插件
@@ -75,7 +75,6 @@ describe('findReplacePlugin', () => {
   it('supports regex=true (matches \\d+ in numeric content)', () => {
     const ed = makeEditor('<p>abc123def456ghi</p>')
     setFindQuery(ed.view, '\\d+', { caseSensitive: true, wholeWord: false, regex: true })
-    const state = getState(ed.view.state ? ed : ed)
     const s = findReplacePluginKey.getState(ed.view.state)!
     expect(s.matches.length).toBe(2)
   })
