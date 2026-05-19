@@ -121,12 +121,12 @@ export function MediaNodeView({ node, updateAttributes, deleteNode, selected, ki
 
   return (
     <NodeViewWrapper className={`group/media relative block my-4 ${selected ? 'ring-2 ring-blue-500 ring-offset-2 rounded-xl' : ''}`} data-media-wrapper style={{ width }}>
-      {/* Outer Polaroid Container */}
-      <div 
+      {/* v0.24.x · 取消"拍立得相框"边框,保留圆角与悬停上移动效 */}
+      <div
         className={
           kind === 'image' || kind === 'video'
-            ? "bg-white dark:bg-stone-800 p-2 pb-8 rounded-xl shadow-sm border border-stone-200/60 dark:border-stone-700 hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 group-hover/media:border-stone-300 dark:group-hover/media:border-stone-600 relative overflow-hidden"
-            : "relative"
+            ? 'rounded-xl hover:-translate-y-0.5 transition-transform duration-300 relative overflow-hidden'
+            : 'relative'
         }
       >
         {/* Floating Toolbar (Hover to show) */}

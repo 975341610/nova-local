@@ -432,3 +432,14 @@
   pointer-events: none !important;
 }
 /* QINGZHI_TITLE_DEDUPE_OPTIONAL_END */
+
+/* F1-T1 · 查找替换高亮样式 */
+.nv-find-match {
+  background-color: rgba(255, 213, 0, 0.35);
+  border-radius: 2px;
+}
+.nv-find-match-current {
+  background-color: rgba(255, 145, 0, 0.55);
+  outline: 2px solid rgba(255, 145, 0, 0.9);
+  outline-offset: 0;
+}

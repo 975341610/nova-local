@@ -59,6 +59,7 @@ const AILoadingNode = Node.create({
 import type { Note } from '../../lib/types';
 
 import { EditorHeader } from '../editor/EditorHeader';
+import { FindReplacePanel } from '../editor/FindReplacePanel';
 import { PropertyPanel } from '../editor/PropertyPanel';
 import { RevisionHistoryDrawer } from '../editor/RevisionHistoryDrawer';
 import { getSuggestionConfig } from '../notion/SlashMenuConfig';
@@ -67,6 +68,7 @@ import { buildPendingSwitchSavePayload, shouldApplySavedDraftToCurrentNote, sync
 import { stripLeadingDuplicateTitleBlockFromHtml } from '../../lib/noteContentTitle';
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
+import { FindReplaceExtension } from '../../lib/novablock/findReplacePlugin';
 import {
   AIStreamingPreviewNode,
   findAIStreamingPreview,
@@ -681,6 +683,18 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   // v0.22.0 · 版本历史抽屉
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [historyNoteId, setHistoryNoteId] = useState<number | null>(null);
+  const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
+  // F1-T3 · Ctrl/Cmd+H toggles find/replace panel
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'h') {
+        event.preventDefault();
+        setIsFindReplaceOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
   const [isEmoticonPanelOpen, setIsEmoticonPanelOpen] = useState(false);
   // v0.21.1 · BubbleMenu 两个新 popover 的展开状态（合并高亮+取色）
   const [isTextColorOpen, setIsTextColorOpen] = useState(false);
@@ -897,6 +911,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     AISpellcheck.configure({ debounceMs: 800 }),
     NoteLink.configure({ suggestion: getNoteLinkSuggestionConfig() }),
     SlashCommands.configure({ suggestion: getSuggestionConfig(slashItemsRef, isAiEnabled) }),
+    FindReplaceExtension,
   ], [isAiEnabled]);
 
   const [outline, setOutline] = useState<any[]>([]);
@@ -2957,7 +2972,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         data-testid="qingzhi-editor-frame"
         className={`qz-editor-frame qz-editor-shell-grid flex flex-1 overflow-hidden ${isTocCollapsed ? 'qz-editor-frame-toc-collapsed' : ''}`}
       >
-        <div data-testid="qingzhi-editor-toprail" className="qz-editor-toprail">
+        <div data-testid="qingzhi-editor-toprail" className="qz-editor-toprail relative">
           <div data-testid="qingzhi-editor-toolbar-row" className="qz-editor-toolbar-row">
             <EditorHeader
               icon={note?.icon ?? '馃摑'}
@@ -2974,6 +2989,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               onToggleMarginNotes={() => onOpenMarginNotes?.()}
               isTypewriterOn={isTypewriterOn}
               onToggleTypewriter={onToggleTypewriter}
+              isFindReplaceOpen={isFindReplaceOpen}
+              onToggleFindReplace={() => setIsFindReplaceOpen((open) => !open)}
               viewMode={viewMode}
               isStickerMode={isStickerMode}
               backgroundPaper={backgroundPaper}
@@ -3021,6 +3038,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               }}
             />
           </div>
+          <FindReplacePanel
+            open={isFindReplaceOpen}
+            onClose={() => setIsFindReplaceOpen(false)}
+            editor={editor}
+          />
         </div>
       <div className="qz-editor-main-column flex min-w-0 flex-1 flex-col overflow-hidden">
       <div

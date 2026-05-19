@@ -11,6 +11,10 @@ interface TreeNodeItemProps {
   onContextMenu?: (e: React.MouseEvent, node: TreeNode) => void;
   editingId?: string | null;
   onRenameSubmit?: (nodeId: string, newTitle: string) => void;
+  /** F2b · 多选标记 (data-multi-selected) */
+  isMultiSelected?: boolean;
+  /** F2b · 父级接管 click (含 Ctrl/Cmd/Shift 判定),返回 true 表示已被父级处理 */
+  onItemClick?: (e: React.MouseEvent, node: TreeNode) => boolean | void;
 }
 
 export const TreeNodeItem = ({
@@ -22,6 +26,8 @@ export const TreeNodeItem = ({
   onContextMenu,
   editingId,
   onRenameSubmit,
+  isMultiSelected,
+  onItemClick,
 }: TreeNodeItemProps) => {
   const [isHovered, setIsHovered] = useState(false);
   const [dragOver, setDragOver] = useState<'before' | 'after' | 'into' | null>(null);
@@ -90,8 +96,11 @@ export const TreeNodeItem = ({
           e.preventDefault();
           onContextMenu?.(e, node);
         }}
-        onClick={() => {
+        onClick={(e) => {
           if (isEditing) return;
+          // F2b: 父级接管 (Ctrl/Cmd/Shift 判定 / 多选清空) — 返回 true 表示父级已处理
+          const handled = onItemClick?.(e, node);
+          if (handled) return;
           if (node.isFolder) {
             onToggle(node.id);
           } else {
@@ -99,13 +108,16 @@ export const TreeNodeItem = ({
           }
         }}
         data-testid={`qingzhi-tree-node-${node.id}`}
+        data-tree-node-id={node.id}
         data-depth={level}
         data-selected={isSelected ? 'true' : 'false'}
+        data-multi-selected={isMultiSelected ? 'true' : 'false'}
         data-folder={node.isFolder ? 'true' : 'false'}
         data-expanded={isOpen ? 'true' : 'false'}
         className={`
           qz-tree-node-item group flex items-center gap-2 py-2 px-3 rounded-xl cursor-pointer transition-colors duration-200
           ${isSelected && !node.isFolder ? 'bg-primary/15 text-primary shadow-sm shadow-primary/5' : 'hover:bg-accent/50 text-muted-foreground hover:text-foreground'}
+          ${isMultiSelected ? 'bg-primary/10 ring-1 ring-primary/40' : ''}
           ${dragOver === 'into' ? 'bg-primary/20 ring-1 ring-primary/30' : ''}
         `}
         style={{ paddingLeft: `${level * 16 + 12}px` }}

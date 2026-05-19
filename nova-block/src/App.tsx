@@ -11,6 +11,7 @@ import { api } from './lib/api'
 import { extractLinkedNoteIds, getNotesNeedingFilenameSync, shouldRenameNoteFile } from './lib/noteSync'
 import { searchIndex } from './lib/searchIndex'
 import { buildSearchableText } from './lib/searchUtils'
+import { recordOpen } from './lib/novablock/openHistory'
 import { migrateLegacyNotes, parseLegacyNotes, shouldRunLegacyMigration } from './lib/legacyLocalMigration'
 import { AnimatePresence, motion } from 'framer-motion'
 import { MusicProvider, useMusicControls } from './contexts/MusicContext'
@@ -1143,6 +1144,8 @@ function App() {
       protectedCurrentNoteIdRef.current = null
       setCurrentNoteId(noteId)
       setActiveView('notes')
+      // F2c · 记录最近打开时间(用于侧边栏"最近打开"排序)
+      recordOpen(String(noteId))
     }
   }
 
@@ -1249,6 +1252,78 @@ function App() {
       setNotes(prev => prev.map(note => note.id === noteId ? mergeNote(note, updated) : note))
     } catch (err) {
       console.error('Failed to move note:', err)
+      await loadNotes(currentNoteId)
+    }
+  }
+
+  const handleNodesBulkMove = async (nodeIds: string[], parentId: string | null) => {
+    if (!nodeIds || nodeIds.length === 0) return
+    const numericIds = nodeIds.map(id => parseInt(id, 10)).filter(n => !Number.isNaN(n))
+    if (numericIds.length === 0) return
+    const nextParentId = parentId ? parseInt(parentId, 10) : null
+
+    const snapshot = useNoteStore.getState().notes
+    // Compute starting sort_key after the last existing sibling under the new parent
+    const siblings = snapshot
+      .filter(n => (n.parent_id ?? null) === nextParentId && !numericIds.includes(n.id))
+      .sort((a, b) => (a.sort_key ?? 'm').localeCompare(b.sort_key ?? 'm'))
+    const lastKey = siblings.length > 0 ? (siblings[siblings.length - 1].sort_key ?? 'm') : null
+
+    // Generate sequential sort keys for the moved batch (lexicographically appended after lastKey)
+    const assignments: Array<{ id: number; sortKey: string }> = []
+    let prev: string | null = lastKey
+    for (const id of numericIds) {
+      const sk = `${prev ?? 'm'}m`
+      assignments.push({ id, sortKey: sk })
+      prev = sk
+    }
+
+    // Optimistic update
+    const lookup = new Map(assignments.map(a => [a.id, a.sortKey]))
+    setNotes(prev => prev.map(note => (
+      lookup.has(note.id)
+        ? { ...note, parent_id: nextParentId, sort_key: lookup.get(note.id)! }
+        : note
+    )))
+
+    try {
+      await Promise.all(assignments.map(({ id, sortKey }) => (
+        api.updateNote(id, { parent_id: nextParentId, sort_key: sortKey })
+      )))
+    } catch (err) {
+      console.error('Failed to bulk move notes:', err)
+      await loadNotes(currentNoteId)
+    }
+  }
+
+  const handleNodesBulkDelete = async (nodeIds: string[]) => {
+    if (!nodeIds || nodeIds.length === 0) return
+    const numericIds = nodeIds.map(id => parseInt(id, 10)).filter(n => !Number.isNaN(n))
+    if (numericIds.length === 0) return
+
+    const snapshot = useNoteStore.getState().notes
+
+    const getDescendants = (parent: number, nodesList: Note[]): number[] => {
+      const children = nodesList.filter(note => note.parent_id === parent)
+      return children.reduce((acc, child) => [...acc, child.id, ...getDescendants(child.id, nodesList)], [] as number[])
+    }
+
+    const idsToRemove = new Set<number>()
+    numericIds.forEach(id => {
+      idsToRemove.add(id)
+      getDescendants(id, snapshot).forEach(d => idsToRemove.add(d))
+    })
+
+    // Optimistic remove
+    const remaining = snapshot.filter(note => !idsToRemove.has(note.id))
+    idsToRemove.forEach(id => searchIndex.removeNote(id))
+    setNotes(remaining)
+    setCurrentNoteId(prev => idsToRemove.has(prev ?? -1) ? pickCurrentNoteId(remaining) : prev)
+
+    try {
+      await Promise.all(numericIds.map(id => api.deleteNote(id)))
+    } catch (err) {
+      console.error('Failed to bulk delete notes:', err)
       await loadNotes(currentNoteId)
     }
   }
@@ -1855,6 +1930,8 @@ function App() {
                 onNodeRename={handleNodeRename}
                 onNodeDelete={handleNodeDelete}
                 onNodeDuplicate={handleNodeDuplicate}
+                onNodesBulkMove={handleNodesBulkMove}
+                onNodesBulkDelete={handleNodesBulkDelete}
                 onTemplateCreate={handleTemplateCreate}
                 onQuickSearchOpen={() => setIsCommandPaletteOpen(true)}
                 onSettingsOpen={() => setIsSettingsOpen(true)}

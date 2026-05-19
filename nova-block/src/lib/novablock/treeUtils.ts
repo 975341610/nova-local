@@ -77,6 +77,39 @@ export function isDescendant(allNodes: TreeNode[], nodeAId: string, nodeBId: str
 }
 
 /**
+ * 给定一个选中 id 集合,返回去除"祖先已被选"的子孙后的最小代表集.
+ *
+ * 用于批量移动/删除前的归一化:
+ *  - 如果一个节点的某个祖先也在集合内,该节点会被丢弃 (祖先操作已经覆盖它)
+ *  - 与之无亲缘关系的兄弟/无关节点保留
+ *  - 空输入返回空数组
+ */
+export function normalizeSelectedRoots(
+  allNodes: TreeNode[],
+  selectedIds: Set<string>
+): string[] {
+  if (selectedIds.size === 0) return [];
+
+  const nodeMap = new Map<string, TreeNode>();
+  allNodes.forEach((n) => nodeMap.set(n.id, n));
+
+  const hasSelectedAncestor = (id: string): boolean => {
+    let current = nodeMap.get(id);
+    while (current && current.parentId) {
+      if (selectedIds.has(current.parentId)) return true;
+      current = nodeMap.get(current.parentId) ?? undefined;
+    }
+    return false;
+  };
+
+  const roots: string[] = [];
+  selectedIds.forEach((id) => {
+    if (!hasSelectedAncestor(id)) roots.push(id);
+  });
+  return roots;
+}
+
+/**
  * 将扁平数组构建为树形结构，并按 sortKey 排序
  */
 export function buildTree(nodes: TreeNode[]): TreeNode[] {

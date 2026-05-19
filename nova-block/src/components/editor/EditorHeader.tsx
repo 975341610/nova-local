@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Pen,
   Save,
+  Search,
   Sticker,
   Trash2,
   Type as LineIcon,
@@ -47,6 +48,9 @@ type EditorHeaderProps = {
   /** v0.21.3 · 打字机模式开关 */
   isTypewriterOn?: boolean
   onToggleTypewriter?: () => void
+  /** F1-T3 · 查找替换面板开关 (面板由父级渲染) */
+  isFindReplaceOpen?: boolean
+  onToggleFindReplace?: () => void
   onSave: () => void
   onUpdateTitle: (newTitle: string, isManual: boolean) => void
   onToggleRelations: () => void
@@ -83,6 +87,8 @@ export function EditorHeader(props: EditorHeaderProps) {
     onToggleMarginNotes,
     isTypewriterOn = false,
     onToggleTypewriter,
+    isFindReplaceOpen = false,
+    onToggleFindReplace,
     onSave,
     onOutlineEnter,
     onOutlineLeave,
@@ -178,6 +184,21 @@ export function EditorHeader(props: EditorHeaderProps) {
               <Eye size={15} strokeWidth={2.5} />
             </button>
           </div>
+
+          <button
+            data-testid="qingzhi-editor-action-find-replace"
+            onClick={onToggleFindReplace}
+            title="查找替换 · ⌘H"
+            aria-label="toggle-find-replace"
+            aria-pressed={isFindReplaceOpen}
+            className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg border transition-all duration-300 ${
+              isFindReplaceOpen
+                ? 'border-indigo-500/60 bg-indigo-500/10 text-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
+                : 'border-border/40 bg-accent/30 text-muted-foreground hover:border-border/60 hover:text-foreground'
+            }`}
+          >
+            <Search size={15} strokeWidth={isFindReplaceOpen ? 2.5 : 2} />
+          </button>
 
           <button
             data-testid="qingzhi-editor-action-typewriter"

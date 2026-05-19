@@ -52,6 +52,7 @@ describe('QingZhi EditorHeader toolbar', () => {
     const requiredActions = [
       'edit-mode',
       'preview-mode',
+      'find-replace',
       'typewriter',
       'background-paper',
       'sticker-mode',
@@ -103,5 +104,12 @@ describe('QingZhi EditorHeader toolbar', () => {
 
     fireEvent.click(screen.getByTestId('qingzhi-editor-action-margin-notes'))
     expect(onToggleMarginNotes).toHaveBeenCalledTimes(1)
+  })
+
+  it('invokes onToggleFindReplace when find-replace button is clicked', () => {
+    const onToggleFindReplace = vi.fn()
+    render(<EditorHeader {...baseProps} onToggleFindReplace={onToggleFindReplace} />)
+    fireEvent.click(screen.getByTestId('qingzhi-editor-action-find-replace'))
+    expect(onToggleFindReplace).toHaveBeenCalledTimes(1)
   })
 })

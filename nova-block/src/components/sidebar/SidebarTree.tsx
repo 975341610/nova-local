@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Settings, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout, Sparkles } from 'lucide-react';
-import { buildTree, moveNode, isDescendant, flattenTree } from '../../lib/novablock/treeUtils';
+import { buildTree, moveNode, isDescendant, flattenTree, normalizeSelectedRoots } from '../../lib/novablock/treeUtils';
 import type { TreeNode } from '../../lib/novablock/treeUtils';
 import { TreeNodeItem } from './TreeNodeItem';
 import GlobalSearchPanel from './GlobalSearchPanel';
@@ -10,6 +10,31 @@ import BacklinksPanel from './BacklinksPanel';
 import AIImportPanel from './AIImportPanel';
 import { useNoteStore } from '../../store/useNoteStore';
 import { QINGZHI_SETTINGS_EVENT, readQingzhiSettings } from '../../lib/qingzhiSettings';
+import { getLastOpened } from '../../lib/novablock/openHistory';
+
+/** F2c · 排序模式 */
+type SortMode = 'manual' | 'created' | 'updated' | 'opened';
+const SORT_MODE_STORAGE_KEY = 'qz.sidebar.sortMode.v1';
+
+const parseTs = (v: unknown): number => {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v) {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : 0;
+  }
+  return 0;
+};
+
+/**
+ * 把时间戳/打开次数转换为可由 buildTree 使用的"逆序" sortKey:
+ * 越大的 ts(越新/最近打开) → 越小的字符串 → 在 ascending sort 下排在前面.
+ * 13 位 0 填充以保证字符串比较 == 数值比较.
+ */
+const tsToInvKey = (ts: number): string => {
+  const MAX = 9999999999999; // 13 位
+  const v = Math.max(0, Math.min(MAX, Math.floor(ts)));
+  return String(MAX - v).padStart(13, '0');
+};
 
 interface SidebarTreeProps {
   selectedNodeId?: string | null;
@@ -19,6 +44,10 @@ interface SidebarTreeProps {
   onNodeRename?: (nodeId: string, newTitle: string) => void;
   onNodeDelete?: (nodeId: string, deleteChildren: boolean) => void;
   onNodeDuplicate?: (nodeId: string) => void;
+  /** F2b · 批量移动 (一次性移动多个节点到 parentId, 父级负责生成 sortKey 序列) */
+  onNodesBulkMove?: (nodeIds: string[], parentId: string | null) => void;
+  /** F2b · 批量删除 (含其子树) */
+  onNodesBulkDelete?: (nodeIds: string[]) => void;
   onTemplateCreate?: (parentId: string | null) => void;
   onQuickSearchOpen?: () => void;
   onSettingsOpen?: () => void;
@@ -51,6 +80,8 @@ export const SidebarTree = ({
   onNodeRename,
   onNodeDelete,
   onNodeDuplicate,
+  onNodesBulkMove,
+  onNodesBulkDelete,
   onTemplateCreate,
   onQuickSearchOpen,
   onSettingsOpen,
@@ -58,17 +89,47 @@ export const SidebarTree = ({
   isCollapsed: externalIsCollapsed,
 }: SidebarTreeProps) => {
   const notes = useNoteStore((state) => state.notes);
-  const updateNote = useNoteStore((state) => state.updateNote);
+
+  // F2c · 排序模式 (持久化)
+  const [sortMode, setSortMode] = useState<SortMode>(() => {
+    try {
+      const v = localStorage.getItem(SORT_MODE_STORAGE_KEY);
+      if (v === 'created' || v === 'updated' || v === 'opened' || v === 'manual') return v;
+    } catch { /* ignore */ }
+    return 'manual';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SORT_MODE_STORAGE_KEY, sortMode);
+    } catch { /* ignore */ }
+  }, [sortMode]);
 
   // 将 treeData 转换为 TreeNode 格式以供 treeUtils 使用
+  // F2b: 显式将 id / parentId 强制为 string,避免下游 callback 收到 number
+  // F2c: 当 sortMode != 'manual' 时,用合成 sortKey 覆盖 position,使 buildTree 按目标字段降序排列
   const nodes = useMemo(() => {
-    return notes.map(n => ({
-      ...n,
-      parentId: n.parent_id,
-      sortKey: n.position?.toString() || 'm',
-      isFolder: n.is_folder
-    })) as unknown as TreeNode[];
-  }, [notes]);
+    return notes.map(n => {
+      const id = String(n.id);
+      let sortKey: string;
+      if (sortMode === 'created') {
+        sortKey = tsToInvKey(parseTs((n as { created_at?: string | number }).created_at));
+      } else if (sortMode === 'updated') {
+        sortKey = tsToInvKey(parseTs((n as { updated_at?: string | number }).updated_at));
+      } else if (sortMode === 'opened') {
+        sortKey = tsToInvKey(getLastOpened(id));
+      } else {
+        sortKey = n.position?.toString() || 'm';
+      }
+      return {
+        ...n,
+        id,
+        parentId: n.parent_id == null ? null : String(n.parent_id),
+        sortKey,
+        isFolder: n.is_folder,
+      };
+    }) as unknown as TreeNode[];
+  }, [notes, sortMode]);
 
   const [selectedId, setSelectedId] = useState<string | undefined>(selectedNodeId ?? undefined);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['root']));
@@ -80,14 +141,26 @@ export const SidebarTree = ({
   const [mascotOpacity, setMascotOpacity] = useState(() => readQingzhiSettings().mascotOpacity);
   
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, node: TreeNode } | null>(null);
+  const [blankContextMenu, setBlankContextMenu] = useState<{ x: number, y: number } | null>(null);
+  const [bulkContextMenu, setBulkContextMenu] = useState<{ x: number, y: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteModal, setDeleteModal] = useState<{ node: TreeNode } | null>(null);
+  const [bulkDeleteModal, setBulkDeleteModal] = useState<{ ids: string[] } | null>(null);
   const [moveToModal, setMoveToModal] = useState<{ node: TreeNode } | null>(null);
+  const [bulkMoveModal, setBulkMoveModal] = useState<{ ids: string[] } | null>(null);
   const [moveToSearchQuery, setMoveToSearchQuery] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // F2b · multi-select state
+  const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
+  const [rangeAnchor, setRangeAnchor] = useState<string | null>(null);
+
   useEffect(() => {
-    const handleClick = () => setContextMenu(null);
+    const handleClick = () => {
+      setContextMenu(null);
+      setBlankContextMenu(null);
+      setBulkContextMenu(null);
+    };
     window.addEventListener('click', handleClick);
     return () => window.removeEventListener('click', handleClick);
   }, []);
@@ -152,11 +225,10 @@ export const SidebarTree = ({
     }
 
     const { parentId, sortKey } = moveNode(nodes, nodeId, targetId, position);
-    
-    updateNote(parseInt(nodeId, 10), { 
-      parent_id: parentId ? parseInt(parentId, 10) : null, 
-      position: parseFloat(sortKey) 
-    });
+
+    // Batch 4-pre: 移除直接 store 写入,统一委托父级 onNodeMove
+    // 父级 (App.tsx handleNodeMove) 是 source of truth,
+    // 负责本地乐观更新 + 远端 api.updateNote + 失败回滚。
     onNodeMove?.(nodeId, parentId, sortKey);
   };
 
@@ -400,7 +472,34 @@ export const SidebarTree = ({
                </div>
             )}
             {!isCollapsed && (
-              <div className="flex-1" style={{ height: '100%', minHeight: 400 }}>
+              <div className="px-2 pb-1 flex items-center justify-end">
+                <select
+                  data-testid="qingzhi-sidebar-sort-select"
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as SortMode)}
+                  className="text-xs bg-transparent border border-border/50 rounded-md px-2 py-0.5 text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  title="排序方式"
+                >
+                  <option value="manual">手动顺序</option>
+                  <option value="created">创建时间</option>
+                  <option value="updated">修改时间</option>
+                  <option value="opened">最近打开</option>
+                </select>
+              </div>
+            )}
+            {!isCollapsed && (
+              <div
+                data-sidebar-tree-canvas
+                onContextMenu={(e) => {
+                  const target = e.target as HTMLElement;
+                  if (target.closest('[data-tree-node-id]')) return;
+                  if (!target.closest('[data-sidebar-tree-canvas]')) return;
+                  e.preventDefault();
+                  setBlankContextMenu({ x: e.clientX, y: e.clientY });
+                }}
+                className="flex-1"
+                style={{ height: '100%', minHeight: 400 }}
+              >
                 <div style={{ height: '100%' }}>
                   {visibleNodes.map((node) => (
                     <TreeNodeItem
@@ -411,7 +510,46 @@ export const SidebarTree = ({
                       onToggle={handleToggle}
                       selectedId={selectedId}
                       editingId={editingId}
+                      isMultiSelected={multiSelected.has(node.id)}
+                      onItemClick={(e, n) => {
+                        // F2b 多选交互: Ctrl/Cmd toggle, Shift range, plain → 清空多选
+                        const isMod = e.ctrlKey || e.metaKey;
+                        if (isMod) {
+                          setMultiSelected((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(n.id)) next.delete(n.id);
+                            else next.add(n.id);
+                            return next;
+                          });
+                          setRangeAnchor(n.id);
+                          return true;
+                        }
+                        if (e.shiftKey && rangeAnchor) {
+                          const ids = visibleNodes.map((v) => v.id);
+                          const a = ids.indexOf(rangeAnchor);
+                          const b = ids.indexOf(n.id);
+                          if (a >= 0 && b >= 0) {
+                            const [from, to] = a < b ? [a, b] : [b, a];
+                            const range = ids.slice(from, to + 1);
+                            setMultiSelected((prev) => {
+                              const next = new Set(prev);
+                              range.forEach((id) => next.add(id));
+                              return next;
+                            });
+                          }
+                          return true;
+                        }
+                        // plain click → 清空多选,让默认行为继续 (toggle/select)
+                        if (multiSelected.size > 0) setMultiSelected(new Set());
+                        setRangeAnchor(n.id);
+                        return false;
+                      }}
                       onContextMenu={(e, n) => {
+                        // F2b: 若右击节点本身处于多选集合且 size>=2 → 弹批量菜单
+                        if (multiSelected.has(n.id) && multiSelected.size >= 2) {
+                          setBulkContextMenu({ x: e.clientX, y: e.clientY });
+                          return;
+                        }
                         setContextMenu({ x: e.clientX, y: e.clientY, node: n });
                       }}
                       onRenameSubmit={(nodeId, newTitle) => {
@@ -535,7 +673,7 @@ export const SidebarTree = ({
             <FolderOutput size={14} className="text-muted-foreground" /> 移动到...
           </button>
           <div className="h-px bg-border/40 my-1 mx-2" />
-          <button 
+          <button
             onClick={() => {
               if (contextMenu.node.isFolder && contextMenu.node.children && contextMenu.node.children.length > 0) {
                 setDeleteModal({ node: contextMenu.node });
@@ -551,6 +689,192 @@ export const SidebarTree = ({
         </div>,
         document.body
       )}
+
+      {/* Blank-area Context Menu Portal (F2a) */}
+      {blankContextMenu && createPortal(
+        <div
+          data-testid="qingzhi-sidebar-blank-context-menu"
+          className="fixed z-50 w-44 bg-background/80 backdrop-blur-2xl border border-border/40 shadow-xl rounded-xl py-1"
+          style={{ top: blankContextMenu.y, left: blankContextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            data-testid="qingzhi-sidebar-blank-new-folder"
+            onClick={() => {
+              onNodeAdd?.(null, 'folder');
+              setBlankContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent/50 text-foreground transition-colors"
+          >
+            <FolderPlus size={14} className="text-muted-foreground" /> 新建文件夹
+          </button>
+          <button
+            data-testid="qingzhi-sidebar-blank-new-note"
+            onClick={() => {
+              onNodeAdd?.(null, 'file');
+              setBlankContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent/50 text-foreground transition-colors"
+          >
+            <FilePlus size={14} className="text-muted-foreground" /> 新建笔记
+          </button>
+          <button
+            data-testid="qingzhi-sidebar-blank-new-canvas"
+            onClick={() => {
+              onNodeAdd?.(null, 'canvas');
+              setBlankContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent/50 text-foreground transition-colors"
+          >
+            <LayoutGrid size={14} className="text-muted-foreground" /> 新建画布
+          </button>
+        </div>,
+        document.body
+      )}
+
+      {/* Bulk Context Menu Portal (F2b) */}
+      {bulkContextMenu && createPortal(
+        <div
+          data-testid="qingzhi-sidebar-bulk-context-menu"
+          className="fixed z-50 w-48 bg-background/80 backdrop-blur-2xl border border-border/40 shadow-xl rounded-xl py-1"
+          style={{ top: bulkContextMenu.y, left: bulkContextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest">
+            已选 {multiSelected.size} 项
+          </div>
+          <button
+            data-testid="qingzhi-sidebar-bulk-move"
+            onClick={() => {
+              const ids = normalizeSelectedRoots(nodes, multiSelected);
+              setBulkMoveModal({ ids });
+              setBulkContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent/50 text-foreground transition-colors"
+          >
+            <FolderOutput size={14} className="text-muted-foreground" /> 移动选中...
+          </button>
+          <div className="h-px bg-border/40 my-1 mx-2" />
+          <button
+            data-testid="qingzhi-sidebar-bulk-delete"
+            onClick={() => {
+              const ids = normalizeSelectedRoots(nodes, multiSelected);
+              setBulkDeleteModal({ ids });
+              setBulkContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-destructive/10 text-destructive transition-colors group"
+          >
+            <Trash2 size={14} className="text-destructive/70 group-hover:text-destructive" /> 删除选中
+          </button>
+        </div>,
+        document.body
+      )}
+
+      {/* Bulk Delete Confirmation (F2b) */}
+      <AnimatePresence>
+        {bulkDeleteModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-background border border-border/40 shadow-2xl rounded-2xl p-6 max-w-sm w-full"
+            >
+              <h3 className="text-lg font-bold mb-2">删除 {bulkDeleteModal.ids.length} 项</h3>
+              <p className="text-sm text-muted-foreground mb-6">
+                这些条目及其所有子项都会被一并删除。此操作无法撤销。
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setBulkDeleteModal(null)}
+                  className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground bg-accent/30 hover:bg-accent/60 rounded-xl transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  data-testid="qingzhi-sidebar-bulk-delete-confirm"
+                  onClick={() => {
+                    onNodesBulkDelete?.(bulkDeleteModal.ids);
+                    setBulkDeleteModal(null);
+                    setMultiSelected(new Set());
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-destructive bg-destructive/10 hover:bg-destructive/20 rounded-xl transition-colors"
+                >
+                  确认删除
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Bulk Move Dialog (F2b) */}
+      <AnimatePresence>
+        {bulkMoveModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-background border border-border/40 shadow-2xl rounded-2xl flex flex-col max-w-md w-full max-h-[80vh]"
+            >
+              <div className="p-4 border-b border-border/20">
+                <h3 className="text-lg font-bold mb-3">移动 {bulkMoveModal.ids.length} 项到...</h3>
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    autoFocus
+                    type="text"
+                    value={moveToSearchQuery}
+                    onChange={(e) => setMoveToSearchQuery(e.target.value)}
+                    placeholder="搜索目标文件夹..."
+                    className="w-full bg-accent/30 border border-border/20 rounded-xl pl-9 pr-4 py-2 text-sm outline-none focus:border-primary/50 transition-colors"
+                  />
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2">
+                <button
+                  data-testid="qingzhi-sidebar-bulk-move-root"
+                  onClick={() => {
+                    onNodesBulkMove?.(bulkMoveModal.ids, null);
+                    setBulkMoveModal(null);
+                    setMultiSelected(new Set());
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 rounded-lg text-left"
+                >
+                  <LayoutGrid size={16} className="text-muted-foreground" /> 根目录
+                </button>
+                {nodes
+                  .filter((n) => n.isFolder
+                    && !bulkMoveModal.ids.includes(n.id)
+                    && !bulkMoveModal.ids.some((mId) => isDescendant(nodes, n.id, mId))
+                    && (n.title || '').toLowerCase().includes(moveToSearchQuery.toLowerCase()))
+                  .map((folder) => (
+                    <button
+                      key={folder.id}
+                      onClick={() => {
+                        onNodesBulkMove?.(bulkMoveModal.ids, folder.id);
+                        setBulkMoveModal(null);
+                        setMultiSelected(new Set());
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 rounded-lg text-left"
+                    >
+                      <FolderPlus size={16} className="text-primary/70" /> {folder.title || '无标题文件夹'}
+                    </button>
+                  ))}
+              </div>
+              <div className="p-4 border-t border-border/20 flex justify-end">
+                <button
+                  onClick={() => setBulkMoveModal(null)}
+                  className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground bg-accent/30 hover:bg-accent/60 rounded-xl transition-colors"
+                >
+                  取消
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>

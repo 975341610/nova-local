@@ -46,5 +46,16 @@ export default defineConfig({
       '**/.qingzhi-*/**',
       '**/.qingzhi_*/**',
     ],
+    // v0.24.x · 在受限沙箱环境下避免 fork worker 触发 EAGAIN
+    // 通过环境变量 VITEST_SINGLE_THREAD=1 切换到单线程池
+    ...(process.env.VITEST_SINGLE_THREAD
+      ? {
+          pool: 'threads' as const,
+          // Vitest 4 已把 poolOptions 提升到顶层
+          poolOptions: {
+            threads: { singleThread: true },
+          },
+        }
+      : {}),
   },
 })
