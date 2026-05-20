@@ -14,6 +14,7 @@ import { buildSearchableText } from './lib/searchUtils'
 import { recordOpen } from './lib/novablock/openHistory'
 import { generateSequenceAfter } from './lib/novablock/sortKeyGen'
 import { bulkMoveSerially } from './lib/novablock/bulkMove'
+import { applyVaultChange } from './lib/novablock/applyVaultChange'
 import { migrateLegacyNotes, parseLegacyNotes, shouldRunLegacyMigration } from './lib/legacyLocalMigration'
 import { AnimatePresence, motion } from 'framer-motion'
 import { MusicProvider, useMusicControls } from './contexts/MusicContext'
@@ -866,30 +867,35 @@ function App() {
       ? await api.getChangedNotes(changedFilenames)
       : []
 
+    // Round 4 · Bug D fix: bulk-move 触发的 chokidar 事件序列通常是
+    //   unlink 旧路径 + add/change 新路径(rename 语义)
+    // 之前的实现只用 file_path 做匹配,会先把"持有旧 file_path 的笔记"过滤掉,
+    // 而 changedNotes 那一帧又可能晚到/被 React 批处理打散,造成视觉上"瞬现即消失"。
+    //
+    // 修复: 把合并算法委托给纯函数 applyVaultChange:
+    //   1. 先 merge changedNotes(覆盖 id 已知的笔记 → 它们的 file_path 已被同步刷新)
+    //   2. 收集 changedNotes 的 id 集合
+    //   3. 再依据 deletedPaths 删除 id 不在 changedNotes 的笔记
+    // 这样 rename 场景下,被移动的笔记永远不会从 store 中消失。
     const previousNotes = useNoteStore.getState().notes
-    const nextNotes = previousNotes
-      .filter(note => !deletedPaths.has(normalizeVaultChangePath(note.file_path)))
-
-    for (const note of changedNotes) {
-      const existingIndex = nextNotes.findIndex(item => (
-        item.id === note.id ||
-        normalizeVaultChangePath(item.file_path) === normalizeVaultChangePath(note.file_path)
-      ))
-      const previous = existingIndex >= 0 ? nextNotes[existingIndex] : undefined
-      const merged = mergeNote(previous, note)
-      if (previous && hasPendingNoteSave(previous.id)) {
-        nextNotes[existingIndex] = {
-          ...merged,
-          title: previous.title,
-          content: previous.content ?? merged.content,
-          is_title_manually_edited: previous.is_title_manually_edited,
+    const nextNotes = applyVaultChange<Note>({
+      previousNotes,
+      changedNotes,
+      deletedPaths,
+      normalizePath: normalizeVaultChangePath,
+      merger: (previous, incoming) => {
+        const merged = mergeNote(previous as Note | undefined, incoming as Note)
+        if (previous && hasPendingNoteSave(previous.id)) {
+          return {
+            ...merged,
+            title: previous.title,
+            content: previous.content ?? merged.content,
+            is_title_manually_edited: previous.is_title_manually_edited,
+          }
         }
-      } else if (existingIndex >= 0) {
-        nextNotes[existingIndex] = merged
-      } else {
-        nextNotes.push(merged)
-      }
-    }
+        return merged
+      },
+    })
 
     setNotes(nextNotes)
     for (const removed of previousNotes) {

@@ -15,6 +15,8 @@ interface TreeNodeItemProps {
   isMultiSelected?: boolean;
   /** F2b · 父级接管 click (含 Ctrl/Cmd/Shift 判定),返回 true 表示已被父级处理 */
   onItemClick?: (e: React.MouseEvent, node: TreeNode) => boolean | void;
+  /** Round 4 · Bug E: 在 mousedown 阶段处理 Ctrl/Cmd toggle,避免 draggable div 吞掉 click 事件 */
+  onItemMouseDown?: (e: React.MouseEvent, node: TreeNode) => boolean | void;
 }
 
 export const TreeNodeItem = ({
@@ -28,6 +30,7 @@ export const TreeNodeItem = ({
   onRenameSubmit,
   isMultiSelected,
   onItemClick,
+  onItemMouseDown,
 }: TreeNodeItemProps) => {
   const [isHovered, setIsHovered] = useState(false);
   const [dragOver, setDragOver] = useState<'before' | 'after' | 'into' | null>(null);
@@ -95,6 +98,13 @@ export const TreeNodeItem = ({
         onContextMenu={(e) => {
           e.preventDefault();
           onContextMenu?.(e, node);
+        }}
+        onMouseDown={(e) => {
+          if (isEditing) return;
+          // Round 4 · Bug E: Ctrl/Cmd+click 在 draggable div 上的 click 事件
+          // 在某些 Chromium/Electron 版本会被吞掉(被解释为"准备拖动"的 noop click),
+          // 这里在 mousedown 阶段就给父级一次处理机会(toggle 多选)。
+          onItemMouseDown?.(e, node);
         }}
         onClick={(e) => {
           if (isEditing) return;

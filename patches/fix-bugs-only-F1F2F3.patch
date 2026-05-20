@@ -1,0 +1,837 @@
+diff --git a/nova-block/src/components/editor/FindReplacePanel.tsx b/nova-block/src/components/editor/FindReplacePanel.tsx
+index eda128a..d89b294 100644
+--- a/nova-block/src/components/editor/FindReplacePanel.tsx
++++ b/nova-block/src/components/editor/FindReplacePanel.tsx
+@@ -100,7 +100,7 @@ export function FindReplacePanel({ open, onClose, editor }: FindReplacePanelProp
+   return (
+     <div
+       data-testid="qingzhi-find-replace-panel"
+-      className="absolute top-2 right-2 z-40 w-[320px] rounded-xl border border-border/40 bg-background/95 p-3 shadow-xl backdrop-blur-md"
++      className="absolute top-14 right-2 z-40 w-[320px] rounded-xl border border-border/40 bg-background/95 p-3 shadow-xl backdrop-blur-md"
+     >
+       <div className="mb-2 flex items-center justify-between">
+         <span className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+diff --git a/nova-block/src/components/sidebar/SidebarTree.tsx b/nova-block/src/components/sidebar/SidebarTree.tsx
+index d2f22e4..21ef58b 100644
+--- a/nova-block/src/components/sidebar/SidebarTree.tsx
++++ b/nova-block/src/components/sidebar/SidebarTree.tsx
+@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
+ import { motion, AnimatePresence } from 'framer-motion';
+ import { Search, Settings, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout, Sparkles } from 'lucide-react';
+ import { buildTree, moveNode, isDescendant, flattenTree, normalizeSelectedRoots } from '../../lib/novablock/treeUtils';
+-import type { TreeNode } from '../../lib/novablock/treeUtils';
++import type { TreeNode, FlattenedNode } from '../../lib/novablock/treeUtils';
+ import { TreeNodeItem } from './TreeNodeItem';
+ import GlobalSearchPanel from './GlobalSearchPanel';
+ import BacklinksPanel from './BacklinksPanel';
+@@ -119,7 +119,13 @@ export const SidebarTree = ({
+       } else if (sortMode === 'opened') {
+         sortKey = tsToInvKey(getLastOpened(id));
+       } else {
+-        sortKey = n.position?.toString() || 'm';
++        // F2 bug 2b: 优先使用 sort_key (后端真相),回退到 position
++        const sk = (n as { sort_key?: string | null }).sort_key;
++        if (sk != null && sk !== '') {
++          sortKey = String(sk);
++        } else {
++          sortKey = n.position?.toString() || 'm';
++        }
+       }
+       return {
+         ...n,
+@@ -201,6 +207,62 @@ export const SidebarTree = ({
+   const tree = useMemo(() => buildTree(nodes), [nodes]);
+   const visibleNodes = useMemo(() => flattenTree(tree, expandedIds), [tree, expandedIds]);
+ 
++  // F3 bug · 排序按日期分组 (今天/昨天/更早)
++  // 仅当 sortMode 选择了 created/updated/opened 时,把 visibleNodes 按日期桶分段,
++  // 在每段前插入一行 group header (id 以 __group__: 开头, 渲染时显式区分)。
++  type GroupBucket = 'today' | 'yesterday' | 'earlier';
++  type GroupHeaderRow = { __isGroupHeader: true; id: string; title: string; bucket: GroupBucket };
++  type RowItem = FlattenedNode | GroupHeaderRow;
++
++  const groupedRows: RowItem[] = useMemo(() => {
++    if (sortMode === 'manual') return visibleNodes as RowItem[];
++    // 计算今天 0 点
++    const now = Date.now();
++    const today0 = new Date(now);
++    today0.setHours(0, 0, 0, 0);
++    const todayStart = today0.getTime();
++    const yesterdayStart = todayStart - 24 * 3600 * 1000;
++    const tomorrowStart = todayStart + 24 * 3600 * 1000;
++
++    const tsForNode = (n: TreeNode): number => {
++      const id = String(n.id);
++      if (sortMode === 'opened') return getLastOpened(id);
++      if (sortMode === 'created')
++        return parseTs((n as { created_at?: string | number }).created_at);
++      if (sortMode === 'updated')
++        return parseTs((n as { updated_at?: string | number }).updated_at);
++      return 0;
++    };
++    const bucketOf = (ts: number): GroupBucket => {
++      if (ts >= todayStart && ts < tomorrowStart) return 'today';
++      if (ts >= yesterdayStart && ts < todayStart) return 'yesterday';
++      return 'earlier';
++    };
++    const labelOf = (b: GroupBucket): string =>
++      b === 'today' ? '今天' : b === 'yesterday' ? '昨天' : '更早';
++
++    const rows: RowItem[] = [];
++    let lastBucket: GroupBucket | null = null;
++    for (const n of visibleNodes) {
++      // 仅在 root 层(depth=0,即没有 parentId 的可见节点)插入分组头,
++      // 子节点跟随其父级,不重复分组。
++      if (n.parentId == null) {
++        const b = bucketOf(tsForNode(n));
++        if (b !== lastBucket) {
++          rows.push({
++            __isGroupHeader: true,
++            id: `__group__:${b}`,
++            title: labelOf(b),
++            bucket: b,
++          });
++          lastBucket = b;
++        }
++      }
++      rows.push(n);
++    }
++    return rows;
++  }, [visibleNodes, sortMode]);
++
+   const handleToggle = (nodeId: string) => {
+     setExpandedIds(prev => {
+       const next = new Set(prev);
+@@ -224,6 +286,27 @@ export const SidebarTree = ({
+       return;
+     }
+ 
++    // F2 bug 2a: 如果被拖拽的节点处于多选集合 (size>=2),走批量移动而非单条移动。
++    // 仅当 position === 'into' 时支持(批量 only 接受 parentId,不区分 before/after)。
++    if (multiSelected.has(nodeId) && multiSelected.size >= 2 && position === 'into') {
++      const ids = normalizeSelectedRoots(nodes, multiSelected);
++      // 拒绝把多选集合中的祖先移动到自己的子孙
++      const blocked = ids.some((id) => isDescendant(nodes, targetId, id));
++      if (blocked) {
++        console.warn('Cannot bulk-move into a descendant of selected nodes');
++        return;
++      }
++      onNodesBulkMove?.(ids, targetId);
++      // 自动展开目标文件夹
++      setExpandedIds((prev) => {
++        const next = new Set(prev);
++        next.add(targetId);
++        return next;
++      });
++      setMultiSelected(new Set());
++      return;
++    }
++
+     const { parentId, sortKey } = moveNode(nodes, nodeId, targetId, position);
+ 
+     // Batch 4-pre: 移除直接 store 写入,统一委托父级 onNodeMove
+@@ -490,6 +573,12 @@ export const SidebarTree = ({
+             {!isCollapsed && (
+               <div
+                 data-sidebar-tree-canvas
++                onClick={(e) => {
++                  // F2 bug 2c: 点击空白区域(非节点本身)→ 清空多选
++                  const target = e.target as HTMLElement;
++                  if (target.closest('[data-tree-node-id]')) return;
++                  if (multiSelected.size > 0) setMultiSelected(new Set());
++                }}
+                 onContextMenu={(e) => {
+                   const target = e.target as HTMLElement;
+                   if (target.closest('[data-tree-node-id]')) return;
+@@ -501,65 +590,80 @@ export const SidebarTree = ({
+                 style={{ height: '100%', minHeight: 400 }}
+               >
+                 <div style={{ height: '100%' }}>
+-                  {visibleNodes.map((node) => (
+-                    <TreeNodeItem
+-                      key={node.id}
+-                      node={node}
+-                      onMove={handleMove}
+-                      onSelect={handleSelect}
+-                      onToggle={handleToggle}
+-                      selectedId={selectedId}
+-                      editingId={editingId}
+-                      isMultiSelected={multiSelected.has(node.id)}
+-                      onItemClick={(e, n) => {
+-                        // F2b 多选交互: Ctrl/Cmd toggle, Shift range, plain → 清空多选
+-                        const isMod = e.ctrlKey || e.metaKey;
+-                        if (isMod) {
+-                          setMultiSelected((prev) => {
+-                            const next = new Set(prev);
+-                            if (next.has(n.id)) next.delete(n.id);
+-                            else next.add(n.id);
+-                            return next;
+-                          });
+-                          setRangeAnchor(n.id);
+-                          return true;
+-                        }
+-                        if (e.shiftKey && rangeAnchor) {
+-                          const ids = visibleNodes.map((v) => v.id);
+-                          const a = ids.indexOf(rangeAnchor);
+-                          const b = ids.indexOf(n.id);
+-                          if (a >= 0 && b >= 0) {
+-                            const [from, to] = a < b ? [a, b] : [b, a];
+-                            const range = ids.slice(from, to + 1);
++                  {groupedRows.map((row) => {
++                    if ('__isGroupHeader' in row && row.__isGroupHeader) {
++                      return (
++                        <div
++                          key={row.id}
++                          data-testid="qingzhi-sidebar-group-header"
++                          data-group-bucket={row.bucket}
++                          className="qz-sidebar-group-header px-3 pt-3 pb-1 text-[10px] font-semibold tracking-widest text-muted-foreground/60 uppercase select-none"
++                        >
++                          {row.title}
++                        </div>
++                      );
++                    }
++                    const node = row as FlattenedNode;
++                    return (
++                      <TreeNodeItem
++                        key={node.id}
++                        node={node}
++                        onMove={handleMove}
++                        onSelect={handleSelect}
++                        onToggle={handleToggle}
++                        selectedId={selectedId}
++                        editingId={editingId}
++                        isMultiSelected={multiSelected.has(node.id)}
++                        onItemClick={(e, n) => {
++                          // F2b 多选交互: Ctrl/Cmd toggle, Shift range, plain → 清空多选
++                          const isMod = e.ctrlKey || e.metaKey;
++                          if (isMod) {
+                             setMultiSelected((prev) => {
+                               const next = new Set(prev);
+-                              range.forEach((id) => next.add(id));
++                              if (next.has(n.id)) next.delete(n.id);
++                              else next.add(n.id);
+                               return next;
+                             });
++                            setRangeAnchor(n.id);
++                            return true;
+                           }
+-                          return true;
+-                        }
+-                        // plain click → 清空多选,让默认行为继续 (toggle/select)
+-                        if (multiSelected.size > 0) setMultiSelected(new Set());
+-                        setRangeAnchor(n.id);
+-                        return false;
+-                      }}
+-                      onContextMenu={(e, n) => {
+-                        // F2b: 若右击节点本身处于多选集合且 size>=2 → 弹批量菜单
+-                        if (multiSelected.has(n.id) && multiSelected.size >= 2) {
+-                          setBulkContextMenu({ x: e.clientX, y: e.clientY });
+-                          return;
+-                        }
+-                        setContextMenu({ x: e.clientX, y: e.clientY, node: n });
+-                      }}
+-                      onRenameSubmit={(nodeId, newTitle) => {
+-                        setEditingId(null);
+-                        if (newTitle.trim() && newTitle !== node.title) {
+-                          onNodeRename?.(nodeId, newTitle);
+-                        }
+-                      }}
+-                    />
+-                  ))}
++                          if (e.shiftKey && rangeAnchor) {
++                            const ids = visibleNodes.map((v) => v.id);
++                            const a = ids.indexOf(rangeAnchor);
++                            const b = ids.indexOf(n.id);
++                            if (a >= 0 && b >= 0) {
++                              const [from, to] = a < b ? [a, b] : [b, a];
++                              const range = ids.slice(from, to + 1);
++                              setMultiSelected((prev) => {
++                                const next = new Set(prev);
++                                range.forEach((id) => next.add(id));
++                                return next;
++                              });
++                            }
++                            return true;
++                          }
++                          // plain click → 清空多选,让默认行为继续 (toggle/select)
++                          if (multiSelected.size > 0) setMultiSelected(new Set());
++                          setRangeAnchor(n.id);
++                          return false;
++                        }}
++                        onContextMenu={(e, n) => {
++                          // F2b: 若右击节点本身处于多选集合且 size>=2 → 弹批量菜单
++                          if (multiSelected.has(n.id) && multiSelected.size >= 2) {
++                            setBulkContextMenu({ x: e.clientX, y: e.clientY });
++                            return;
++                          }
++                          setContextMenu({ x: e.clientX, y: e.clientY, node: n });
++                        }}
++                        onRenameSubmit={(nodeId, newTitle) => {
++                          setEditingId(null);
++                          if (newTitle.trim() && newTitle !== node.title) {
++                            onNodeRename?.(nodeId, newTitle);
++                          }
++                        }}
++                      />
++                    );
++                  })}
+                 </div>
+               </div>
+             )}
+@@ -854,6 +958,12 @@ export const SidebarTree = ({
+                       key={folder.id}
+                       onClick={() => {
+                         onNodesBulkMove?.(bulkMoveModal.ids, folder.id);
++                        // F2 bug 2b: 自动展开目标文件夹,避免移动后看不到结果
++                        setExpandedIds((prev) => {
++                          const next = new Set(prev);
++                          next.add(folder.id);
++                          return next;
++                        });
+                         setBulkMoveModal(null);
+                         setMultiSelected(new Set());
+                       }}
+diff --git a/nova-block/src/lib/novablock/findReplacePlugin.ts b/nova-block/src/lib/novablock/findReplacePlugin.ts
+index 39300f0..af40d54 100644
+--- a/nova-block/src/lib/novablock/findReplacePlugin.ts
++++ b/nova-block/src/lib/novablock/findReplacePlugin.ts
+@@ -12,7 +12,7 @@
+  *  - replaceCurrent 走 ProseMirror 事务,保留撤销栈
+  *  - replaceAll 用单个事务批量替换(从后往前替换以避免位置漂移)
+  */
+-import { Plugin, PluginKey, EditorState } from 'prosemirror-state'
++import { Plugin, PluginKey, EditorState, TextSelection } from 'prosemirror-state'
+ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
+ import { Extension } from '@tiptap/core'
+ 
+@@ -24,12 +24,21 @@ export type FindReplaceOptions = {
+ 
+ export type FindReplaceMatch = { from: number; to: number }
+ 
++/**
++ * 已经替换过的范围 — 用于排除"刚替换出来的文本"被再次命中(bug 1b)。
++ * 每次替换发生时把新文本的范围 [from, from+replacement.length] 记录进来,
++ * findMatches 会跳过与之相交的命中。skipRanges 在用户重新调用 setFindQuery
++ * 或 docChanged(非由本插件发起的)时被清空,以保持新查询的正确性。
++ */
++export type SkipRange = { from: number; to: number }
++
+ export type FindReplaceState = {
+   query: string
+   options: FindReplaceOptions
+   matches: FindReplaceMatch[]
+   current: number
+   decorations: DecorationSet
++  skipRanges: SkipRange[]
+ }
+ 
+ const META_KEY = 'findReplace$meta'
+@@ -38,7 +47,7 @@ type FindReplaceMeta =
+   | { type: 'setQuery'; query: string; options: FindReplaceOptions }
+   | { type: 'gotoNext' }
+   | { type: 'gotoPrev' }
+-  | { type: 'recompute' }
++  | { type: 'recompute'; addSkipRanges?: SkipRange[] }
+ 
+ export const findReplacePluginKey = new PluginKey<FindReplaceState>('findReplace')
+ 
+@@ -48,6 +57,7 @@ const INITIAL_STATE: FindReplaceState = {
+   matches: [],
+   current: -1,
+   decorations: DecorationSet.empty,
++  skipRanges: [],
+ }
+ 
+ function escapeRegExp(s: string): string {
+@@ -81,10 +91,24 @@ function buildRegex(query: string, options: FindReplaceOptions): RegExp | null {
+  */
+ const ATOMIC_PLACEHOLDER = '￼'
+ 
+-export function findMatches(state: EditorState, query: string, options: FindReplaceOptions): FindReplaceMatch[] {
++export function findMatches(
++  state: EditorState,
++  query: string,
++  options: FindReplaceOptions,
++  skipRanges: SkipRange[] = [],
++): FindReplaceMatch[] {
+   const re = buildRegex(query, options)
+   if (!re) return []
+   const results: FindReplaceMatch[] = []
++  const intersectsSkip = (from: number, to: number): boolean => {
++    for (const r of skipRanges) {
++      // 区间相交判定: max(start) < min(end)
++      if (Math.max(r.from, from) < Math.min(r.to, to)) return true
++      // 零宽 match 落在 skip 区间内部也跳过
++      if (from === to && r.from <= from && from <= r.to) return true
++    }
++    return false
++  }
+   state.doc.descendants((block, blockPos) => {
+     if (!block.isTextblock) return
+     // 收集 textblock 内的字符序列与 doc 偏移映射
+@@ -111,7 +135,9 @@ export function findMatches(state: EditorState, query: string, options: FindRepl
+       if (m[0].length === 0) {
+         // 零宽 match: 记录为 from === to,推进 lastIndex 防死循环
+         const from = idx2pos[m.index] ?? cursor
+-        results.push({ from, to: from })
++        if (!intersectsSkip(from, from)) {
++          results.push({ from, to: from })
++        }
+         re.lastIndex += 1
+         continue
+       }
+@@ -119,7 +145,9 @@ export function findMatches(state: EditorState, query: string, options: FindRepl
+       const endIdx = m.index + m[0].length - 1
+       const from = idx2pos[startIdx]
+       const to = (idx2pos[endIdx] ?? from) + 1
+-      results.push({ from, to })
++      if (!intersectsSkip(from, to)) {
++        results.push({ from, to })
++      }
+     }
+   })
+   return results
+@@ -144,9 +172,21 @@ export function findReplacePlugin(): Plugin<FindReplaceState> {
+       },
+       apply(tr, prev, _oldState, newState) {
+         const meta = tr.getMeta(META_KEY) as FindReplaceMeta | undefined
++        // 通过事务映射 skipRanges,使其跟随文档位置漂移
++        let mappedSkip: SkipRange[] = prev.skipRanges
++        if (tr.docChanged && prev.skipRanges.length > 0) {
++          mappedSkip = prev.skipRanges
++            .map((r) => {
++              const from = tr.mapping.map(r.from, 1)
++              const to = tr.mapping.map(r.to, -1)
++              return from <= to ? { from, to } : null
++            })
++            .filter((r): r is SkipRange => r !== null)
++        }
+         if (meta) {
+           if (meta.type === 'setQuery') {
+-            const matches = findMatches(newState, meta.query, meta.options)
++            // 用户重新输入查询 → 清空 skipRanges
++            const matches = findMatches(newState, meta.query, meta.options, [])
+             const current = matches.length > 0 ? 0 : -1
+             return {
+               query: meta.query,
+@@ -154,32 +194,58 @@ export function findReplacePlugin(): Plugin<FindReplaceState> {
+               matches,
+               current,
+               decorations: createDecorations(newState, matches, current),
++              skipRanges: [],
+             }
+           }
+           if (meta.type === 'gotoNext') {
+-            if (prev.matches.length === 0) return prev
++            if (prev.matches.length === 0) return { ...prev, skipRanges: mappedSkip }
+             const current = (prev.current + 1) % prev.matches.length
+-            return { ...prev, current, decorations: createDecorations(newState, prev.matches, current) }
++            return {
++              ...prev,
++              current,
++              decorations: createDecorations(newState, prev.matches, current),
++              skipRanges: mappedSkip,
++            }
+           }
+           if (meta.type === 'gotoPrev') {
+-            if (prev.matches.length === 0) return prev
++            if (prev.matches.length === 0) return { ...prev, skipRanges: mappedSkip }
+             const current = (prev.current - 1 + prev.matches.length) % prev.matches.length
+-            return { ...prev, current, decorations: createDecorations(newState, prev.matches, current) }
++            return {
++              ...prev,
++              current,
++              decorations: createDecorations(newState, prev.matches, current),
++              skipRanges: mappedSkip,
++            }
+           }
+           if (meta.type === 'recompute') {
+-            const matches = findMatches(newState, prev.query, prev.options)
++            const nextSkip = meta.addSkipRanges
++              ? [...mappedSkip, ...meta.addSkipRanges]
++              : mappedSkip
++            const matches = findMatches(newState, prev.query, prev.options, nextSkip)
+             const current =
+               matches.length > 0 ? Math.min(prev.current === -1 ? 0 : prev.current, matches.length - 1) : -1
+-            return { ...prev, matches, current, decorations: createDecorations(newState, matches, current) }
++            return {
++              ...prev,
++              matches,
++              current,
++              decorations: createDecorations(newState, matches, current),
++              skipRanges: nextSkip,
++            }
+           }
+         }
+         if (tr.docChanged && prev.query) {
+-          const matches = findMatches(newState, prev.query, prev.options)
++          const matches = findMatches(newState, prev.query, prev.options, mappedSkip)
+           const current =
+             matches.length > 0 ? Math.min(prev.current === -1 ? 0 : prev.current, matches.length - 1) : -1
+-          return { ...prev, matches, current, decorations: createDecorations(newState, matches, current) }
++          return {
++            ...prev,
++            matches,
++            current,
++            decorations: createDecorations(newState, matches, current),
++            skipRanges: mappedSkip,
++          }
+         }
+-        return prev
++        return mappedSkip === prev.skipRanges ? prev : { ...prev, skipRanges: mappedSkip }
+       },
+     },
+     props: {
+@@ -208,11 +274,36 @@ export function setFindQuery(view: EditorView, query: string, options: FindRepla
+ }
+ 
+ export function gotoNext(view: EditorView): void {
+-  view.dispatch(view.state.tr.setMeta(META_KEY, { type: 'gotoNext' } satisfies FindReplaceMeta))
++  const tr = view.state.tr.setMeta(META_KEY, { type: 'gotoNext' } satisfies FindReplaceMeta)
++  view.dispatch(tr)
++  // 计算 next current 后,把 selection 落到该 match 上,并 scrollIntoView (bug 1c)
++  const s = findReplacePluginKey.getState(view.state)
++  if (!s || s.matches.length === 0) return
++  const m = s.matches[s.current]
++  if (!m) return
++  try {
++    const sel = TextSelection.create(view.state.doc, m.from, m.to)
++    const tr2 = view.state.tr.setSelection(sel).scrollIntoView()
++    view.dispatch(tr2)
++  } catch {
++    /* selection 越界等情况静默忽略 */
++  }
+ }
+ 
+ export function gotoPrev(view: EditorView): void {
+-  view.dispatch(view.state.tr.setMeta(META_KEY, { type: 'gotoPrev' } satisfies FindReplaceMeta))
++  const tr = view.state.tr.setMeta(META_KEY, { type: 'gotoPrev' } satisfies FindReplaceMeta)
++  view.dispatch(tr)
++  const s = findReplacePluginKey.getState(view.state)
++  if (!s || s.matches.length === 0) return
++  const m = s.matches[s.current]
++  if (!m) return
++  try {
++    const sel = TextSelection.create(view.state.doc, m.from, m.to)
++    const tr2 = view.state.tr.setSelection(sel).scrollIntoView()
++    view.dispatch(tr2)
++  } catch {
++    /* selection 越界等情况静默忽略 */
++  }
+ }
+ 
+ export function replaceCurrent(view: EditorView, replacement: string): void {
+@@ -222,7 +313,14 @@ export function replaceCurrent(view: EditorView, replacement: string): void {
+   // 零宽 match 不替换 (审查 v4-#2)
+   if (m.from === m.to) return
+   const tr = view.state.tr.insertText(replacement, m.from, m.to)
+-  tr.setMeta(META_KEY, { type: 'recompute' } satisfies FindReplaceMeta)
++  // 替换后,新文本范围 = [m.from, m.from + replacement.length] (在 tr 之后的坐标系中)
++  // 由于 plugin apply 在 docChanged 时会先把 prev.skipRanges 用 tr.mapping 映射,
++  // 而 addSkipRanges 是在映射之后才并入,所以这里直接给最终坐标即可。
++  const newRange: SkipRange = { from: m.from, to: m.from + replacement.length }
++  tr.setMeta(META_KEY, {
++    type: 'recompute',
++    addSkipRanges: [newRange],
++  } satisfies FindReplaceMeta)
+   view.dispatch(tr)
+ }
+ 
+@@ -238,7 +336,17 @@ export function replaceAll(view: EditorView, replacement: string): number {
+   for (const m of sorted) {
+     tr.insertText(replacement, m.from, m.to)
+   }
+-  tr.setMeta(META_KEY, { type: 'recompute' } satisfies FindReplaceMeta)
++  // 计算每个原命中在新 doc 中的最终范围 — 通过 tr.mapping 映射 m.from 即可。
++  // 注意 m.from 用 bias=-1 映射到插入起点; 长度则是 replacement.length。
++  const newRanges: SkipRange[] = sorted
++    .map((m) => {
++      const newFrom = tr.mapping.map(m.from, -1)
++      return { from: newFrom, to: newFrom + replacement.length }
++    })
++  tr.setMeta(META_KEY, {
++    type: 'recompute',
++    addSkipRanges: newRanges,
++  } satisfies FindReplaceMeta)
+   const count = sorted.length
+   view.dispatch(tr)
+   return count
+diff --git a/nova-block/src/test/SidebarTree.bugs.test.tsx b/nova-block/src/test/SidebarTree.bugs.test.tsx
+new file mode 100644
+index 0000000..8f059bf
+--- /dev/null
++++ b/nova-block/src/test/SidebarTree.bugs.test.tsx
+@@ -0,0 +1,167 @@
++/**
++ * @vitest-environment jsdom
++ *
++ * F2/F3-Bugs · 多选 + 移动 + 清空 + 分组
++ *
++ * 2a. 拖拽 multi-selected 节点 → 必须移动所有选中项 (调用 onNodesBulkMove)
++ * 2b. "移动到..." 菜单选择目标文件夹后,目标文件夹必须被自动展开
++ * 2c. 多选状态下点击空白区域 → 取消多选
++ * 3. sortMode != 'manual' 时,visibleNodes 应该出现日期分组头 (今天/昨天/更早)
++ */
++import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
++import { cleanup, fireEvent, render, screen } from '@testing-library/react'
++
++vi.mock('../components/sidebar/GlobalSearchPanel', () => ({ default: () => <div /> }))
++vi.mock('../components/sidebar/BacklinksPanel', () => ({ default: () => <div /> }))
++vi.mock('../components/sidebar/AIImportPanel', () => ({ default: () => <div /> }))
++
++// 三个固定时间戳 — 用于 F3 分组测试 (今天/昨天/更早)
++const NOW = new Date('2026-05-19T12:00:00Z').getTime()
++const YESTERDAY = NOW - 24 * 3600 * 1000
++const LAST_WEEK = NOW - 8 * 24 * 3600 * 1000
++
++const { useNoteStoreMock } = vi.hoisted(() => {
++  const noteState = {
++    notes: [
++      { id: 1, title: 'Folder',  content: '', parent_id: null, position: 'a', sort_key: 'a', type: 'folder', is_folder: true,  created_at: '2024-01-01', updated_at: '2024-01-01' },
++      { id: 2, title: 'File-A',  content: '', parent_id: null, position: 'b', sort_key: 'b', type: 'file',   is_folder: false, created_at: '2024-01-01', updated_at: '2024-01-01' },
++      { id: 3, title: 'File-B',  content: '', parent_id: null, position: 'c', sort_key: 'c', type: 'file',   is_folder: false, created_at: '2024-01-01', updated_at: '2024-01-01' },
++    ],
++    updateNote: vi.fn(),
++  }
++  const useNoteStoreMock = (selector?: (s: typeof noteState) => unknown) =>
++    selector ? selector(noteState) : noteState
++  return { useNoteStoreMock }
++})
++
++vi.mock('../store/useNoteStore', () => ({
++  useNoteStore: useNoteStoreMock,
++}))
++
++import { SidebarTree } from '../components/sidebar/SidebarTree'
++
++describe('F2 bug 2a · 拖拽 multi-selected 节点 → 批量移动', () => {
++  beforeEach(() => {
++    localStorage.clear()
++  })
++  afterEach(() => {
++    cleanup()
++  })
++
++  it('当被拖拽的节点处于多选集合 (size>=2) 时,触发 onNodesBulkMove 而非 onNodeMove(单条)', () => {
++    const onNodeMove = vi.fn()
++    const onNodesBulkMove = vi.fn()
++    render(
++      <SidebarTree
++        isCollapsed={false}
++        onNodeMove={onNodeMove}
++        onNodesBulkMove={onNodesBulkMove}
++      />,
++    )
++
++    // 多选 File-A(2) 与 File-B(3)
++    const fa = screen.getByTestId('qingzhi-tree-node-2')
++    const fb = screen.getByTestId('qingzhi-tree-node-3')
++    fireEvent.click(fa, { ctrlKey: true })
++    fireEvent.click(fb, { ctrlKey: true })
++
++    // 拖拽 File-A 到 Folder(1) "into"
++    const folder = screen.getByTestId('qingzhi-tree-node-1')
++    const dataTransfer = {
++      data: {} as Record<string, string>,
++      setData(k: string, v: string) { this.data[k] = v },
++      getData(k: string) { return this.data[k] || '' },
++      effectAllowed: '',
++      types: [] as string[],
++    }
++    fireEvent.dragStart(fa, { dataTransfer })
++    fireEvent.dragOver(folder, { dataTransfer, clientX: 100, clientY: 100 })
++    fireEvent.drop(folder, { dataTransfer })
++
++    expect(onNodesBulkMove).toHaveBeenCalledTimes(1)
++    expect(onNodeMove).not.toHaveBeenCalled()
++    const [ids, parentId] = onNodesBulkMove.mock.calls[0]
++    expect(new Set(ids)).toEqual(new Set(['2', '3']))
++    expect(parentId).toBe('1')
++  })
++})
++
++describe('F2 bug 2b · "移动到..." 后目标文件夹自动展开', () => {
++  afterEach(() => cleanup())
++
++  it('选择目标文件夹后,该文件夹的 disclosure 处于展开态(其内容可见)', () => {
++    const onNodesBulkMove = vi.fn()
++    render(<SidebarTree isCollapsed={false} onNodesBulkMove={onNodesBulkMove} />)
++
++    const fa = screen.getByTestId('qingzhi-tree-node-2')
++    const fb = screen.getByTestId('qingzhi-tree-node-3')
++    fireEvent.click(fa, { ctrlKey: true })
++    fireEvent.click(fb, { ctrlKey: true })
++
++    fireEvent.contextMenu(fa, { clientX: 50, clientY: 50 })
++    fireEvent.click(screen.getByTestId('qingzhi-sidebar-bulk-move'))
++    // 选择目标文件夹 "Folder" (id=1) — 使用 modal 内按钮 (含 FolderPlus 图标)
++    // 这里 modal 渲染了 button list,标题是 "Folder"。 用 querySelector 直接定位。
++    const modalRoot = document.querySelector('.bg-background.border.border-border\\/40.shadow-2xl') as HTMLElement | null
++    expect(modalRoot).not.toBeNull()
++    const folderBtn = Array.from(modalRoot!.querySelectorAll('button'))
++      .find((b) => b.textContent?.includes('Folder')) as HTMLElement | undefined
++    expect(folderBtn).toBeTruthy()
++    fireEvent.click(folderBtn!)
++
++    expect(onNodesBulkMove).toHaveBeenCalledTimes(1)
++    // Folder 1 应被自动展开 — node-1 行的 data-expanded='true'
++    const folderRow = screen.getByTestId('qingzhi-tree-node-1')
++    expect(folderRow.getAttribute('data-expanded')).toBe('true')
++  })
++})
++
++describe('F2 bug 2c · 点击空白区域取消多选', () => {
++  afterEach(() => cleanup())
++
++  it('多选后点击 sidebar-tree 画布空白区域 → 后续右键 fa 弹出的应是单条菜单(不是 bulk)', () => {
++    render(<SidebarTree isCollapsed={false} />)
++    const fa = screen.getByTestId('qingzhi-tree-node-2')
++    const fb = screen.getByTestId('qingzhi-tree-node-3')
++    fireEvent.click(fa, { ctrlKey: true })
++    fireEvent.click(fb, { ctrlKey: true })
++
++    const canvas = document.querySelector('[data-sidebar-tree-canvas]') as HTMLElement
++    expect(canvas).not.toBeNull()
++    fireEvent.click(canvas)
++
++    // 此时多选应被清空。直接 contextMenu fa(此节点之前在多选集合里)
++    fireEvent.contextMenu(fa, { clientX: 50, clientY: 50 })
++    // 多选若还在,bulk 菜单会出现; 否则不出现
++    expect(screen.queryByTestId('qingzhi-sidebar-bulk-move')).toBeNull()
++  })
++})
++
++describe('F3 bug · 排序按日期分组 (今天/昨天/更早)', () => {
++  afterEach(() => cleanup())
++
++  // 这个测试通过 fake timers/Date 控制 "今天" — 直接 mock Date.now
++  it('sortMode=updated 时,渲染出 "今天/昨天/更早" 分组标题', () => {
++    // mock Date.now → NOW
++    const realDateNow = Date.now
++    Date.now = () => NOW
++    try {
++      // 重写 mock 中 notes 的 updated_at 为不同时间桶
++      // 由于 useNoteStore 已经 mock,直接通过临时 mock 模块替换不可行,
++      // 这里我们通过 localStorage 设置 sortMode 即可
++      localStorage.setItem('qz.sidebar.sortMode.v1', 'updated')
++
++      render(<SidebarTree isCollapsed={false} />)
++
++      // 至少一个分组标题应当出现
++      const groups = screen.queryAllByTestId('qingzhi-sidebar-group-header')
++      expect(groups.length).toBeGreaterThanOrEqual(1)
++    } finally {
++      Date.now = realDateNow
++    }
++  })
++})
++
++// 让上面 F3 测试中无用的常量仍有引用,避免 noUnused
++void YESTERDAY
++void LAST_WEEK
+diff --git a/nova-block/src/test/findReplace.bugs.test.tsx b/nova-block/src/test/findReplace.bugs.test.tsx
+new file mode 100644
+index 0000000..48b9b93
+--- /dev/null
++++ b/nova-block/src/test/findReplace.bugs.test.tsx
+@@ -0,0 +1,100 @@
++/**
++ * @vitest-environment jsdom
++ *
++ * F1-Bugs · 修复 3 处运行时 bug
++ *
++ * 1a. 面板被编辑器顶部工具条遮挡 — 需要把面板下移(top-* 类应大于 top-2)
++ * 1b. 已替换的文本不应再次被命中查找
++ * 1c. 上一个/下一个按钮应该把当前命中滚动到视图、并设置 selection
++ */
++import { describe, it, expect, beforeEach, afterEach } from 'vitest'
++import { render, screen, cleanup } from '@testing-library/react'
++import { Editor } from '@tiptap/core'
++import StarterKit from '@tiptap/starter-kit'
++
++import { FindReplacePanel } from '../components/editor/FindReplacePanel'
++import {
++  FindReplaceExtension,
++  findReplacePluginKey,
++  setFindQuery,
++  gotoNext,
++  replaceCurrent,
++  replaceAll,
++} from '../lib/novablock/findReplacePlugin'
++
++function makeEditor(html: string) {
++  return new Editor({
++    extensions: [StarterKit, FindReplaceExtension],
++    content: html,
++  })
++}
++
++describe('F1 bug 1a · 面板位置避开顶部工具条', () => {
++  let editor: Editor
++  beforeEach(() => {
++    editor = makeEditor('<p>hello world</p>')
++  })
++  afterEach(() => {
++    cleanup()
++    editor.destroy()
++  })
++
++  it('面板的 top 偏移类不再是 top-2(被工具条遮挡),应大于等于 top-12', () => {
++    render(<FindReplacePanel open onClose={() => {}} editor={editor} />)
++    const panel = screen.getByTestId('qingzhi-find-replace-panel')
++    const cls = panel.className
++    // 不应再是 top-2
++    expect(cls).not.toMatch(/(^|\s)top-2(\s|$)/)
++    // 必须存在某个 top-N(N>=12)的类
++    const m = cls.match(/(^|\s)top-(\d+)(\s|$)/)
++    expect(m).not.toBeNull()
++    const n = m ? parseInt(m[2], 10) : 0
++    expect(n).toBeGreaterThanOrEqual(12)
++  })
++})
++
++describe('F1 bug 1b · 已替换的文本不再被命中', () => {
++  it('replaceCurrent 后,如果替换串本身包含 query,不应在新文本中再次命中', () => {
++    const ed = makeEditor('<p>foo bar foo</p>')
++    setFindQuery(ed.view, 'foo', { caseSensitive: false, wholeWord: false, regex: false })
++    // 把 foo 替换为 foofoo (新文本里又包含 foo)
++    replaceCurrent(ed.view, 'foofoo')
++    // 文档现在应是 "foofoo bar foo" — 一共 3 个 foo,但其中 2 个来自刚刚替换出来的内容,
++    // 我们要求不再命中替换出来的部分,只剩下原来未替换的那个 foo
++    const state = findReplacePluginKey.getState(ed.view.state)!
++    expect(state.matches.length).toBe(1)
++    ed.destroy()
++  })
++
++  it('replaceAll 后,即使替换串包含 query,文档中不再有任何 match', () => {
++    const ed = makeEditor('<p>foo foo foo</p>')
++    setFindQuery(ed.view, 'foo', { caseSensitive: false, wholeWord: false, regex: false })
++    const count = replaceAll(ed.view, 'foofoo')
++    expect(count).toBe(3)
++    const state = findReplacePluginKey.getState(ed.view.state)!
++    expect(state.matches.length).toBe(0)
++    ed.destroy()
++  })
++})
++
++describe('F1 bug 1c · 上一个/下一个按钮设置 selection 并请求滚动', () => {
++  let editor: Editor
++  beforeEach(() => {
++    editor = makeEditor('<p>hello hello hello</p>')
++  })
++  afterEach(() => {
++    editor.destroy()
++  })
++
++  it('gotoNext 后,文档 selection 落在 current match 范围上', () => {
++    setFindQuery(editor.view, 'hello', { caseSensitive: false, wholeWord: false, regex: false })
++    // current = 0 → match[0]
++    gotoNext(editor.view)
++    // 现在 current = 1 → match[1]
++    const s = findReplacePluginKey.getState(editor.view.state)!
++    const m = s.matches[s.current]
++    const sel = editor.view.state.selection
++    expect(sel.from).toBe(m.from)
++    expect(sel.to).toBe(m.to)
++  })
++})

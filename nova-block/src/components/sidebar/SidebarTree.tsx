@@ -152,6 +152,9 @@ export const SidebarTree = ({
   // F2b · multi-select state
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
   const [rangeAnchor, setRangeAnchor] = useState<string | null>(null);
+  // Round 4 · Bug E: 用 ref 标记 mousedown 已经处理过 Ctrl/Cmd toggle,
+  // 避免 click 事件再次 toggle(在 jsdom 中 mousedown+click 都会触发)。
+  const modMouseDownHandledRef = useRef(false);
 
   useEffect(() => {
     const handleClick = () => {
@@ -621,10 +624,34 @@ export const SidebarTree = ({
                         selectedId={selectedId}
                         editingId={editingId}
                         isMultiSelected={multiSelected.has(node.id)}
+                        onItemMouseDown={(e, n) => {
+                          // Round 4 · Bug E: Ctrl/Cmd+click 在 draggable div 上的 click 事件
+                          // 在某些 Electron/Chromium 版本会被吞,这里在 mousedown 阶段处理 toggle,
+                          // 保证 Ctrl/Cmd+点击 能可靠地非连续多选。
+                          const isMod = e.ctrlKey || e.metaKey;
+                          if (!isMod) return;
+                          // 标记已在 mousedown 处理,防止后续 click 再次 toggle
+                          modMouseDownHandledRef.current = true;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setMultiSelected((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(n.id)) next.delete(n.id);
+                            else next.add(n.id);
+                            return next;
+                          });
+                          setRangeAnchor(n.id);
+                        }}
                         onItemClick={(e, n) => {
                           // F2b 多选交互: Ctrl/Cmd toggle, Shift range, plain → 清空多选
                           const isMod = e.ctrlKey || e.metaKey;
                           if (isMod) {
+                            // Round 4 · Bug E: 如果 mousedown 已处理过 toggle 则跳过;
+                            // 否则作为后备(jsdom / 旧 Chromium click 未被吞的场景)执行 toggle。
+                            if (modMouseDownHandledRef.current) {
+                              modMouseDownHandledRef.current = false;
+                              return true;
+                            }
                             setMultiSelected((prev) => {
                               const next = new Set(prev);
                               if (next.has(n.id)) next.delete(n.id);
