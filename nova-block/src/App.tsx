@@ -12,6 +12,7 @@ import { extractLinkedNoteIds, getNotesNeedingFilenameSync, shouldRenameNoteFile
 import { searchIndex } from './lib/searchIndex'
 import { buildSearchableText } from './lib/searchUtils'
 import { recordOpen } from './lib/novablock/openHistory'
+import { generateSequenceAfter } from './lib/novablock/sortKeyGen'
 import { migrateLegacyNotes, parseLegacyNotes, shouldRunLegacyMigration } from './lib/legacyLocalMigration'
 import { AnimatePresence, motion } from 'framer-motion'
 import { MusicProvider, useMusicControls } from './contexts/MusicContext'
@@ -1269,14 +1270,13 @@ function App() {
       .sort((a, b) => (a.sort_key ?? 'm').localeCompare(b.sort_key ?? 'm'))
     const lastKey = siblings.length > 0 ? (siblings[siblings.length - 1].sort_key ?? 'm') : null
 
-    // Generate sequential sort keys for the moved batch (lexicographically appended after lastKey)
-    const assignments: Array<{ id: number; sortKey: string }> = []
-    let prev: string | null = lastKey
-    for (const id of numericIds) {
-      const sk = `${prev ?? 'm'}m`
-      assignments.push({ id, sortKey: sk })
-      prev = sk
-    }
+    // Generate strictly-increasing sort keys after lastKey to avoid collision with existing siblings
+    // (Bug-fix: prior `${prev ?? 'm'}m` produced keys colliding with existing 'm'/'mm', causing UI to lose items.)
+    const sortKeys = generateSequenceAfter(lastKey, numericIds.length)
+    const assignments: Array<{ id: number; sortKey: string }> = numericIds.map((id, i) => ({
+      id,
+      sortKey: sortKeys[i],
+    }))
 
     // Optimistic update
     const lookup = new Map(assignments.map(a => [a.id, a.sortKey]))

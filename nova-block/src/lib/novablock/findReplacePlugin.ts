@@ -276,15 +276,17 @@ export function setFindQuery(view: EditorView, query: string, options: FindRepla
 export function gotoNext(view: EditorView): void {
   const tr = view.state.tr.setMeta(META_KEY, { type: 'gotoNext' } satisfies FindReplaceMeta)
   view.dispatch(tr)
-  // 计算 next current 后,把 selection 落到该 match 上,并 scrollIntoView (bug 1c)
+  // Bug-fix v2: dispatch 之后,view.state 已更新到 next current。
+  // 把 selection + scrollIntoView 合并到一个 tr,基于 *最新* 的 view.state.doc 计算。
   const s = findReplacePluginKey.getState(view.state)
   if (!s || s.matches.length === 0) return
   const m = s.matches[s.current]
   if (!m) return
   try {
+    const docSize = view.state.doc.content.size
+    if (m.from < 0 || m.to > docSize) return
     const sel = TextSelection.create(view.state.doc, m.from, m.to)
-    const tr2 = view.state.tr.setSelection(sel).scrollIntoView()
-    view.dispatch(tr2)
+    view.dispatch(view.state.tr.setSelection(sel).scrollIntoView())
   } catch {
     /* selection 越界等情况静默忽略 */
   }
@@ -298,9 +300,10 @@ export function gotoPrev(view: EditorView): void {
   const m = s.matches[s.current]
   if (!m) return
   try {
+    const docSize = view.state.doc.content.size
+    if (m.from < 0 || m.to > docSize) return
     const sel = TextSelection.create(view.state.doc, m.from, m.to)
-    const tr2 = view.state.tr.setSelection(sel).scrollIntoView()
-    view.dispatch(tr2)
+    view.dispatch(view.state.tr.setSelection(sel).scrollIntoView())
   } catch {
     /* selection 越界等情况静默忽略 */
   }

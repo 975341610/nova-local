@@ -77,11 +77,14 @@ export function FindReplacePanel({ open, onClose, editor }: FindReplacePanelProp
 
   const handleNext = useCallback(() => {
     if (!editor) return
+    // Bug-fix: 先聚焦编辑器,使后续 scrollIntoView 在可见区域内生效
+    editor.commands.focus(undefined, { scrollIntoView: false })
     gotoNext(editor.view)
   }, [editor])
 
   const handlePrev = useCallback(() => {
     if (!editor) return
+    editor.commands.focus(undefined, { scrollIntoView: false })
     gotoPrev(editor.view)
   }, [editor])
 

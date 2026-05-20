@@ -60,6 +60,7 @@ import type { Note } from '../../lib/types';
 
 import { EditorHeader } from '../editor/EditorHeader';
 import { FindReplacePanel } from '../editor/FindReplacePanel';
+import { AIInlinePopover } from '../editor/AIInlinePopover';
 import { PropertyPanel } from '../editor/PropertyPanel';
 import { RevisionHistoryDrawer } from '../editor/RevisionHistoryDrawer';
 import { getSuggestionConfig } from '../notion/SlashMenuConfig';
@@ -69,6 +70,7 @@ import { stripLeadingDuplicateTitleBlockFromHtml } from '../../lib/noteContentTi
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
 import { FindReplaceExtension } from '../../lib/novablock/findReplacePlugin';
+import { buildPrompt, type AIActionKind } from '../../lib/novablock/aiActions';
 import {
   AIStreamingPreviewNode,
   findAIStreamingPreview,
@@ -716,6 +718,28 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [editorViewReadyToken, setEditorViewReadyToken] = useState(0);
   const previousStickerModeRef = useRef(false);
 
+  // F3 · AI inline popover state (Bug 4 fix)
+  const [aiInlineOpen, setAiInlineOpen] = useState(false);
+  const [aiInlineAnchor, setAiInlineAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [aiInlineRange, setAiInlineRange] = useState<{ from: number; to: number } | null>(null);
+  const [aiInlineOriginal, setAiInlineOriginal] = useState('');
+  const [aiInlinePreview, setAiInlinePreview] = useState('');
+  const [aiInlineLoading, setAiInlineLoading] = useState(false);
+  const [aiInlineError, setAiInlineError] = useState<string | null>(null);
+  const aiInlineAbortRef = useRef<{ aborted: boolean }>({ aborted: false });
+
+  const closeAIInline = useCallback(() => {
+    aiInlineAbortRef.current.aborted = true;
+    setAiInlineOpen(false);
+    setAiInlineAnchor(null);
+    setAiInlineRange(null);
+    setAiInlineOriginal('');
+    setAiInlinePreview('');
+    setAiInlineLoading(false);
+    setAiInlineError(null);
+  }, []);
+
+
   // v0.21.2 · 点击 popover 以外的任何位置都收起色板
   useEffect(() => {
     if (!isTextColorOpen && !isHighlightColorOpen) return;
@@ -1163,6 +1187,77 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       },
     }
   }, [extensions, updateOutline, handleAdvancedTableEditorContextMenu, handleAdvancedTableEditorDragStart]);
+
+  // F3 · AI inline popover handlers (Bug 4) — 必须在 editor 声明之后
+  const openAIInline = useCallback(() => {
+    if (!editor) return;
+    const { from, to } = editor.state.selection;
+    if (from === to) return;
+    const text = editor.state.doc.textBetween(from, to, '\n');
+    if (!text.trim()) return;
+    let anchor = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    try {
+      const start = editor.view.coordsAtPos(from);
+      const end = editor.view.coordsAtPos(to);
+      anchor = { x: Math.min(start.left, end.left), y: Math.max(start.bottom, end.bottom) };
+    } catch { /* ignore */ }
+    aiInlineAbortRef.current = { aborted: false };
+    setAiInlineRange({ from, to });
+    setAiInlineOriginal(text);
+    setAiInlinePreview('');
+    setAiInlineError(null);
+    setAiInlineLoading(false);
+    setAiInlineAnchor(anchor);
+    setAiInlineOpen(true);
+  }, [editor]);
+
+  const runAIInline = useCallback(async (kind: AIActionKind | 'custom', customPrompt?: string) => {
+    if (!editor || !aiInlineRange) return;
+    if (!isAiEnabled) {
+      onNotify?.('请先在设置中开启 AI 插件', 'info');
+      return;
+    }
+    const text = aiInlineOriginal;
+    const prompt = kind === 'custom'
+      ? `${customPrompt || ''}\n\n以下是用户选中的文本,请按上面的指令处理,只输出处理后的内容:\n\n${text}`
+      : buildPrompt(kind, text);
+    aiInlineAbortRef.current = { aborted: false };
+    const localToken = aiInlineAbortRef.current;
+    setAiInlinePreview('');
+    setAiInlineError(null);
+    setAiInlineLoading(true);
+    let buf = '';
+    try {
+      await api.streamInlineAI(
+        { prompt, context: editor.getText(), action: 'inline' },
+        (chunk: string) => {
+          if (localToken.aborted) return;
+          buf += chunk;
+          setAiInlinePreview(buf);
+        },
+      );
+    } catch (err: any) {
+      if (!localToken.aborted) {
+        setAiInlineError(err?.message ? String(err.message) : 'AI 调用失败');
+      }
+    } finally {
+      if (!localToken.aborted) setAiInlineLoading(false);
+    }
+  }, [editor, aiInlineRange, aiInlineOriginal, isAiEnabled, onNotify]);
+
+  const confirmAIInline = useCallback(() => {
+    if (!editor || !aiInlineRange) return;
+    const out = aiInlinePreview.trim();
+    if (!out) return;
+    const content = shouldRenderAIMarkdown(out) ? aiMarkdownToHtml(out) : out;
+    editor
+      .chain()
+      .focus()
+      .deleteRange({ from: aiInlineRange.from, to: aiInlineRange.to })
+      .insertContentAt(aiInlineRange.from, content)
+      .run();
+    closeAIInline();
+  }, [editor, aiInlineRange, aiInlinePreview, closeAIInline]);
 
   const isAdvancedTableCellSelection = useCallback((selection: any) => (
     selection instanceof CellSelection ||
@@ -3808,7 +3903,21 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                   
                   <div className="w-px h-5 bg-border/20 mx-1" />
 
-                  <button 
+                  {/* F3 · AI inline 按钮 (Bug 4 fix) */}
+                  <button
+                    data-testid="qingzhi-bubble-ai-trigger"
+                    onMouseDown={(e) => { e.preventDefault(); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openAIInline();
+                    }}
+                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${aiInlineOpen ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+                    title="AI 助手 (重写 / 翻译 / 转表格)"
+                  >
+                    <Bot size={16} />
+                  </button>
+
+                  <button
                     onClick={async () => {
                       const currentHref = editor.getAttributes('link').href || ''
                       const url = await promptCompat({
@@ -3991,7 +4100,23 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                 </motion.div>
               </BubbleMenu>
             )}
-            
+
+            {/* F3 · AI inline popover (Bug 4 fix) — Portal 到 body 避免裁切 */}
+            {createPortal(
+              <AIInlinePopover
+                open={aiInlineOpen}
+                anchor={aiInlineAnchor}
+                originalText={aiInlineOriginal}
+                previewText={aiInlinePreview}
+                loading={aiInlineLoading}
+                error={aiInlineError}
+                onRun={runAIInline}
+                onConfirm={confirmAIInline}
+                onCancel={closeAIInline}
+              />,
+              document.body
+            )}
+
             {/* 涓夊眰鏋舵瀯娓叉煋 */}
             {/* Layer 2: Stickers (Decorations) */}
             <StickerLayer 

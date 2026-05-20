@@ -11,19 +11,11 @@ import AIImportPanel from './AIImportPanel';
 import { useNoteStore } from '../../store/useNoteStore';
 import { QINGZHI_SETTINGS_EVENT, readQingzhiSettings } from '../../lib/qingzhiSettings';
 import { getLastOpened } from '../../lib/novablock/openHistory';
+import { parseTs } from '../../lib/novablock/parseTs';
 
 /** F2c · 排序模式 */
 type SortMode = 'manual' | 'created' | 'updated' | 'opened';
 const SORT_MODE_STORAGE_KEY = 'qz.sidebar.sortMode.v1';
-
-const parseTs = (v: unknown): number => {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (typeof v === 'string' && v) {
-    const t = Date.parse(v);
-    return Number.isFinite(t) ? t : 0;
-  }
-  return 0;
-};
 
 /**
  * 把时间戳/打开次数转换为可由 buildTree 使用的"逆序" sortKey:
