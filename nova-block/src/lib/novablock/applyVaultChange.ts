@@ -28,6 +28,8 @@ export interface ApplyVaultChangeArgs<T extends VaultChangeNote> {
   normalizePath: (filename: string | null | undefined) => string
   /** 合并器,收到旧条目和新条目,返回合并后的条目。会尊重 hasPendingNoteSave 等 UI 状态。 */
   merger: Merger<T>
+  /** Round 5 · Bug D: 正在被批量移动的笔记 id 集合,这些笔记即使路径命中 deletedPaths 也不删除。 */
+  suppressedIds?: Set<number>
 }
 
 export function applyVaultChange<T extends VaultChangeNote>({
@@ -36,6 +38,7 @@ export function applyVaultChange<T extends VaultChangeNote>({
   deletedPaths,
   normalizePath,
   merger,
+  suppressedIds,
 }: ApplyVaultChangeArgs<T>): T[] {
   const next: T[] = [...previousNotes]
   const changedIds = new Set<number>()
@@ -57,7 +60,7 @@ export function applyVaultChange<T extends VaultChangeNote>({
     for (let i = next.length - 1; i >= 0; i--) {
       const note = next[i]
       const path = normalizePath(note.file_path)
-      if (deletedPaths.has(path) && !changedIds.has(note.id)) {
+      if (deletedPaths.has(path) && !changedIds.has(note.id) && !suppressedIds?.has(note.id)) {
         next.splice(i, 1)
       }
     }

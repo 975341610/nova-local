@@ -84,4 +84,22 @@ describe('Round4 · Bug E · Ctrl+click 不连续多选', () => {
     fireEvent.click(b, { ctrlKey: true, button: 0 })
     expect(b.getAttribute('data-multi-selected')).toBe('false')
   })
+
+  it('Round5 · 当前已选中/打开 A → Ctrl+click C → A 和 C 都进入多选', () => {
+    // selectedNodeId="1" 模拟已打开/选中 A
+    render(<SidebarTree isCollapsed={false} selectedNodeId="1" />)
+    const a = screen.getByTestId('qingzhi-tree-node-1')
+    const c = screen.getByTestId('qingzhi-tree-node-3')
+
+    // Ctrl+click C(此时 multiSelected 为空,但 selectedId=1)
+    fireEvent.mouseDown(c, { ctrlKey: true, button: 0 })
+    fireEvent.click(c, { ctrlKey: true, button: 0 })
+
+    // A 应自动被纳入多选,C 也在多选中
+    expect(a.getAttribute('data-multi-selected')).toBe('true')
+    expect(c.getAttribute('data-multi-selected')).toBe('true')
+    // B 不在多选中
+    const b = screen.getByTestId('qingzhi-tree-node-2')
+    expect(b.getAttribute('data-multi-selected')).toBe('false')
+  })
 })

@@ -73,4 +73,25 @@ describe('AI Markdown rendering', () => {
     expect(html).toContain('data-ai-source-card="link"')
     expect(html).toContain('https://example.com')
   })
+
+  it('converts Markdown table into HTML table', () => {
+    const md = `| Name | Age | City |
+| --- | --- | --- |
+| Alice | 30 | Beijing |
+| Bob | 25 | Shanghai |`
+
+    const html = aiMarkdownToHtml(md)
+    expect(html).toContain('<table>')
+    expect(html).toContain('<thead>')
+    expect(html).toContain('<th>')
+    expect(html).toContain('Name')
+    expect(html).toContain('<tbody>')
+    expect(html).toContain('<td>')
+    expect(html).toContain('Alice')
+    expect(html).toContain('Bob')
+  })
+
+  it('shouldRenderAIMarkdown detects table syntax', () => {
+    expect(shouldRenderAIMarkdown('| A | B |\n| --- | --- |\n| 1 | 2 |')).toBe(true)
+  })
 })

@@ -636,6 +636,11 @@ export const SidebarTree = ({
                           e.stopPropagation();
                           setMultiSelected((prev) => {
                             const next = new Set(prev);
+                            // Round 5 · Bug E 改进: 如果当前 multiSelected 为空且有一个已选中的节点,
+                            // 自动将它纳入多选集合(用户期望 Ctrl+点击时"当前打开/选中的"自动算入)。
+                            if (next.size === 0 && selectedId && selectedId !== n.id) {
+                              next.add(selectedId);
+                            }
                             if (next.has(n.id)) next.delete(n.id);
                             else next.add(n.id);
                             return next;
@@ -654,6 +659,10 @@ export const SidebarTree = ({
                             }
                             setMultiSelected((prev) => {
                               const next = new Set(prev);
+                              // Round 5 · Bug E 改进: 同 onItemMouseDown 逻辑
+                              if (next.size === 0 && selectedId && selectedId !== n.id) {
+                                next.add(selectedId);
+                              }
                               if (next.has(n.id)) next.delete(n.id);
                               else next.add(n.id);
                               return next;

@@ -567,6 +567,9 @@ function App() {
   const saveSequenceRef = useRef<Map<number, number>>(new Map())
   const pendingSaveCountsRef = useRef<Map<number, number>>(new Map())
   const protectedCurrentNoteIdRef = useRef<number | null>(null)
+  // Round 5 · Bug D: 批量移动期间抑制 vault watcher 的删除操作,
+  // 避免 chokidar 事件(unlink 旧路径)在 backend 尚未完成文件移动时误删笔记。
+  const vaultDeleteSuppressedIdsRef = useRef<Set<number>>(new Set())
 
   const toggleSidebar = (collapsed: boolean) => {
     setIsSidebarCollapsed(collapsed)
@@ -839,7 +842,13 @@ function App() {
 
   const handleVaultChanged = useCallback(async (payload: VaultChangePayload | VaultChangePayload[]) => {
     const changes = (Array.isArray(payload) ? payload : [payload]).filter(Boolean)
+    // ─── Round 5 · Bug D 诊断日志 ───
+    console.group('%c[VaultWatcher]', 'color:#e91e63;font-weight:bold', new Date().toISOString())
+    console.log('raw payload:', JSON.stringify(changes, null, 2))
+    // ─── end diag header ───
     if (changes.length === 0) {
+      console.log('empty changes, skipping')
+      console.groupEnd()
       return
     }
 
@@ -849,6 +858,8 @@ function App() {
       change.eventType === 'unlinkDir'
     ))
     if (shouldReloadAll) {
+      console.log('[VaultWatcher] shouldReloadAll=true → loadNotes')
+      console.groupEnd()
       await loadNotes(currentNoteId)
       return
     }
@@ -867,17 +878,19 @@ function App() {
       ? await api.getChangedNotes(changedFilenames)
       : []
 
-    // Round 4 · Bug D fix: bulk-move 触发的 chokidar 事件序列通常是
-    //   unlink 旧路径 + add/change 新路径(rename 语义)
-    // 之前的实现只用 file_path 做匹配,会先把"持有旧 file_path 的笔记"过滤掉,
-    // 而 changedNotes 那一帧又可能晚到/被 React 批处理打散,造成视觉上"瞬现即消失"。
-    //
-    // 修复: 把合并算法委托给纯函数 applyVaultChange:
-    //   1. 先 merge changedNotes(覆盖 id 已知的笔记 → 它们的 file_path 已被同步刷新)
-    //   2. 收集 changedNotes 的 id 集合
-    //   3. 再依据 deletedPaths 删除 id 不在 changedNotes 的笔记
-    // 这样 rename 场景下,被移动的笔记永远不会从 store 中消失。
+    // ─── Round 5 · Bug D 诊断日志 (续) ───
+    console.log('[VaultWatcher] deletedPaths:', [...deletedPaths])
+    console.log('[VaultWatcher] changedFilenames:', changedFilenames)
+    console.log('[VaultWatcher] changedNotes (from backend):', changedNotes.map(n => ({ id: n.id, file_path: (n as any).file_path, title: n.title })))
     const previousNotes = useNoteStore.getState().notes
+    console.log('[VaultWatcher] previousNotes count:', previousNotes.length, 'ids:', previousNotes.map(n => n.id))
+    console.log('[VaultWatcher] suppressedIds:', [...vaultDeleteSuppressedIdsRef.current])
+    // ─── end diag ───
+
+    // Round 5 · Bug D: 将正在被批量移动的笔记 id 加入 changedIds,
+    // 这样即使 chokidar 的 unlink 先于 add/change 到达,也不会误删。
+    const suppressedIds = vaultDeleteSuppressedIdsRef.current
+
     const nextNotes = applyVaultChange<Note>({
       previousNotes,
       changedNotes,
@@ -895,7 +908,22 @@ function App() {
         }
         return merged
       },
+      // Round 5 · Bug D: 传入 suppressedIds,这些笔记即使匹配 deletedPaths 也不删
+      suppressedIds,
     })
+
+    // ─── Round 5 · Bug D 诊断: 结果对比 ───
+    const removedNotes = previousNotes.filter(p => !nextNotes.some(n => n.id === p.id))
+    const addedNotes = nextNotes.filter(n => !previousNotes.some(p => p.id === n.id))
+    if (removedNotes.length > 0) {
+      console.warn('[VaultWatcher] ⚠️ NOTES REMOVED:', removedNotes.map(n => ({ id: n.id, file_path: n.file_path, title: n.title })))
+    }
+    if (addedNotes.length > 0) {
+      console.log('[VaultWatcher] notes added:', addedNotes.map(n => ({ id: n.id, file_path: n.file_path, title: n.title })))
+    }
+    console.log('[VaultWatcher] nextNotes count:', nextNotes.length)
+    console.groupEnd()
+    // ─── end diag ───
 
     setNotes(nextNotes)
     for (const removed of previousNotes) {
@@ -1255,12 +1283,19 @@ function App() {
       note.id === noteId ? { ...note, parent_id: nextParentId, sort_key: sortKey } : note
     )))
 
+    // Round 5 · Bug D: 单条移动也需要抑制 vault watcher 删除
+    vaultDeleteSuppressedIdsRef.current.add(noteId)
+
     try {
       const updated = await api.updateNote(noteId, { parent_id: nextParentId, sort_key: sortKey })
       setNotes(prev => prev.map(note => note.id === noteId ? mergeNote(note, updated) : note))
     } catch (err) {
       console.error('Failed to move note:', err)
       await loadNotes(currentNoteId)
+    } finally {
+      setTimeout(() => {
+        vaultDeleteSuppressedIdsRef.current.delete(noteId)
+      }, 3000)
     }
   }
 
@@ -1293,6 +1328,12 @@ function App() {
         : note
     )))
 
+    // Round 5 · Bug D: 在批量移动期间抑制 vault watcher 对这些笔记的删除
+    for (const id of numericIds) {
+      vaultDeleteSuppressedIdsRef.current.add(id)
+    }
+    console.log('[BulkMove] suppressing vault delete for ids:', numericIds)
+
     // Round 3 · Bug C: 串行调用 api.updateNote 而非 Promise.all。
     // 原因: chokidar vault-watcher 在并发期间可能触发 reload,读取到只提交了一半的状态,
     // 已移动节点会"瞬现即消失"。串行 + 把 server 响应 merge 回 store 可保证视图一致。
@@ -1315,6 +1356,14 @@ function App() {
     } catch (err) {
       console.error('Failed to bulk move notes:', err)
       await loadNotes(currentNoteId)
+    } finally {
+      // Round 5 · Bug D: 移动完成后延迟释放抑制,给 chokidar 事件队列排空的时间
+      setTimeout(() => {
+        for (const id of numericIds) {
+          vaultDeleteSuppressedIdsRef.current.delete(id)
+        }
+        console.log('[BulkMove] released vault delete suppression for ids:', numericIds)
+      }, 3000)
     }
   }
 

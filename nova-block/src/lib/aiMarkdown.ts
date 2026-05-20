@@ -7,6 +7,7 @@ export function shouldRenderAIMarkdown(text: string): boolean {
     || /`[^`]+`/.test(sample)
     || /\[[^\]]+\]\([^)]+\)/.test(sample)
     || /\n\s*\n/.test(sample)
+    || /\|.+\|/.test(sample) // Markdown table row
 }
 
 export function aiMarkdownToHtml(markdown: string): string {
@@ -17,6 +18,8 @@ export function aiMarkdownToHtml(markdown: string): string {
   let inCodeBlock = false
   let codeLanguage = ''
   let codeLines: string[] = []
+  let tableRows: string[][] = []
+  let tableHasHeader = false
 
   const closeParagraph = () => {
     if (!paragraph.length) return
@@ -37,7 +40,41 @@ export function aiMarkdownToHtml(markdown: string): string {
     codeLines = []
   }
 
-  for (const rawLine of lines) {
+  const closeTable = () => {
+    if (!tableRows.length) return
+    const startRow = tableHasHeader ? 1 : 0
+    out.push('<table>')
+    if (tableHasHeader && tableRows.length > 0) {
+      out.push('<thead><tr>')
+      for (const cell of tableRows[0]) {
+        out.push(`<th><p>${inlineMarkdownToHtml(cell.trim())}</p></th>`)
+      }
+      out.push('</tr></thead>')
+    }
+    out.push('<tbody>')
+    for (let i = startRow; i < tableRows.length; i++) {
+      out.push('<tr>')
+      for (const cell of tableRows[i]) {
+        out.push(`<td><p>${inlineMarkdownToHtml(cell.trim())}</p></td>`)
+      }
+      out.push('</tr>')
+    }
+    out.push('</tbody></table>')
+    tableRows = []
+    tableHasHeader = false
+  }
+
+  const isTableSeparator = (s: string) => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(s)
+  const parseTableRow = (s: string): string[] | null => {
+    const trimmed = s.trim()
+    if (!trimmed.startsWith('|') && !trimmed.includes('|')) return null
+    // Remove leading/trailing pipes then split
+    const inner = trimmed.replace(/^\|/, '').replace(/\|$/, '')
+    return inner.split('|')
+  }
+
+  for (let li = 0; li < lines.length; li++) {
+    const rawLine = lines[li]
     const line = rawLine.replace(/\s+$/, '')
     const trimmed = line.trim()
 
@@ -47,6 +84,7 @@ export function aiMarkdownToHtml(markdown: string): string {
       } else {
         closeParagraph()
         closeList()
+        closeTable()
         inCodeBlock = true
         codeLanguage = trimmed.slice(3).trim()
         codeLines = []
@@ -62,13 +100,44 @@ export function aiMarkdownToHtml(markdown: string): string {
     if (!trimmed) {
       closeParagraph()
       closeList()
+      closeTable()
       continue
+    }
+
+    // ─── Markdown Table Detection ───
+    const tableCells = parseTableRow(trimmed)
+    if (tableCells !== null) {
+      // Check if next line is a separator (header detection)
+      if (tableRows.length === 0) {
+        closeParagraph()
+        closeList()
+        // This is potentially the first row; check if next line is separator
+        const nextLine = li + 1 < lines.length ? lines[li + 1].trim() : ''
+        if (isTableSeparator(nextLine)) {
+          tableHasHeader = true
+          tableRows.push(tableCells)
+          li++ // skip separator line
+          continue
+        }
+      }
+      // If we're already collecting table rows or it's a non-header table row
+      if (tableRows.length > 0 || tableCells.length >= 2) {
+        if (tableRows.length === 0) {
+          closeParagraph()
+          closeList()
+        }
+        tableRows.push(tableCells)
+        continue
+      }
+    } else if (tableRows.length > 0) {
+      closeTable()
     }
 
     const heading = /^(#{1,6})\s+(.*)$/.exec(trimmed)
     if (heading) {
       closeParagraph()
       closeList()
+      closeTable()
       const level = heading[1].length
       out.push(`<h${level}>${inlineMarkdownToHtml(heading[2])}</h${level}>`)
       continue
@@ -78,6 +147,7 @@ export function aiMarkdownToHtml(markdown: string): string {
     if (blockquote) {
       closeParagraph()
       closeList()
+      closeTable()
       out.push(`<blockquote><p>${inlineMarkdownToHtml(blockquote[1])}</p></blockquote>`)
       continue
     }
@@ -85,6 +155,7 @@ export function aiMarkdownToHtml(markdown: string): string {
     const bullet = /^[-*+]\s+(.*)$/.exec(trimmed)
     if (bullet) {
       closeParagraph()
+      closeTable()
       if (listType !== 'ul') {
         closeList()
         out.push('<ul>')
@@ -97,6 +168,7 @@ export function aiMarkdownToHtml(markdown: string): string {
     const ordered = /^\d+\.\s+(.*)$/.exec(trimmed)
     if (ordered) {
       closeParagraph()
+      closeTable()
       if (listType !== 'ol') {
         closeList()
         out.push('<ol>')
@@ -107,11 +179,13 @@ export function aiMarkdownToHtml(markdown: string): string {
     }
 
     closeList()
+    closeTable()
     paragraph.push(inlineMarkdownToHtml(line))
   }
 
   closeParagraph()
   closeList()
+  closeTable()
   if (inCodeBlock) closeCodeBlock()
 
   return out.join('\n') || `<p>${escapeHtml(markdown)}</p>`
