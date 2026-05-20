@@ -70,7 +70,7 @@ import { stripLeadingDuplicateTitleBlockFromHtml } from '../../lib/noteContentTi
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
 import { FindReplaceExtension } from '../../lib/novablock/findReplacePlugin';
-import { buildPrompt, type AIActionKind } from '../../lib/novablock/aiActions';
+import { buildPrompt, kindToBackendAction, type AIActionKind } from '../../lib/novablock/aiActions';
 import {
   AIStreamingPreviewNode,
   findAIStreamingPreview,
@@ -1229,7 +1229,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     let buf = '';
     try {
       await api.streamInlineAI(
-        { prompt, context: editor.getText(), action: 'inline' },
+        { prompt, context: editor.getText(), action: kindToBackendAction(kind) },
         (chunk: string) => {
           if (localToken.aborted) return;
           buf += chunk;

@@ -278,23 +278,38 @@ export const SidebarTree = ({
       return;
     }
 
-    // F2 bug 2a: 如果被拖拽的节点处于多选集合 (size>=2),走批量移动而非单条移动。
-    // 仅当 position === 'into' 时支持(批量 only 接受 parentId,不区分 before/after)。
-    if (multiSelected.has(nodeId) && multiSelected.size >= 2 && position === 'into') {
+    // F2 bug 2a + Round3 Bug B: 如果被拖拽的节点处于多选集合 (size>=2),所有 position(into/before/after)都走批量移动。
+    //  - into  : parentId = targetId
+    //  - before/after : parentId = target 节点的 parent_id (可能是 null,表示移到 root 兄弟之间)
+    // 之前只在 position==='into' 时走 bulk → 拖到 root 兄弟之间会退化为单条 move,导致"移出文件夹只动一个"。
+    if (multiSelected.has(nodeId) && multiSelected.size >= 2) {
       const ids = normalizeSelectedRoots(nodes, multiSelected);
-      // 拒绝把多选集合中的祖先移动到自己的子孙
-      const blocked = ids.some((id) => isDescendant(nodes, targetId, id));
-      if (blocked) {
-        console.warn('Cannot bulk-move into a descendant of selected nodes');
-        return;
+      let bulkParentId: string | null;
+      if (position === 'into') {
+        bulkParentId = targetId;
+      } else {
+        const targetNode = nodes.find((n) => n.id === targetId);
+        const rawParent = targetNode?.parentId;
+        bulkParentId = rawParent == null ? null : String(rawParent);
       }
-      onNodesBulkMove?.(ids, targetId);
-      // 自动展开目标文件夹
-      setExpandedIds((prev) => {
-        const next = new Set(prev);
-        next.add(targetId);
-        return next;
-      });
+      // 拒绝把多选集合中的祖先移动到自己的子孙
+      const descendantOf = bulkParentId;
+      if (descendantOf != null) {
+        const blocked = ids.some((id) => isDescendant(nodes, descendantOf, id));
+        if (blocked) {
+          console.warn('Cannot bulk-move into a descendant of selected nodes');
+          return;
+        }
+      }
+      onNodesBulkMove?.(ids, bulkParentId);
+      // into 场景:自动展开目标文件夹
+      if (position === 'into') {
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          next.add(targetId);
+          return next;
+        });
+      }
       setMultiSelected(new Set());
       return;
     }

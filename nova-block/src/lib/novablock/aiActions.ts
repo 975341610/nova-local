@@ -41,6 +41,39 @@ export function buildPrompt(kind: AIActionKind, text: string): string {
 }
 
 /**
+ * Round 3 · Bug A — 后端 schemas.py 把 `action` 字段约束为下面的 Literal 白名单:
+ *   "continue" | "expand" | "summarize" | "rewrite" | "translate" | "outline" | "ask" | "search"
+ * 前端 inline AI 的 kind 不一定能直接对上,这里做一次显式映射:
+ *  - rewrite           → rewrite          (后端原生支持)
+ *  - translate         → translate        (后端原生支持)
+ *  - convert-to-table  → rewrite          (后端没有该枚举,降级到 rewrite,真正的指令在 prompt 里)
+ *  - custom            → ask              (自定义指令走 ask)
+ *  - 未知 kind          → ask              (退化兜底,绝不抛、绝不污染请求)
+ */
+export type BackendAIAction =
+  | 'continue'
+  | 'expand'
+  | 'summarize'
+  | 'rewrite'
+  | 'translate'
+  | 'outline'
+  | 'ask'
+  | 'search';
+
+const KIND_TO_BACKEND_ACTION: Record<string, BackendAIAction> = {
+  rewrite: 'rewrite',
+  translate: 'translate',
+  'convert-to-table': 'rewrite',
+  custom: 'ask',
+};
+
+export function kindToBackendAction(
+  kind: AIActionKind | 'custom' | string,
+): BackendAIAction {
+  return KIND_TO_BACKEND_ACTION[kind as string] ?? 'ask';
+}
+
+/**
  * 对模型输出做最小化清洗:
  *  - 剥去常见的 ```markdown / ```table / ``` 围栏
  *  - 修剪首尾空白

@@ -13,6 +13,7 @@ import { searchIndex } from './lib/searchIndex'
 import { buildSearchableText } from './lib/searchUtils'
 import { recordOpen } from './lib/novablock/openHistory'
 import { generateSequenceAfter } from './lib/novablock/sortKeyGen'
+import { bulkMoveSerially } from './lib/novablock/bulkMove'
 import { migrateLegacyNotes, parseLegacyNotes, shouldRunLegacyMigration } from './lib/legacyLocalMigration'
 import { AnimatePresence, motion } from 'framer-motion'
 import { MusicProvider, useMusicControls } from './contexts/MusicContext'
@@ -1286,10 +1287,25 @@ function App() {
         : note
     )))
 
+    // Round 3 · Bug C: 串行调用 api.updateNote 而非 Promise.all。
+    // 原因: chokidar vault-watcher 在并发期间可能触发 reload,读取到只提交了一半的状态,
+    // 已移动节点会"瞬现即消失"。串行 + 把 server 响应 merge 回 store 可保证视图一致。
     try {
-      await Promise.all(assignments.map(({ id, sortKey }) => (
-        api.updateNote(id, { parent_id: nextParentId, sort_key: sortKey })
-      )))
+      const ids = assignments.map(a => a.id)
+      const keys = assignments.map(a => a.sortKey)
+      const merged = await bulkMoveSerially(api, ids, nextParentId, keys)
+      if (merged.length > 0) {
+        const mergedById = new Map<number, Note>()
+        for (const m of merged) {
+          if (m && typeof (m as Note).id === 'number') {
+            mergedById.set((m as Note).id, m as Note)
+          }
+        }
+        setNotes(prev => prev.map(note => {
+          const fresh = mergedById.get(note.id)
+          return fresh ? mergeNote(note, fresh) : note
+        }))
+      }
     } catch (err) {
       console.error('Failed to bulk move notes:', err)
       await loadNotes(currentNoteId)
