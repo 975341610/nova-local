@@ -1766,17 +1766,25 @@ def capture_note_snapshot_api(
         raise HTTPException(status_code=404, detail="Note not found")
 
     source = "auto"
+    snapshot_title = existing.title or ""
+    snapshot_content = existing.content or ""
     if isinstance(payload, dict):
         raw_source = payload.get("source")
         if raw_source in ("auto", "save", "manual", "pre-save", "stable"):
             source = "save" if raw_source == "manual" else raw_source
+        raw_title = payload.get("title")
+        raw_content = payload.get("content")
+        if isinstance(raw_title, str):
+            snapshot_title = raw_title
+        if isinstance(raw_content, str):
+            snapshot_content = raw_content
 
     try:
         rev = revision_service.maybe_snapshot(
             db,
             note_id=note_id,
-            title=existing.title or "",
-            content=existing.content or "",
+            title=snapshot_title,
+            content=snapshot_content,
             source=source,
         )
     except Exception as err:

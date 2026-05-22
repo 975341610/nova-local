@@ -7,6 +7,7 @@ declare global {
       getBackendBaseUrl?: () => Promise<string>
       onVaultChanged?: (callback: (payload: any) => void) => (() => void)
       onBeforeAppClose?: (callback: () => void | Promise<void>) => (() => void)
+      onRevisionSnapshotStatus?: (callback: (payload: any) => void) => (() => void)
       finishBeforeAppClose?: () => void
     }
   }

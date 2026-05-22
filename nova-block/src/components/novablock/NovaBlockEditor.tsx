@@ -65,7 +65,7 @@ import { PropertyPanel } from '../editor/PropertyPanel';
 import { RevisionHistoryDrawer } from '../editor/RevisionHistoryDrawer';
 import { getSuggestionConfig } from '../notion/SlashMenuConfig';
 import { getNoteLinkSuggestionConfig } from './extensions/NoteLinkConfig';
-import { buildPendingSwitchSavePayload, shouldApplySavedDraftToCurrentNote, syncLatestDraftWithIncomingNote } from '../../lib/editorDraftSync';
+import { buildPendingSwitchSavePayload, shouldApplySavedDraftToCurrentNote } from '../../lib/editorDraftSync';
 import { stripLeadingDuplicateTitleBlockFromHtml } from '../../lib/noteContentTitle';
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
@@ -662,6 +662,14 @@ type AdvancedTableEdgeIntent = null | {
   column: AdvancedTableEdgeControl;
 };
 
+type RevisionSnapshotStatus = {
+  noteId: number;
+  status: 'queued' | 'saving' | 'saved' | 'failed';
+  detail?: string;
+  queued?: number;
+  updatedAt?: string;
+};
+
 /**
  * NovaBlockEditor (Sprint 3 Core)
  * 鏋佽嚧鎬ц兘銆乽ipro 涓撲笟瑙嗚
@@ -673,6 +681,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const { isAiEnabled } = useAI();
   const [isSaving, setIsSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [revisionSnapshotStatus, setRevisionSnapshotStatus] = useState<RevisionSnapshotStatus | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(note?.created_at || null);
   const [viewMode, setViewMode] = useState<'edit' | 'preview'>('edit');
   const [fps, setFps] = useState(0);
@@ -709,6 +718,24 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   // row/column border.
   const [hoveredInsertTarget, setHoveredInsertTarget] = useState<{ kind: 'row' | 'column'; key: string } | null>(null);
   const [advancedTableSelectionScope, setAdvancedTableSelectionScope] = useState<'cell' | 'row' | 'column' | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = window.electron?.onRevisionSnapshotStatus?.((payload: RevisionSnapshotStatus) => {
+      if (!payload || payload.noteId !== note?.id) {
+        return;
+      }
+      setRevisionSnapshotStatus(payload);
+      if (payload.status === 'saved') {
+        window.setTimeout(() => {
+          setRevisionSnapshotStatus((current) => (
+            current?.noteId === payload.noteId && current.updatedAt === payload.updatedAt ? null : current
+          ));
+        }, 2500);
+      }
+    });
+
+    return () => unsubscribe?.();
+  }, [note?.id]);
   const [advancedTablePopover, setAdvancedTablePopover] = useState<'text' | 'color' | null>(null);
   const [isAdvancedTableResizeCursor, setIsAdvancedTableResizeCursor] = useState(false);
   const [textColorAnchor, setTextColorAnchor] = useState<{ x: number; y: number } | null>(null);
@@ -778,12 +805,15 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const latestNoteRef = useRef(note);
   const [draftTitle, setDraftTitle] = useState(note?.title || '未命名笔记');
   const isSavingRef = useRef(false);
-  const queuedPayloadRef = useRef<any | null>(null);
+  const isDirtyRef = useRef(false);
+  const queuedPayloadRef = useRef<any[]>([]);
+  const saveDrainResolversRef = useRef<Array<() => void>>([]);
   const advancedTableMouseDownRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const handleSaveRef = useRef<(content?: string, updates?: Partial<Note>) => Promise<void> | void>(() => undefined);
   const stickersRef = useRef<StickerData[]>([]);
   const stickyNotesRef = useRef<StickyNoteData[]>([]);
   const liveContentTimerRef = useRef<number | null>(null);
+  const isProgrammaticContentUpdateRef = useRef(false);
 
   // Global drop cursor ghost cleanup (running during drag)
   useEffect(() => {
@@ -831,11 +861,6 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       if (cleanupTimer) cancelAnimationFrame(cleanupTimer);
     };
   }, []);
-
-
-  useEffect(() => {
-    latestNoteRef.current = syncLatestDraftWithIncomingNote(latestNoteRef.current, note, prevNoteId);
-  }, [note, prevNoteId]);
 
   useEffect(() => {
     setDraftTitle(note?.title || '未命名笔记');
@@ -1120,7 +1145,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     content: normalizedNoteContent,
     immediatelyRender: false,
     onUpdate: ({ editor }) => {
+      if (isProgrammaticContentUpdateRef.current) {
+        return;
+      }
       // 閬垮厤閲嶅璁剧疆鐘舵€佸鑷?React React 姝诲惊鐜?
+      const updateNoteId = latestNoteRef.current?.id;
+      isDirtyRef.current = true;
       if (!isDirty) {
         setIsDirty(true);
       }
@@ -1129,15 +1159,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         window.clearTimeout(liveContentTimerRef.current);
       }
       liveContentTimerRef.current = window.setTimeout(() => {
-        const content = editor.getHTML();
-        latestNoteRef.current = { ...latestNoteRef.current, content } as Note;
-        onLiveChange?.({
-          id: latestNoteRef.current?.id,
-          title: latestNoteRef.current?.title,
-          is_title_manually_edited: latestNoteRef.current?.is_title_manually_edited,
-          content,
-        });
+        liveContentTimerRef.current = null;
+        flushCurrentEditorDraft(updateNoteId);
       }, 350);
+      scheduleAutosave(updateNoteId);
       // 杩欓噷涓嶈鍦ㄦ瘡娆℃寜閿椂绔嬪埢 await onSave(payload)锛屽洜涓?onUpdate 鏄悓姝ヨЕ鍙戠殑楂橀浜嬩欢
       // 璁?handleSave (debounced) 鍘绘帴绠′繚瀛橀€昏緫锛屾瀬澶ф彁楂樿緭鍏ユ€ц兘
       // 鍙湁鍦ㄩ渶瑕佺珛鍗虫洿鏂板ぇ绾叉椂锛屾墠璋冪敤 updateOutline(editor);
@@ -1754,6 +1779,17 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }
   }, [editor]);
 
+  const getEditorFloatingChromeBottom = useCallback(() => {
+    if (typeof document === 'undefined') {
+      return 0;
+    }
+    const toolbar = document.querySelector('[data-testid="qingzhi-editor-toolbar-row"]');
+    if (!(toolbar instanceof HTMLElement)) {
+      return 0;
+    }
+    return Math.max(0, Math.round(toolbar.getBoundingClientRect().bottom));
+  }, []);
+
   const restoreEditorFocusAfterStickerMode = useCallback(() => {
     if (!editor || editor.isDestroyed) {
       return;
@@ -1795,8 +1831,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       const pos = activeDragHandlePosRef.current;
       const referenceRect = getDragHandleReferenceRect(editor, pos);
       const handleRect = getQingZhiBlockHandleRect(referenceRect);
+      const chromeBottom = getEditorFloatingChromeBottom();
 
-      if (!referenceRect || !handleRect || pos < 0) {
+      if (!referenceRect || !handleRect || pos < 0 || handleRect.top < chromeBottom + 2) {
         if (!isBlockMenuOpen) {
           setBlockHandleState(null);
         }
@@ -1815,7 +1852,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         },
       });
     });
-  }, [editor, getEditorViewDom, isBlockMenuOpen]);
+  }, [editor, getEditorFloatingChromeBottom, getEditorViewDom, isBlockMenuOpen]);
 
   useEffect(() => {
     const handleAddSticker = (e?: Event) => {
@@ -2285,8 +2322,37 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     if (!currentNote) return;
     
     // 鍚堝苟鏈€鏂扮殑缂栬緫鍣ㄥ唴瀹瑰拰浼犲叆鐨勫閲忔洿鏂?(濡傚ぉ姘斻€佸績鎯?
-    const html = content || editor?.getHTML() || '';
+    const html = content !== undefined ? content : editor?.getHTML() || '';
     const payloadToSave = { ...currentNote, ...updates, content: html };
+
+    const queuePayload = (nextPayload: any) => {
+      const noteId = nextPayload?.id;
+      const existingIndex = queuedPayloadRef.current.findIndex((queued) => queued?.id === noteId);
+      if (existingIndex >= 0) {
+        queuedPayloadRef.current[existingIndex] = nextPayload;
+        return;
+      }
+      queuedPayloadRef.current.push(nextPayload);
+    };
+
+    const dequeuePayload = () => queuedPayloadRef.current.shift() ?? null;
+    const resolveSaveDrain = () => {
+      if (isSavingRef.current || queuedPayloadRef.current.length > 0) {
+        return;
+      }
+      const resolvers = saveDrainResolversRef.current.splice(0);
+      for (const resolve of resolvers) {
+        resolve();
+      }
+    };
+    const waitForSaveDrain = () => {
+      if (!isSavingRef.current && queuedPayloadRef.current.length === 0) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => {
+        saveDrainResolversRef.current.push(resolve);
+      });
+    };
 
     const runSave = async (nextPayload: any): Promise<void> => {
       isSavingRef.current = true;
@@ -2297,10 +2363,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         if (shouldApplySavedDraftToCurrentNote(latestNoteRef.current, mergedSavedNote)) {
           latestNoteRef.current = mergedSavedNote;
         }
-        if (
+        const editorHtml = editor?.getHTML();
+        const savedCurrentDraft =
           shouldApplySavedDraftToCurrentNote(latestNoteRef.current, mergedSavedNote)
-          && editor?.getHTML() === mergedSavedNote?.content
-        ) {
+          && (editorHtml === nextPayload?.content || editorHtml === mergedSavedNote?.content);
+        if (savedCurrentDraft) {
+          isDirtyRef.current = false;
           setIsDirty(false);
         }
         setLastSavedAt(new Date().toLocaleTimeString());
@@ -2311,21 +2379,79 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         isSavingRef.current = false;
         setIsSaving(false);
 
-        const queuedPayload = queuedPayloadRef.current;
+        const queuedPayload = dequeuePayload();
         if (queuedPayload) {
-          queuedPayloadRef.current = null;
           await runSave(queuedPayload);
+        } else {
+          resolveSaveDrain();
         }
       }
     };
 
     if (isSavingRef.current) {
-      queuedPayloadRef.current = payloadToSave;
-      return;
+      queuePayload(payloadToSave);
+      return waitForSaveDrain();
     }
 
     await runSave(payloadToSave);
   }, [editor, onNotify, onSave]);
+
+  const flushCurrentEditorDraft = useCallback((expectedNoteId?: number | string | null) => {
+    const currentDraft = latestNoteRef.current;
+    if (!currentDraft) {
+      return null;
+    }
+
+    if (expectedNoteId !== undefined && expectedNoteId !== null && currentDraft.id !== expectedNoteId) {
+      return null;
+    }
+
+    if (liveContentTimerRef.current) {
+      window.clearTimeout(liveContentTimerRef.current);
+      liveContentTimerRef.current = null;
+    }
+
+    const nextContent = editor?.getHTML() ?? currentDraft.content ?? '';
+    const nextDraft = { ...currentDraft, content: nextContent } as Note;
+    latestNoteRef.current = nextDraft;
+    onLiveChange?.({
+      id: nextDraft.id,
+      title: nextDraft.title,
+      is_title_manually_edited: nextDraft.is_title_manually_edited,
+      content: nextContent,
+    });
+    return { note: nextDraft, content: nextContent };
+  }, [editor, onLiveChange]);
+
+  const timerRef = useRef<any>(null);
+  const autosaveDelayMs = window.electron?.ipcInvoke ? 250 : 3000;
+  const scheduleAutosave = useCallback((expectedNoteId?: number | string | null) => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      const draftSnapshot = flushCurrentEditorDraft(expectedNoteId);
+      if (!draftSnapshot) {
+        return;
+      }
+      void handleSave(draftSnapshot.content, draftSnapshot.note);
+    }, autosaveDelayMs);
+  }, [autosaveDelayMs, flushCurrentEditorDraft, handleSave]);
+
+  const replaceEditorContentWithoutAutosave = useCallback((content: string) => {
+    if (!editor) {
+      return false;
+    }
+
+    isProgrammaticContentUpdateRef.current = true;
+    try {
+      return replaceEditorContentWithoutHistory(editor, content);
+    } finally {
+      isProgrammaticContentUpdateRef.current = false;
+    }
+  }, [editor]);
 
   const handleTitleInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const currentNote = latestNoteRef.current;
@@ -2342,13 +2468,15 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       title: normalizedTitle,
       is_title_manually_edited: true,
     };
+    isDirtyRef.current = true;
     setIsDirty(true);
     onLiveChange?.({
       id: currentNote.id,
       title: normalizedTitle,
       is_title_manually_edited: true,
     });
-  }, [onLiveChange]);
+      scheduleAutosave(currentNote.id);
+  }, [onLiveChange, scheduleAutosave]);
 
   const commitNoteTitle = useCallback((nextRawTitle?: string) => {
     const currentNote = latestNoteRef.current;
@@ -2389,27 +2517,16 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     };
   }, []);
 
-  // 鑷姩淇濆瓨 (debounce)
-  const timerRef = useRef<any>(null);
-  const autosaveDelayMs = window.electron?.ipcInvoke ? 250 : 3000;
   useEffect(() => {
-    // 鍙鏈夋敼鍔紝灏辫缃畾鏃跺櫒
-    if (!isDirty) return;
-    
-    if (timerRef.current) clearTimeout(timerRef.current);
-    
-    timerRef.current = setTimeout(() => {
-      handleSave();
-    }, autosaveDelayMs);
-
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [autosaveDelayMs, handleSave, isDirty]);
+  }, []);
 
   useEffect(() => {
     const flushPendingSave = () => {
-      if (!latestNoteRef.current) {
+      const draftSnapshot = flushCurrentEditorDraft();
+      if (!draftSnapshot) {
         return;
       }
 
@@ -2418,8 +2535,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         timerRef.current = null;
       }
 
-      if (isDirty || isSavingRef.current || queuedPayloadRef.current) {
-        void handleSave(latestNoteRef.current.content, latestNoteRef.current);
+      if (isDirtyRef.current || isSavingRef.current || queuedPayloadRef.current.length > 0) {
+        void handleSave(draftSnapshot.content, draftSnapshot.note);
       }
     };
 
@@ -2435,11 +2552,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
     const unsubscribeBeforeClose = window.electron?.onBeforeAppClose?.(async () => {
       try {
-        const shouldFlushDirtyDraft = Boolean(latestNoteRef.current && (isDirty || queuedPayloadRef.current));
-        if (shouldFlushDirtyDraft) {
+        const draftSnapshot = flushCurrentEditorDraft();
+        if (draftSnapshot) {
           await new Promise<void>((resolve) => {
-            const timeoutId = window.setTimeout(resolve, 1200);
-            Promise.resolve(handleSave(undefined, latestNoteRef.current || undefined))
+            const timeoutId = window.setTimeout(resolve, 4600);
+            Promise.resolve(handleSave(draftSnapshot.content, draftSnapshot.note))
               .catch((error) => {
                 console.error('Failed to flush note before app close:', error);
               })
@@ -2460,7 +2577,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       unsubscribeBeforeClose?.();
     };
-  }, [handleSave, isDirty]);
+  }, [flushCurrentEditorDraft, handleSave, isDirty]);
 
   const [blockMenuPos, setBlockMenuPos] = useState({ top: 0, left: 0 });
   const [blockMenuAnchorRect, setBlockMenuAnchorRect] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
@@ -2723,11 +2840,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     if (!editor || !note?.id) return;
     
     if (note.id !== prevNoteId) {
+      const draftSnapshot = flushCurrentEditorDraft(prevNoteId);
       const pendingSwitchSave = buildPendingSwitchSavePayload({
-        currentDraft: latestNoteRef.current,
+        currentDraft: draftSnapshot?.note ?? latestNoteRef.current,
         previousNoteId: prevNoteId,
         isDirty,
-        html: editor.getHTML(),
+        html: draftSnapshot?.content ?? editor.getHTML(),
       });
 
       if (timerRef.current) {
@@ -2736,27 +2854,33 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       }
 
       if (pendingSwitchSave) {
-        queuedPayloadRef.current = null;
-        void onSave(pendingSwitchSave).catch((err) => {
+        onLiveChange?.({
+          id: pendingSwitchSave.id,
+          title: pendingSwitchSave.title,
+          is_title_manually_edited: pendingSwitchSave.is_title_manually_edited,
+          content: draftSnapshot?.content ?? pendingSwitchSave.content,
+        });
+        void Promise.resolve(
+          handleSaveRef.current?.(draftSnapshot?.content ?? pendingSwitchSave.content, pendingSwitchSave),
+        ).catch((err: unknown) => {
           console.error('Failed to flush previous note before switching:', err);
           onNotify?.('切换前保存旧笔记失败', 'error');
         });
       }
 
-      replaceEditorContentWithoutHistory(
-        editor,
+      replaceEditorContentWithoutAutosave(
         stripLeadingDuplicateTitleBlockFromHtml(sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>', note.title),
       );
       // 鍒囨崲鍐呭鍚庯紝寮哄埗琛ラ綈 ID 骞舵洿鏂板ぇ绾?
       // @ts-ignore
       editor.commands.ensureHeadingIds();
       latestNoteRef.current = note;
-      queuedPayloadRef.current = null;
+      isDirtyRef.current = false;
       setIsDirty(false);
       setPrevNoteId(note.id);
       updateOutline(editor);
     }
-  }, [editor, isDirty, note, onNotify, onSave, prevNoteId, updateOutline]);
+  }, [editor, flushCurrentEditorDraft, isDirty, note, onLiveChange, onNotify, prevNoteId, replaceEditorContentWithoutAutosave, updateOutline]);
 
   useEffect(() => {
     if (!editor || !note?.id || note.id !== prevNoteId || isDirty || isSavingRef.current) {
@@ -2776,13 +2900,14 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       return;
     }
 
-    replaceEditorContentWithoutHistory(editor, incomingContent);
+    replaceEditorContentWithoutAutosave(incomingContent);
     // @ts-ignore
     editor.commands.ensureHeadingIds();
     latestNoteRef.current = note;
+    isDirtyRef.current = false;
     setIsDirty(false);
     updateOutline(editor);
-  }, [editor, isDirty, note, prevNoteId, updateOutline]);
+  }, [editor, isDirty, note, prevNoteId, replaceEditorContentWithoutAutosave, updateOutline]);
 
   useEffect(() => {
     if (!editor || !note?.id) return;
@@ -2800,17 +2925,18 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         sanitizeLegacyApiUrlsInHtml(detail.content) || '<p></p>',
         note.title,
       );
-      replaceEditorContentWithoutHistory(editor, nextContent);
+      replaceEditorContentWithoutAutosave(nextContent);
       // @ts-ignore
       editor.commands.ensureHeadingIds();
       latestNoteRef.current = { ...latestNoteRef.current, ...note, content: detail.content } as Note;
+      isDirtyRef.current = false;
       setIsDirty(false);
       updateOutline(editor);
     };
 
     window.addEventListener('nova:replace-current-note-content', handleExternalContentReplace);
     return () => window.removeEventListener('nova:replace-current-note-content', handleExternalContentReplace);
-  }, [editor, isDirty, note, updateOutline]);
+  }, [editor, isDirty, note, replaceEditorContentWithoutAutosave, updateOutline]);
 
   // 鍚屾棰勮/缂栬緫妯″紡
   useEffect(() => {
@@ -3077,6 +3203,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               onSelectBreadcrumb={() => {}}
               savePhase={isSaving ? 'saving' : isDirty ? 'queued' : 'idle'}
               isDirty={isDirty}
+              revisionSnapshotStatus={revisionSnapshotStatus}
               lastSavedAt={lastSavedAt}
               showRelations={false}
               showOutline={false}
@@ -3484,6 +3611,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               {advancedTableEdgeIntent && typeof document !== 'undefined' && createPortal(
                 <div
                   className="qz-table-edge-controls"
+                  style={{ clipPath: `inset(${getEditorFloatingChromeBottom()}px 0 0 0)` }}
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setAdvancedTableEdgeIntent(advancedTableEdgeIntent)}
                 >
@@ -4322,14 +4450,14 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
             }
             cleanContent = cleanContent.replace(/^\n+/, '');
             const patched: any = { ...updated, content: cleanContent };
-            replaceEditorContentWithoutHistory(
-              editor,
+            replaceEditorContentWithoutAutosave(
               stripLeadingDuplicateTitleBlockFromHtml(
                 sanitizeLegacyApiUrlsInHtml(cleanContent) || '<p></p>',
                 updated.title,
               ),
             );
             latestNoteRef.current = { ...latestNoteRef.current, ...patched } as Note;
+            isDirtyRef.current = false;
             setIsDirty(false);
             onNotify?.('已恢复到所选版本', 'success');
             // v0.22.0-a hotfix10 · 通知全局:恢复可能改了内容及链接, 触发一次 vault 重扫,

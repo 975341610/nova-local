@@ -93,8 +93,12 @@ let backendRestartAttempts = 0;
 let backendLastError = null;
 const recentLocalVaultChanges = new Map();
 const revisionSnapshotTimers = new Map();
+const revisionSnapshotQueue = [];
+let revisionSnapshotDrainPromise = null;
+let revisionSnapshotDrainTimer = null;
 const REVISION_FINAL_SNAPSHOT_DELAY_MS = 3_000;
-const CLOSE_REVISION_FLUSH_TIMEOUT_MS = 1_200;
+const CLOSE_WINDOW_RENDERER_FLUSH_TIMEOUT_MS = 5_000;
+const REVISION_SNAPSHOT_QUEUE_PATH = path.join(DATA_ROOT, 'revision-snapshot-queue.json');
 
 const fsBridge = createFsBridge({ vaultRoot: VAULT_ROOT });
 
@@ -336,6 +340,8 @@ async function ensureBackend() {
 async function bootstrapApp() {
   await fsBridge.ensureBaseDirs();
   await ensureBackend();
+  loadRevisionSnapshotQueue();
+  void drainRevisionSnapshotQueue();
   registerIpcHandlers();
   createMainWindow();
 
@@ -441,16 +447,17 @@ function createMainWindow() {
       ipcMain.removeListener('app:before-close-complete', handleRendererReady);
     };
 
-    const handleRendererReady = async () => {
+    const handleRendererReady = () => {
       cleanup();
-      await flushPendingRevisionSnapshotTimersWithTimeout();
+      flushPendingRevisionSnapshotTimers();
+      persistRevisionSnapshotQueue();
       finalizeClose();
     };
 
     const timeoutId = setTimeout(() => {
       cleanup();
       finalizeClose();
-    }, 1500);
+    }, CLOSE_WINDOW_RENDERER_FLUSH_TIMEOUT_MS);
 
     ipcMain.on('app:before-close-complete', handleRendererReady);
     mainWindow.webContents.send('app:before-close');
@@ -795,6 +802,7 @@ function requestBackendApi(payload) {
   const targetUrl = new URL(`${BACKEND_API_BASE}${request.path}`);
   const transport = targetUrl.protocol === 'https:' ? https : http;
   const body = request.body;
+  const timeoutMs = Number.isFinite(payload && payload.timeoutMs) ? payload.timeoutMs : 15_000;
   const headers = {
     'x-nova-desktop-token': DESKTOP_LOCAL_TOKEN,
   };
@@ -805,6 +813,7 @@ function requestBackendApi(payload) {
   }
 
   return new Promise((resolve, reject) => {
+    let settled = false;
     const req = transport.request(targetUrl, {
       method: request.method,
       headers,
@@ -814,27 +823,173 @@ function requestBackendApi(payload) {
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
         if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+          settled = true;
           reject(new Error(text || `Backend request failed with ${res.statusCode}`));
           return;
         }
         if (!text) {
+          settled = true;
           resolve(null);
           return;
         }
         try {
+          settled = true;
           resolve(JSON.parse(text));
         } catch {
+          settled = true;
           resolve(text);
         }
       });
     });
 
-    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => {
+      if (settled) return;
+      settled = true;
+      const timeoutError = new Error(`Backend request timed out after ${timeoutMs}ms: ${request.method} ${request.path}`);
+      req.destroy(timeoutError);
+      reject(timeoutError);
+    });
+    req.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    });
     if (body !== undefined) {
       req.write(body);
     }
     req.end();
   });
+}
+
+function loadRevisionSnapshotQueue() {
+  try {
+    if (!fs.existsSync(REVISION_SNAPSHOT_QUEUE_PATH)) {
+      return;
+    }
+    const raw = fs.readFileSync(REVISION_SNAPSHOT_QUEUE_PATH, 'utf8');
+    const rows = JSON.parse(raw);
+    if (!Array.isArray(rows)) {
+      return;
+    }
+    revisionSnapshotQueue.splice(0, revisionSnapshotQueue.length, ...rows.filter((item) => (
+      item &&
+      Number.isInteger(item.noteId) &&
+      typeof item.content === 'string'
+    )));
+  } catch (error) {
+    console.warn('[revision] failed to load snapshot queue:', error && error.message ? error.message : error);
+  }
+}
+
+function persistRevisionSnapshotQueue() {
+  try {
+    fs.mkdirSync(path.dirname(REVISION_SNAPSHOT_QUEUE_PATH), { recursive: true });
+    fs.writeFileSync(REVISION_SNAPSHOT_QUEUE_PATH, JSON.stringify(revisionSnapshotQueue.slice(-300), null, 2), 'utf8');
+  } catch (error) {
+    console.warn('[revision] failed to persist snapshot queue:', error && error.message ? error.message : error);
+  }
+}
+
+function setRevisionSnapshotStatus(noteId, status, detail = '') {
+  if (!Number.isInteger(noteId)) {
+    return;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('revision:snapshot-status', {
+      noteId,
+      status,
+      detail,
+      queued: revisionSnapshotQueue.filter((item) => item.noteId === noteId).length,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+}
+
+function scheduleRevisionSnapshotQueueDrain(delayMs = 500) {
+  if (revisionSnapshotDrainTimer) {
+    clearTimeout(revisionSnapshotDrainTimer);
+  }
+  revisionSnapshotDrainTimer = setTimeout(() => {
+    revisionSnapshotDrainTimer = null;
+    void drainRevisionSnapshotQueue();
+  }, delayMs);
+}
+
+function enqueueRevisionSnapshot({ noteId, title = '', content = '', source = 'auto' }) {
+  if (!Number.isInteger(noteId) || typeof content !== 'string') {
+    return;
+  }
+  const contentHash = crypto.createHash('sha1').update(`${title}\n${content}`).digest('hex');
+  if (revisionSnapshotQueue.some((item) => item.noteId === noteId && item.contentHash === contentHash && item.source === source)) {
+    return;
+  }
+  if (source === 'stable') {
+    for (let index = revisionSnapshotQueue.length - 1; index >= 0; index -= 1) {
+      const queued = revisionSnapshotQueue[index];
+      if (queued.noteId === noteId && queued.source === 'stable') {
+        revisionSnapshotQueue.splice(index, 1);
+      }
+    }
+  }
+  revisionSnapshotQueue.push({
+    id: crypto.randomUUID(),
+    noteId,
+    title: title || '',
+    content,
+    source,
+    contentHash,
+    attempts: 0,
+    createdAt: new Date().toISOString(),
+  });
+  persistRevisionSnapshotQueue();
+  setRevisionSnapshotStatus(noteId, 'queued');
+  scheduleRevisionSnapshotQueueDrain();
+}
+
+async function drainRevisionSnapshotQueue() {
+  if (revisionSnapshotDrainPromise) {
+    return revisionSnapshotDrainPromise;
+  }
+
+  revisionSnapshotDrainPromise = (async () => {
+    while (revisionSnapshotQueue.length > 0) {
+      const item = revisionSnapshotQueue[0];
+      try {
+        setRevisionSnapshotStatus(item.noteId, 'saving');
+        const result = await requestBackendApi({
+          channel: 'notes:snapshot',
+          path: '/notes/' + item.noteId + '/snapshot',
+          timeoutMs: 2_000,
+          options: {
+            method: 'POST',
+            body: JSON.stringify({
+              source: item.source,
+              title: item.title,
+              content: item.content,
+            }),
+          },
+        });
+        if (result && result.status === 'error') {
+          throw new Error(result.detail || 'snapshot API returned error');
+        }
+        revisionSnapshotQueue.shift();
+        persistRevisionSnapshotQueue();
+        setRevisionSnapshotStatus(item.noteId, 'saved');
+      } catch (error) {
+        item.attempts = (item.attempts || 0) + 1;
+        item.lastError = error && error.message ? error.message : String(error);
+        item.lastAttemptAt = new Date().toISOString();
+        persistRevisionSnapshotQueue();
+        setRevisionSnapshotStatus(item.noteId, 'failed', item.lastError);
+        scheduleRevisionSnapshotQueueDrain(Math.min(60_000, 5_000 * item.attempts));
+        break;
+      }
+    }
+  })().finally(() => {
+    revisionSnapshotDrainPromise = null;
+  });
+
+  return revisionSnapshotDrainPromise;
 }
 
 async function captureRevisionSnapshotBeforeLocalUpdate(noteId, input) {
@@ -847,80 +1002,62 @@ async function captureRevisionSnapshotBeforeLocalUpdate(noteId, input) {
     if (!current || (current.content || '') === (input.content || '')) {
       return;
     }
-    await requestBackendApi({
-      channel: 'notes:snapshot',
-      path: '/notes/' + noteId + '/snapshot',
-      options: {
-        method: 'POST',
-        body: JSON.stringify({ source: 'pre-save' }),
-      },
+    enqueueRevisionSnapshot({
+      noteId,
+      title: current.title || '',
+      content: current.content || '',
+      source: 'pre-save',
     });
   } catch (error) {
-    console.warn('[revision] failed to capture desktop snapshot for note ' + noteId + ':', error && error.message ? error.message : error);
+    console.warn('[revision] failed to queue desktop snapshot for note ' + noteId + ':', error && error.message ? error.message : error);
   }
 }
 
-function scheduleRevisionSnapshotAfterLocalUpdate(noteId) {
-  const existingTimer = revisionSnapshotTimers.get(noteId);
-  if (existingTimer) {
-    clearTimeout(existingTimer);
+function scheduleRevisionSnapshotAfterLocalUpdate(noteId, note) {
+  const existing = revisionSnapshotTimers.get(noteId);
+  if (existing?.timer) {
+    clearTimeout(existing.timer);
   }
 
   const timer = setTimeout(() => {
     revisionSnapshotTimers.delete(noteId);
-    captureStableRevisionSnapshot(noteId).catch((error) => {
-      console.warn('[revision] failed to capture final desktop snapshot for note ' + noteId + ':', error && error.message ? error.message : error);
+    enqueueRevisionSnapshot({
+      noteId,
+      title: note?.title || '',
+      content: note?.content || '',
+      source: 'stable',
     });
   }, REVISION_FINAL_SNAPSHOT_DELAY_MS);
 
-  revisionSnapshotTimers.set(noteId, timer);
+  revisionSnapshotTimers.set(noteId, { timer, note });
 }
 
 function captureStableRevisionSnapshot(noteId) {
-  return requestBackendApi({
-    channel: 'notes:snapshot',
-    path: '/notes/' + noteId + '/snapshot',
-    options: {
-      method: 'POST',
-      body: JSON.stringify({ source: 'stable' }),
-    },
+  const pending = revisionSnapshotTimers.get(noteId);
+  enqueueRevisionSnapshot({
+    noteId,
+    title: pending?.note?.title || '',
+    content: pending?.note?.content || '',
+    source: 'stable',
   });
+  return drainRevisionSnapshotQueue();
 }
 
 async function flushPendingRevisionSnapshotTimers() {
-  const noteIds = Array.from(revisionSnapshotTimers.keys());
-  for (const timer of revisionSnapshotTimers.values()) {
-    clearTimeout(timer);
+  for (const [noteId, entry] of revisionSnapshotTimers.entries()) {
+    if (entry?.timer) {
+      clearTimeout(entry.timer);
+    }
+    enqueueRevisionSnapshot({
+      noteId,
+      title: entry?.note?.title || '',
+      content: entry?.note?.content || '',
+      source: 'stable',
+    });
   }
   revisionSnapshotTimers.clear();
-  await Promise.all(noteIds.map((noteId) => (
-    captureStableRevisionSnapshot(noteId).catch((error) => {
-      console.warn('[revision] failed to flush final desktop snapshot for note ' + noteId + ':', error && error.message ? error.message : error);
-    })
-  )));
-}
-
-async function flushPendingRevisionSnapshotTimersWithTimeout() {
-  let timeoutId = null;
-  let didTimeout = false;
-  const flushPromise = flushPendingRevisionSnapshotTimers().catch((error) => {
-    console.warn('[revision] close-time snapshot flush failed:', error && error.message ? error.message : error);
-  });
-  const timeoutPromise = new Promise((resolve) => {
-    timeoutId = setTimeout(() => {
-      didTimeout = true;
-      resolve();
-    }, CLOSE_REVISION_FLUSH_TIMEOUT_MS);
-  });
-
-  await Promise.race([flushPromise, timeoutPromise]);
-
-  if (timeoutId) {
-    clearTimeout(timeoutId);
-  }
-  if (didTimeout) {
-    console.warn(`[revision] close-time snapshot flush timed out after ${CLOSE_REVISION_FLUSH_TIMEOUT_MS}ms`);
-  }
+  persistRevisionSnapshotQueue();
+  void drainRevisionSnapshotQueue();
 }
 
 function pickNoteWritePayload(payload) {
@@ -1037,11 +1174,11 @@ function registerIpcHandlers() {
     if (typeof input.file_path === 'string') {
       markLocalVaultChange(input.file_path);
     }
-    await captureRevisionSnapshotBeforeLocalUpdate(noteId, input);
+    void captureRevisionSnapshotBeforeLocalUpdate(noteId, input);
     const updated = await fsBridge.updateNote(noteId, input);
     markLocalVaultChange(updated.file_path);
     if (Object.prototype.hasOwnProperty.call(input, 'content')) {
-      scheduleRevisionSnapshotAfterLocalUpdate(noteId);
+      scheduleRevisionSnapshotAfterLocalUpdate(noteId, updated);
     }
     return updated;
   });
@@ -1152,7 +1289,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isAppQuitting = true;
-  void flushPendingRevisionSnapshotTimers();
+  flushPendingRevisionSnapshotTimers();
+  persistRevisionSnapshotQueue();
   if (backendRestartTimer) {
     clearTimeout(backendRestartTimer);
     backendRestartTimer = null;

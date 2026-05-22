@@ -437,4 +437,57 @@ describe('RevisionHistoryDrawer', () => {
 
     expect(await screen.findByText('Note 8 Revision')).toBeTruthy()
   })
+
+  it('does not eagerly fetch revision detail when reopening from cached metadata', async () => {
+    const listNoteRevisions = vi.mocked(api.listNoteRevisions)
+    const getNoteRevision = vi.mocked(api.getNoteRevision)
+    listNoteRevisions.mockResolvedValue([
+      {
+        id: 909,
+        note_id: 90,
+        created_at: '2026-05-08T04:01:00Z',
+        content_hash: 'cached-only',
+        title_snapshot: 'Cached Only Revision',
+        byte_size: 24,
+        source: 'auto',
+      },
+    ] as any)
+    getNoteRevision.mockResolvedValue({
+      id: 909,
+      note_id: 90,
+      content: '<p>detail</p>',
+      missing: false,
+    } as any)
+    getNoteRevision.mockClear()
+
+    const { rerender } = render(
+      <RevisionHistoryDrawer
+        isOpen
+        noteId={90}
+        onClose={() => {}}
+      />,
+    )
+
+    expect(await screen.findByText('Cached Only Revision')).toBeTruthy()
+    await waitFor(() => expect(getNoteRevision).toHaveBeenCalledTimes(1))
+
+    rerender(
+      <RevisionHistoryDrawer
+        isOpen={false}
+        noteId={90}
+        onClose={() => {}}
+      />,
+    )
+    getNoteRevision.mockClear()
+    rerender(
+      <RevisionHistoryDrawer
+        isOpen
+        noteId={90}
+        onClose={() => {}}
+      />,
+    )
+
+    expect(await screen.findByText('Cached Only Revision')).toBeTruthy()
+    expect(getNoteRevision).not.toHaveBeenCalled()
+  })
 })

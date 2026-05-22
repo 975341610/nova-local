@@ -60,7 +60,12 @@ const SOURCE_LABEL: Record<string, { text: string; color: string }> = {
 }
 
 const revisionCacheByNoteId = new Map<number, RevisionMeta[]>()
+const revisionDetailCacheByKey = new Map<string, string>()
 const REVISION_CACHE_STORAGE_PREFIX = 'nova.revision-history.'
+
+function revisionDetailKey(noteId: number, revisionId: number) {
+  return `${noteId}:${revisionId}`
+}
 
 function rememberRevisionRows(noteId: number, rows: RevisionMeta[]) {
   if (rows.length === 0) return
@@ -102,6 +107,8 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
   const openNoteIdRef = useRef<number | null>(null)
   const loadRequestSeqRef = useRef(0)
   const revisionsRef = useRef<RevisionMeta[]>([])
+  const previewRequestKeyRef = useRef<string | null>(null)
+  const previewInFlightKeyRef = useRef<string | null>(null)
 
   if (isOpen) {
     if (openNoteIdRef.current == null && noteId != null) {
@@ -225,9 +232,22 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
       return
     }
     let cancelled = false
-    setPreviewLoading(true)
     const requestedNoteId = activeNoteId
     const requestedRevisionId = selectedId
+    const requestKey = revisionDetailKey(requestedNoteId, requestedRevisionId)
+    const cachedHtml = revisionDetailCacheByKey.get(requestKey)
+    if (cachedHtml !== undefined) {
+      previewRequestKeyRef.current = requestKey
+      setPreviewContent(cachedHtml)
+      setPreviewLoading(false)
+      return
+    }
+    if (previewInFlightKeyRef.current === requestKey) {
+      return
+    }
+    previewRequestKeyRef.current = requestKey
+    previewInFlightKeyRef.current = requestKey
+    setPreviewLoading(true)
     api
       .getNoteRevision(requestedNoteId, requestedRevisionId)
       .then((rev: any) => {
@@ -242,9 +262,13 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
           return
         }
         try {
-          setPreviewContent(renderReaderHtml(rev.content || ''))
+          const html = renderReaderHtml(rev.content || '')
+          revisionDetailCacheByKey.set(requestKey, html)
+          setPreviewContent(html)
         } catch {
-          setPreviewContent(`<pre>${(rev.content || '').slice(0, 20000)}</pre>`)
+          const fallbackHtml = `<pre>${(rev.content || '').slice(0, 20000)}</pre>`
+          revisionDetailCacheByKey.set(requestKey, fallbackHtml)
+          setPreviewContent(fallbackHtml)
         }
       })
       .catch((err) => {
@@ -261,6 +285,9 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
         )
       })
       .finally(() => {
+        if (previewInFlightKeyRef.current === requestKey) {
+          previewInFlightKeyRef.current = null
+        }
         if (!cancelled) setPreviewLoading(false)
       })
     return () => {

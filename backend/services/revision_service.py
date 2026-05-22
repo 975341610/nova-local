@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import asc, desc
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from backend.models.db_models import NoteRevision
 
@@ -269,6 +269,17 @@ def prune_revisions(db: Session, note_id: int, protected_ids: set[int] | None = 
 def list_revisions(db: Session, note_id: int, include_internal: bool = False) -> list[NoteRevision]:
     rows = (
         db.query(NoteRevision)
+        .options(
+            load_only(
+                NoteRevision.id,
+                NoteRevision.note_id,
+                NoteRevision.created_at,
+                NoteRevision.content_hash,
+                NoteRevision.title_snapshot,
+                NoteRevision.byte_size,
+                NoteRevision.source,
+            )
+        )
         .filter(NoteRevision.note_id == note_id)
         .order_by(desc(NoteRevision.created_at))
         .all()

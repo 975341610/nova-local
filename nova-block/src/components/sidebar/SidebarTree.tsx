@@ -1,7 +1,7 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Settings, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout, Sparkles } from 'lucide-react';
+import { Search, Settings, FilePlus, FolderPlus, Edit2, Copy, Trash2, FolderOutput, FileText, Waypoints, LayoutGrid, Layout, Sparkles, ArrowUpDown, ChevronRight, ChevronDown } from 'lucide-react';
 import { buildTree, moveNode, isDescendant, flattenTree, normalizeSelectedRoots } from '../../lib/novablock/treeUtils';
 import type { TreeNode, FlattenedNode } from '../../lib/novablock/treeUtils';
 import { TreeNodeItem } from './TreeNodeItem';
@@ -15,7 +15,9 @@ import { parseTs } from '../../lib/novablock/parseTs';
 
 /** F2c · 排序模式 */
 type SortMode = 'manual' | 'created' | 'updated' | 'opened';
+type SortDirection = 'desc' | 'asc'; // desc=最新在前(默认), asc=最旧在前
 const SORT_MODE_STORAGE_KEY = 'qz.sidebar.sortMode.v1';
+const SORT_DIR_STORAGE_KEY = 'qz.sidebar.sortDir.v1';
 
 /**
  * 把时间戳/打开次数转换为可由 buildTree 使用的"逆序" sortKey:
@@ -96,6 +98,32 @@ export const SidebarTree = ({
       localStorage.setItem(SORT_MODE_STORAGE_KEY, sortMode);
     } catch { /* ignore */ }
   }, [sortMode]);
+
+  // F2c · 排序方向 (持久化)
+  const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
+    try {
+      const v = localStorage.getItem(SORT_DIR_STORAGE_KEY);
+      if (v === 'asc' || v === 'desc') return v;
+    } catch { /* ignore */ }
+    return 'desc';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SORT_DIR_STORAGE_KEY, sortDirection);
+    } catch { /* ignore */ }
+  }, [sortDirection]);
+
+  // F2c · 时间分组折叠状态
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const toggleGroupCollapse = useCallback((bucket: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(bucket)) next.delete(bucket);
+      else next.add(bucket);
+      return next;
+    });
+  }, []);
 
   // 将 treeData 转换为 TreeNode 格式以供 treeUtils 使用
   // F2b: 显式将 id / parentId 强制为 string,避免下游 callback 收到 number
@@ -203,14 +231,21 @@ export const SidebarTree = ({
   const visibleNodes = useMemo(() => flattenTree(tree, expandedIds), [tree, expandedIds]);
 
   // F3 bug · 排序按日期分组 (今天/昨天/更早)
-  // 仅当 sortMode 选择了 created/updated/opened 时,把 visibleNodes 按日期桶分段,
-  // 在每段前插入一行 group header (id 以 __group__: 开头, 渲染时显式区分)。
+  // 当 sortMode 选择了 created/updated/opened 时:
+  //   - 只显示笔记(过滤掉文件夹)
+  //   - 扁平显示(不保留层级,depth=0)
+  //   - 按日期桶分为3个可折叠分组
+  //   - 支持正/反排序
   type GroupBucket = 'today' | 'yesterday' | 'earlier';
-  type GroupHeaderRow = { __isGroupHeader: true; id: string; title: string; bucket: GroupBucket };
+  type GroupHeaderRow = { __isGroupHeader: true; id: string; title: string; bucket: GroupBucket; count: number; collapsed: boolean };
   type RowItem = FlattenedNode | GroupHeaderRow;
 
   const groupedRows: RowItem[] = useMemo(() => {
     if (sortMode === 'manual') return visibleNodes as RowItem[];
+
+    // 时间排序模式: 扁平化所有笔记(不含文件夹),忽略层级结构
+    const allNotes = notes.filter((n) => !n.is_folder);
+
     // 计算今天 0 点
     const now = Date.now();
     const today0 = new Date(now);
@@ -219,7 +254,7 @@ export const SidebarTree = ({
     const yesterdayStart = todayStart - 24 * 3600 * 1000;
     const tomorrowStart = todayStart + 24 * 3600 * 1000;
 
-    const tsForNode = (n: TreeNode): number => {
+    const tsForNote = (n: typeof allNotes[0]): number => {
       const id = String(n.id);
       if (sortMode === 'opened') return getLastOpened(id);
       if (sortMode === 'created')
@@ -236,27 +271,57 @@ export const SidebarTree = ({
     const labelOf = (b: GroupBucket): string =>
       b === 'today' ? '今天' : b === 'yesterday' ? '昨天' : '更早';
 
+    // 给每条笔记计算时间戳和分桶
+    const withTs = allNotes.map((n) => {
+      const ts = tsForNote(n);
+      return { note: n, ts, bucket: bucketOf(ts) };
+    });
+
+    // 按时间排序 (desc=最新在前, asc=最旧在前)
+    withTs.sort((a, b) => sortDirection === 'desc' ? b.ts - a.ts : a.ts - b.ts);
+
+    // 按桶分组
+    const buckets: GroupBucket[] = sortDirection === 'desc'
+      ? ['today', 'yesterday', 'earlier']
+      : ['earlier', 'yesterday', 'today'];
+
+    const bucketMap = new Map<GroupBucket, typeof withTs>();
+    for (const item of withTs) {
+      if (!bucketMap.has(item.bucket)) bucketMap.set(item.bucket, []);
+      bucketMap.get(item.bucket)!.push(item);
+    }
+
     const rows: RowItem[] = [];
-    let lastBucket: GroupBucket | null = null;
-    for (const n of visibleNodes) {
-      // 仅在 root 层(depth=0,即没有 parentId 的可见节点)插入分组头,
-      // 子节点跟随其父级,不重复分组。
-      if (n.parentId == null) {
-        const b = bucketOf(tsForNode(n));
-        if (b !== lastBucket) {
+    for (const bucket of buckets) {
+      const items = bucketMap.get(bucket);
+      if (!items || items.length === 0) continue;
+      const isCollapsedGroup = collapsedGroups.has(bucket);
+      rows.push({
+        __isGroupHeader: true,
+        id: `__group__:${bucket}`,
+        title: labelOf(bucket),
+        bucket,
+        count: items.length,
+        collapsed: isCollapsedGroup,
+      });
+      if (!isCollapsedGroup) {
+        for (const item of items) {
+          // 转换为 FlattenedNode 格式 (depth=0, 无层级)
           rows.push({
-            __isGroupHeader: true,
-            id: `__group__:${b}`,
-            title: labelOf(b),
-            bucket: b,
-          });
-          lastBucket = b;
+            ...item.note,
+            id: String(item.note.id),
+            parentId: null,
+            sortKey: '',
+            isFolder: false,
+            depth: 0,
+            hasChildren: false,
+            children: [],
+          } as unknown as FlattenedNode);
         }
       }
-      rows.push(n);
     }
     return rows;
-  }, [visibleNodes, sortMode]);
+  }, [notes, sortMode, sortDirection, collapsedGroups, visibleNodes]);
 
   const handleToggle = (nodeId: string) => {
     setExpandedIds(prev => {
@@ -565,7 +630,7 @@ export const SidebarTree = ({
                </div>
             )}
             {!isCollapsed && (
-              <div className="px-2 pb-1 flex items-center justify-end">
+              <div className="px-2 pb-1 flex items-center justify-end gap-1">
                 <select
                   data-testid="qingzhi-sidebar-sort-select"
                   value={sortMode}
@@ -578,6 +643,16 @@ export const SidebarTree = ({
                   <option value="updated">修改时间</option>
                   <option value="opened">最近打开</option>
                 </select>
+                {sortMode !== 'manual' && (
+                  <button
+                    data-testid="qingzhi-sidebar-sort-direction"
+                    onClick={() => setSortDirection((d) => d === 'desc' ? 'asc' : 'desc')}
+                    className="p-1 rounded-md hover:bg-accent/60 text-muted-foreground hover:text-foreground transition-all duration-200"
+                    title={sortDirection === 'desc' ? '当前: 最新在前 (点击切换)' : '当前: 最旧在前 (点击切换)'}
+                  >
+                    <ArrowUpDown size={14} className={sortDirection === 'asc' ? 'rotate-180' : ''} />
+                  </button>
+                )}
               </div>
             )}
             {!isCollapsed && (
@@ -607,9 +682,16 @@ export const SidebarTree = ({
                           key={row.id}
                           data-testid="qingzhi-sidebar-group-header"
                           data-group-bucket={row.bucket}
-                          className="qz-sidebar-group-header px-3 pt-3 pb-1 text-[10px] font-semibold tracking-widest text-muted-foreground/60 uppercase select-none"
+                          data-group-collapsed={row.collapsed ? 'true' : 'false'}
+                          onClick={() => toggleGroupCollapse(row.bucket)}
+                          className="qz-sidebar-group-header flex items-center gap-1 px-3 pt-3 pb-1 text-[10px] font-semibold tracking-widest text-muted-foreground/60 uppercase select-none cursor-pointer hover:text-muted-foreground/80 transition-colors"
                         >
-                          {row.title}
+                          {row.collapsed
+                            ? <ChevronRight size={12} className="shrink-0" />
+                            : <ChevronDown size={12} className="shrink-0" />
+                          }
+                          <span>{row.title}</span>
+                          <span className="ml-1 text-muted-foreground/40 font-normal">({row.count})</span>
                         </div>
                       );
                     }

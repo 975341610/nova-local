@@ -67,5 +67,10 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('app:before-close', handler);
     return () => ipcRenderer.removeListener('app:before-close', handler);
   },
+  onRevisionSnapshotStatus: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('revision:snapshot-status', handler);
+    return () => ipcRenderer.removeListener('revision:snapshot-status', handler);
+  },
   finishBeforeAppClose: () => ipcRenderer.send('app:before-close-complete'),
 });

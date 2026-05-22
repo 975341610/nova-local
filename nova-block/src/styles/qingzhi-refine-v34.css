@@ -2067,3 +2067,55 @@ html:not([data-nv-theme]) {
   font-size: 10px;
   pointer-events: none;
 }
+
+/* v45 autosave safety pass: keep overlays under the shell chrome */
+.qz-topbar {
+  z-index: 1000 !important;
+  isolation: isolate !important;
+}
+
+.qz-editor-toprail {
+  position: relative !important;
+  z-index: 900 !important;
+  isolation: isolate !important;
+  background: #F6F3EF !important;
+}
+
+.qz-editor-toolbar-row {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 910 !important;
+  isolation: isolate !important;
+  background: #F6F3EF !important;
+}
+
+.qz-custom-block-handle {
+  z-index: 25 !important;
+}
+
+.qz-block-drag-handle-floating {
+  z-index: 24 !important;
+}
+
+.qz-table-edge-controls {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 20 !important;
+}
+
+.qz-table-edge-button {
+  z-index: 21 !important;
+}
+
+.qz-table-edge-select-zone {
+  z-index: 20 !important;
+}
+
+.qz-table-insert-line {
+  z-index: 20 !important;
+}
+
+.qz-editor-writing-surface .novablock-editor .column-resize-handle,
+.qz-editor-writing-surface .novablock-editor .tableWrapper .column-resize-handle {
+  z-index: 22 !important;
+}

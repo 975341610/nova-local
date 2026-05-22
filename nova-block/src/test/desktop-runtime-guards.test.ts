@@ -59,10 +59,13 @@ describe('desktop runtime guards', () => {
     const onUpdateStart = editorSource.indexOf('onUpdate: ({ editor }) => {')
     const onCreateStart = editorSource.indexOf('onCreate: ({ editor }) => {')
     const onUpdateBody = editorSource.slice(onUpdateStart, onCreateStart)
+    const flushDraftStart = editorSource.indexOf('const flushCurrentEditorDraft = useCallback')
+    const scheduleStart = editorSource.indexOf('const timerRef = useRef<any>(null);', flushDraftStart)
+    const flushDraftBody = editorSource.slice(flushDraftStart, scheduleStart)
 
     expect(onUpdateBody).not.toContain('extractLeadingNoteTitle')
     expect(onUpdateBody).not.toContain('nextAutoTitle')
-    expect(onUpdateBody).toContain('title: latestNoteRef.current?.title,')
+    expect(flushDraftBody).toContain('title: nextDraft.title,')
   })
 
   it('protects optimistic sidebar titles from stale vault refreshes while a save is pending', () => {
@@ -262,7 +265,7 @@ describe('desktop runtime guards', () => {
     expect(transportSource).toContain('desktop:api-request')
   })
 
-  it('captures a backend revision snapshot before desktop local note overwrites', () => {
+  it('queues revision snapshots outside the desktop local note write critical path', () => {
     const mainPath = path.resolve(__dirname, '../../../electron/main.js')
     const mainSource = fs.readFileSync(mainPath, 'utf8')
     const updateHandlerStart = mainSource.indexOf("ipcMain.handle('notes:update'")
@@ -271,15 +274,14 @@ describe('desktop runtime guards', () => {
 
     expect(mainSource).toContain('async function captureRevisionSnapshotBeforeLocalUpdate')
     expect(mainSource).toContain('function scheduleRevisionSnapshotAfterLocalUpdate')
-    expect(mainSource).toContain('async function flushPendingRevisionSnapshotTimers')
-    expect(mainSource).toContain("body: JSON.stringify({ source: 'pre-save' })")
-    expect(mainSource).toContain("body: JSON.stringify({ source: 'stable' })")
+    expect(mainSource).toContain('function enqueueRevisionSnapshot')
+    expect(mainSource).toContain('function persistRevisionSnapshotQueue')
+    expect(mainSource).toContain("source: 'pre-save'")
+    expect(mainSource).toContain("source: 'stable'")
     expect(mainSource).toContain('const REVISION_FINAL_SNAPSHOT_DELAY_MS = 3_000')
-    expect(updateHandler.indexOf('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input)')).toBeGreaterThan(-1)
-    expect(updateHandler.indexOf('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input)')).toBeLessThan(
-      updateHandler.indexOf('fsBridge.updateNote(noteId, input)'),
-    )
-    expect(updateHandler.indexOf('scheduleRevisionSnapshotAfterLocalUpdate(noteId)')).toBeGreaterThan(
+    expect(updateHandler).toContain('void captureRevisionSnapshotBeforeLocalUpdate(noteId, input);')
+    expect(updateHandler).not.toContain('await captureRevisionSnapshotBeforeLocalUpdate')
+    expect(updateHandler.indexOf('scheduleRevisionSnapshotAfterLocalUpdate(noteId, updated)')).toBeGreaterThan(
       updateHandler.indexOf('fsBridge.updateNote(noteId, input)'),
     )
     expect(updateHandler).not.toContain("path: '/notes/' + noteId + '/snapshot'")
@@ -288,14 +290,7 @@ describe('desktop runtime guards', () => {
     const closeHandlerStart = mainSource.indexOf("mainWindow.on('close'")
     const closeHandlerEnd = mainSource.indexOf("mainWindow.on('closed'", closeHandlerStart)
     const closeHandler = mainSource.slice(closeHandlerStart, closeHandlerEnd)
-    expect(mainSource).toContain('async function flushPendingRevisionSnapshotTimersWithTimeout')
-    expect(mainSource).toContain('flushPendingRevisionSnapshotTimers().catch')
-    expect(closeHandler).toContain('await flushPendingRevisionSnapshotTimersWithTimeout()')
-    expect(closeHandler.indexOf('await flushPendingRevisionSnapshotTimersWithTimeout()')).toBeLessThan(
-      closeHandler.indexOf('finalizeClose()'),
-    )
-    expect(mainSource).toContain('const CLOSE_REVISION_FLUSH_TIMEOUT_MS')
-    expect(closeHandler).toContain('flushPendingRevisionSnapshotTimersWithTimeout()')
-    expect(mainSource).toContain('Promise.race')
+    expect(closeHandler).not.toContain('await flushPendingRevisionSnapshotTimersWithTimeout()')
+    expect(closeHandler).toContain('persistRevisionSnapshotQueue();')
   })
 })

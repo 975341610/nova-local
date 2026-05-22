@@ -1616,6 +1616,11 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
       }
     };
 
+    const globalWindow = window as typeof window & {
+      __novaFlushActiveSurface?: (() => Promise<void>) | undefined;
+    };
+    globalWindow.__novaFlushActiveSurface = flushPendingSave;
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         void flushPendingSave();
@@ -1630,19 +1635,13 @@ function CanvasBoard({ note, onSave, onNotify }: CanvasEditorProps) {
     window.addEventListener('pagehide', handleBeforeUnload);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    const unsubscribeBeforeClose = window.electron?.onBeforeAppClose?.(async () => {
-      try {
-        await flushPendingSave();
-      } finally {
-        window.electron?.finishBeforeAppClose?.();
-      }
-    });
-
     return () => {
+      if (globalWindow.__novaFlushActiveSurface === flushPendingSave) {
+        delete globalWindow.__novaFlushActiveSurface;
+      }
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('pagehide', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      unsubscribeBeforeClose?.();
     };
   }, [note, persistCanvasSnapshot, saveSnapshot]);
 

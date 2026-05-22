@@ -28,6 +28,13 @@ type Breadcrumb = {
   icon: string
 }
 
+type RevisionSnapshotStatus = {
+  status: 'queued' | 'saving' | 'saved' | 'failed'
+  detail?: string
+  queued?: number
+  updatedAt?: string
+} | null
+
 type EditorHeaderProps = {
   icon: string
   title: string
@@ -36,6 +43,7 @@ type EditorHeaderProps = {
   onSelectBreadcrumb?: (id: number) => void
   savePhase: 'idle' | 'queued' | 'saving'
   isDirty: boolean
+  revisionSnapshotStatus?: RevisionSnapshotStatus
   lastSavedAt: string | null
   showRelations: boolean
   showOutline: boolean
@@ -79,6 +87,7 @@ export function EditorHeader(props: EditorHeaderProps) {
     onSelectBreadcrumb,
     savePhase,
     isDirty,
+    revisionSnapshotStatus,
     showOutline,
     viewMode,
     isStickerMode,
@@ -101,6 +110,23 @@ export function EditorHeader(props: EditorHeaderProps) {
     onOpenHistory,
   } = props
 
+  const revisionStatusLabel =
+    revisionSnapshotStatus?.status === 'failed'
+      ? 'REVISION FAILED'
+      : revisionSnapshotStatus?.status === 'saving'
+        ? 'REVISION SAVING'
+        : revisionSnapshotStatus?.status === 'queued'
+          ? `REVISION QUEUED${revisionSnapshotStatus.queued ? ` ${revisionSnapshotStatus.queued}` : ''}`
+          : null
+  const revisionStatusTitle =
+    revisionSnapshotStatus?.status === 'failed'
+      ? `版本快照失败：${revisionSnapshotStatus.detail || '等待后台重试'}`
+      : revisionSnapshotStatus?.status === 'saving'
+        ? '版本快照正在后台写入'
+        : revisionSnapshotStatus?.status === 'queued'
+          ? '版本快照已进入后台队列，内容保存不受影响'
+          : undefined
+
   const [isBackgroundMenuOpen, setIsBackgroundMenuOpen] = useState(false)
   const backgroundMenuRef = useRef<HTMLDivElement>(null)
 
@@ -122,12 +148,12 @@ export function EditorHeader(props: EditorHeaderProps) {
 
   return (
     <div className="flex flex-col bg-transparent px-0 pt-0 pb-0 antialiased">
-      <div data-testid="qingzhi-editorbar" className="qz-editorbar sticky top-0 z-50 mb-4 flex items-center justify-between border-b border-border/40 bg-background/80 pt-3 pb-3 backdrop-blur-xl transition-colors">
-        <div data-testid="qingzhi-editor-status" className="qz-editor-status flex min-w-0 items-center gap-4">
+      <div data-testid="qingzhi-editorbar" className="qz-editorbar sticky top-0 z-[120] isolate mb-4 flex items-center justify-between border-b border-border/40 bg-background/80 pt-3 pb-3 backdrop-blur-xl transition-colors">
+        <div data-testid="qingzhi-editor-status" className="qz-editor-status relative z-[130] flex min-w-0 items-center gap-4">
           <div className="flex cursor-default items-center gap-2 rounded-lg p-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground transition-all hover:bg-accent/50">
             <span className="text-[11px] font-semibold tracking-[0.18em] text-[var(--nv-color-accent-fg)]">清知编辑</span>
             <div
-              className={`h-2 w-2 rounded-full ${
+              className={`qz-editor-save-indicator relative z-[140] h-2 w-2 rounded-full ${
                 savePhase === 'saving'
                   ? 'bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.8)]'
                   : isDirty
@@ -138,6 +164,18 @@ export function EditorHeader(props: EditorHeaderProps) {
             <span className="opacity-70 group-hover:opacity-100">
               {savePhase === 'saving' ? 'SAVING' : savePhase === 'queued' ? 'QUEUED' : isDirty ? 'UNSAVED' : 'SYNCED'}
             </span>
+            {revisionStatusLabel && (
+              <span
+                className={`ml-1 rounded-full px-1.5 py-0.5 text-[9px] tracking-[0.12em] ${
+                  revisionSnapshotStatus?.status === 'failed'
+                    ? 'bg-rose-500/10 text-rose-500'
+                    : 'bg-amber-500/10 text-amber-600'
+                }`}
+                title={revisionStatusTitle}
+              >
+                {revisionStatusLabel}
+              </span>
+            )}
           </div>
 
           {breadcrumbs && breadcrumbs.length > 0 && (
