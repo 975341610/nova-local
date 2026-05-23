@@ -2119,3 +2119,25 @@ html:not([data-nv-theme]) {
 .qz-editor-writing-surface .novablock-editor .tableWrapper .column-resize-handle {
   z-index: 22 !important;
 }
+
+/* v47 revision drawer: preview must stay readable on Qingzhi light surfaces */
+.qz-revision-preview {
+  color: var(--nv-color-text, #2b2b2b) !important;
+  opacity: 1 !important;
+  line-height: 1.75;
+}
+
+.qz-revision-preview :where(h1, h2, h3, h4, h5, h6, p, li, blockquote, td, th, span, strong, em) {
+  color: inherit !important;
+  opacity: 1 !important;
+}
+
+.qz-revision-preview :where(a) {
+  color: var(--nv-color-accent, #4f8f7e) !important;
+  text-decoration-color: color-mix(in srgb, var(--nv-color-accent, #4f8f7e) 55%, transparent) !important;
+}
+
+.qz-revision-preview :where(blockquote) {
+  background: color-mix(in srgb, var(--nv-color-jade, #80a89c) 12%, #fff 88%) !important;
+  border-left-color: var(--nv-color-jade, #80a89c) !important;
+}

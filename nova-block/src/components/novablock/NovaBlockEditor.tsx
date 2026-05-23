@@ -682,6 +682,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [isSaving, setIsSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [revisionSnapshotStatus, setRevisionSnapshotStatus] = useState<RevisionSnapshotStatus | null>(null);
+  const revisionSnapshotStatusByNoteRef = useRef<Record<number, RevisionSnapshotStatus | null>>({});
+  const activeRevisionNoteIdRef = useRef<number | null>(typeof note?.id === 'number' ? note.id : null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(note?.created_at || null);
   const [viewMode, setViewMode] = useState<'edit' | 'preview'>('edit');
   const [fps, setFps] = useState(0);
@@ -720,22 +722,39 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [advancedTableSelectionScope, setAdvancedTableSelectionScope] = useState<'cell' | 'row' | 'column' | null>(null);
 
   useEffect(() => {
+    const activeNoteId = typeof note?.id === 'number' ? note.id : null;
+    activeRevisionNoteIdRef.current = activeNoteId;
+    setRevisionSnapshotStatus(
+      activeNoteId != null ? revisionSnapshotStatusByNoteRef.current[activeNoteId] ?? null : null,
+    );
+  }, [note?.id]);
+
+  useEffect(() => {
     const unsubscribe = window.electron?.onRevisionSnapshotStatus?.((payload: RevisionSnapshotStatus) => {
-      if (!payload || payload.noteId !== note?.id) {
+      if (!payload || typeof payload.noteId !== 'number') {
         return;
       }
-      setRevisionSnapshotStatus(payload);
+      revisionSnapshotStatusByNoteRef.current[payload.noteId] = payload;
+      if (activeRevisionNoteIdRef.current === payload.noteId) {
+        setRevisionSnapshotStatus(payload);
+      }
       if (payload.status === 'saved') {
         window.setTimeout(() => {
-          setRevisionSnapshotStatus((current) => (
-            current?.noteId === payload.noteId && current.updatedAt === payload.updatedAt ? null : current
-          ));
+          const latest = revisionSnapshotStatusByNoteRef.current[payload.noteId];
+          if (latest?.updatedAt === payload.updatedAt) {
+            revisionSnapshotStatusByNoteRef.current[payload.noteId] = null;
+          }
+          if (activeRevisionNoteIdRef.current === payload.noteId) {
+            setRevisionSnapshotStatus((current) => (
+              current?.noteId === payload.noteId && current.updatedAt === payload.updatedAt ? null : current
+            ));
+          }
         }, 2500);
       }
     });
 
     return () => unsubscribe?.();
-  }, [note?.id]);
+  }, []);
   const [advancedTablePopover, setAdvancedTablePopover] = useState<'text' | 'color' | null>(null);
   const [isAdvancedTableResizeCursor, setIsAdvancedTableResizeCursor] = useState(false);
   const [textColorAnchor, setTextColorAnchor] = useState<{ x: number; y: number } | null>(null);

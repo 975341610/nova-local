@@ -293,4 +293,13 @@ describe('desktop runtime guards', () => {
     expect(closeHandler).not.toContain('await flushPendingRevisionSnapshotTimersWithTimeout()')
     expect(closeHandler).toContain('persistRevisionSnapshotQueue();')
   })
+
+  it('keeps Electron high-DPI rendering enabled for mixed-resolution monitors', () => {
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+
+    expect(mainSource).toContain("app.commandLine.appendSwitch('high-dpi-support', '1')")
+    expect(mainSource).toContain("app.commandLine.appendSwitch('enable-use-zoom-for-dsf', 'true')")
+    expect(mainSource).not.toContain("app.commandLine.appendSwitch('force-device-scale-factor'")
+  })
 })

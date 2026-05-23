@@ -22,6 +22,9 @@ const {
 // 方案: 我们的后端都是本地 127.0.0.1, 不需要 HTTP 缓存; 直接关掉最干净.
 // 必须在 app.whenReady() 之前执行.
 app.commandLine.appendSwitch('disable-http-cache');
+// Keep Chromium crisp when the window moves between monitors with different DPI.
+app.commandLine.appendSwitch('high-dpi-support', '1');
+app.commandLine.appendSwitch('enable-use-zoom-for-dsf', 'true');
 
 // v0.23.2 · NTFS junction 兜底
 // ---------------------------------------------------------------

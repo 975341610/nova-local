@@ -111,6 +111,18 @@ describe('autosave regressions', () => {
     expect(preloadSource).toContain('onRevisionSnapshotStatus')
   })
 
+  it('keeps revision snapshot status per note so switching notes cannot leave a stale queued badge', () => {
+    const editorSource = readFileSync(editorPath, 'utf8')
+    const subscriptionBody = sliceBetween(editorSource, 'window.electron?.onRevisionSnapshotStatus?.((payload: RevisionSnapshotStatus) => {', 'return () => unsubscribe?.();')
+
+    expect(editorSource).toContain('const revisionSnapshotStatusByNoteRef = useRef<Record<number, RevisionSnapshotStatus | null>>({});')
+    expect(editorSource).toContain('const activeRevisionNoteIdRef = useRef<number | null>')
+    expect(editorSource).toContain('revisionSnapshotStatusByNoteRef.current[activeNoteId] ?? null')
+    expect(subscriptionBody).toContain('revisionSnapshotStatusByNoteRef.current[payload.noteId] = payload;')
+    expect(subscriptionBody).toContain('activeRevisionNoteIdRef.current === payload.noteId')
+    expect(subscriptionBody).toContain('revisionSnapshotStatusByNoteRef.current[payload.noteId] = null;')
+  })
+
   it('keeps topbar and editor toolbar above block handles and advanced table edge overlays', () => {
     const refineCss = readFileSync(refineCssPath, 'utf8')
 
@@ -159,5 +171,18 @@ describe('autosave regressions', () => {
     expect(persistBody).toContain('backupPath')
     expect(persistBody).toContain('fs.writeFileSync(tmpPath')
     expect(persistBody).toContain('fs.renameSync(tmpPath, REVISION_SNAPSHOT_QUEUE_PATH)')
+  })
+
+  it('keeps revision history previews readable on the Qingzhi light background', () => {
+    const drawerPath = resolve(projectRoot, 'components/editor/RevisionHistoryDrawer.tsx')
+    const drawerSource = readFileSync(drawerPath, 'utf8')
+    const refineCss = readFileSync(refineCssPath, 'utf8')
+
+    expect(drawerSource).toContain('className="qz-revision-preview nv-reader-html max-w-none"')
+    expect(drawerSource).not.toContain('dark:prose-invert')
+    expect(refineCss).toContain('.qz-revision-preview {')
+    expect(refineCss).toContain('color: var(--nv-color-text, #2b2b2b) !important;')
+    expect(refineCss).toContain('opacity: 1 !important;')
+    expect(refineCss).toContain('.qz-revision-preview :where(h1, h2, h3, h4, h5, h6, p, li, blockquote, td, th, span, strong, em)')
   })
 })

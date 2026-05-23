@@ -467,7 +467,7 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
                     </div>
                   ) : (
                     <div
-                      className="prose prose-sm max-w-none dark:prose-invert"
+                      className="qz-revision-preview nv-reader-html max-w-none"
                       dangerouslySetInnerHTML={{ __html: previewContent }}
                     />
                   )}

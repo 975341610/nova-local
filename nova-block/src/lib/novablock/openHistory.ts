@@ -10,6 +10,7 @@
  */
 
 const STORAGE_KEY = 'qz.openHistory.v1';
+export const OPEN_HISTORY_CHANGED_EVENT = 'qz:open-history-changed';
 
 export type OpenHistory = Record<string, number>;
 
@@ -65,6 +66,11 @@ export function recordOpen(id: string, now: number = Date.now()): void {
   const h = readRaw();
   h[id] = now;
   writeRaw(h);
+  try {
+    globalThis.dispatchEvent?.(new CustomEvent(OPEN_HISTORY_CHANGED_EVENT, { detail: { id, openedAt: now } }));
+  } catch {
+    // Older/non-browser test runtimes may not provide CustomEvent.
+  }
 }
 
 export function getLastOpened(id: string): number {

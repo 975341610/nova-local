@@ -10,7 +10,7 @@ import BacklinksPanel from './BacklinksPanel';
 import AIImportPanel from './AIImportPanel';
 import { useNoteStore } from '../../store/useNoteStore';
 import { QINGZHI_SETTINGS_EVENT, readQingzhiSettings } from '../../lib/qingzhiSettings';
-import { getLastOpened } from '../../lib/novablock/openHistory';
+import { getLastOpened, OPEN_HISTORY_CHANGED_EVENT } from '../../lib/novablock/openHistory';
 import { parseTs } from '../../lib/novablock/parseTs';
 
 /** F2c · 排序模式 */
@@ -113,6 +113,15 @@ export const SidebarTree = ({
       localStorage.setItem(SORT_DIR_STORAGE_KEY, sortDirection);
     } catch { /* ignore */ }
   }, [sortDirection]);
+  const [openHistoryVersion, setOpenHistoryVersion] = useState(0);
+
+  useEffect(() => {
+    const onOpenHistoryChanged = () => setOpenHistoryVersion((version) => version + 1);
+    globalThis.addEventListener?.(OPEN_HISTORY_CHANGED_EVENT, onOpenHistoryChanged);
+    return () => {
+      globalThis.removeEventListener?.(OPEN_HISTORY_CHANGED_EVENT, onOpenHistoryChanged);
+    };
+  }, []);
 
   // F2c · 时间分组折叠状态
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -155,7 +164,7 @@ export const SidebarTree = ({
         isFolder: n.is_folder,
       };
     }) as unknown as TreeNode[];
-  }, [notes, sortMode]);
+  }, [notes, sortMode, openHistoryVersion]);
 
   const [selectedId, setSelectedId] = useState<string | undefined>(selectedNodeId ?? undefined);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['root']));
@@ -321,7 +330,7 @@ export const SidebarTree = ({
       }
     }
     return rows;
-  }, [notes, sortMode, sortDirection, collapsedGroups, visibleNodes]);
+  }, [notes, sortMode, sortDirection, collapsedGroups, visibleNodes, openHistoryVersion]);
 
   const handleToggle = (nodeId: string) => {
     setExpandedIds(prev => {
