@@ -9,6 +9,7 @@ const mainPath = resolve(projectRoot, '../../electron/main.js')
 const preloadPath = resolve(projectRoot, '../../electron/preload.js')
 const refineCssPath = resolve(projectRoot, 'styles/qingzhi-refine-v34.css')
 const revisionServicePath = resolve(projectRoot, '../../backend/services/revision_service.py')
+const routesPath = resolve(projectRoot, '../../backend/api/routes.py')
 
 function sliceBetween(source: string, startMarker: string, endMarker: string) {
   const start = source.indexOf(startMarker)
@@ -132,5 +133,31 @@ describe('autosave regressions', () => {
     expect(listBody).toContain('NoteRevision.title_snapshot')
     expect(listBody).toContain('NoteRevision.byte_size')
     expect(listBody).not.toContain('NoteRevision.content_gz')
+  })
+
+  it('does not scan the vault before listing revisions or snapshotting payload content', () => {
+    const routesSource = readFileSync(routesPath, 'utf8')
+    const listBody = sliceBetween(routesSource, 'def list_note_revisions_api(', '@router.get("/notes/{note_id}/revisions/{revision_id}")')
+    const snapshotBody = sliceBetween(routesSource, 'def capture_note_snapshot_api(', '@router.get("/media/music-library")')
+
+    expect(listBody).toContain('rows = revision_service.list_revisions(db, note_id)')
+    expect(listBody).not.toContain('get_note(db, note_id)')
+    expect(snapshotBody).toContain('has_payload_content = False')
+    expect(snapshotBody).toContain('if not has_payload_content:')
+    expect(snapshotBody.indexOf('if not has_payload_content:')).toBeLessThan(snapshotBody.indexOf('existing = get_note(db, note_id)'))
+  })
+
+  it('quarantines corrupt revision snapshot queue files and persists the queue through a temp file', () => {
+    const mainSource = readFileSync(mainPath, 'utf8')
+    const loadBody = sliceBetween(mainSource, 'function loadRevisionSnapshotQueue()', 'function persistRevisionSnapshotQueue()')
+    const persistBody = sliceBetween(mainSource, 'function persistRevisionSnapshotQueue()', 'function setRevisionSnapshotStatus(')
+
+    expect(loadBody).toContain('revision-snapshot-queue.corrupt-')
+    expect(loadBody).toContain('fs.renameSync(REVISION_SNAPSHOT_QUEUE_PATH, corruptPath)')
+    expect(loadBody).toContain('revisionSnapshotQueue.splice(0, revisionSnapshotQueue.length);')
+    expect(persistBody).toContain('tmpPath')
+    expect(persistBody).toContain('backupPath')
+    expect(persistBody).toContain('fs.writeFileSync(tmpPath')
+    expect(persistBody).toContain('fs.renameSync(tmpPath, REVISION_SNAPSHOT_QUEUE_PATH)')
   })
 })

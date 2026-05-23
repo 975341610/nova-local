@@ -1607,17 +1607,7 @@ def list_note_revisions_api(note_id: int, db: Session = Depends(get_db)) -> list
     None, 这里改为: 即使 get_note 找不到笔记, 只要 note_revisions 表还有本
     note_id 的行, 就把快照列出来, 避免历史抽屉被"扫描抖动"清空.
     """
-    note_present = get_note(db, note_id) is not None
     rows = revision_service.list_revisions(db, note_id)
-    if not note_present and not rows:
-        # 笔记真的没了, 且数据库也没快照 → 返回空
-        return []
-    if not note_present:
-        # vault 扫描瞬时抖动: 保留历史, 不让前端以为记录被清了
-        print(
-            f"[revision] list: note {note_id} missing in vault but "
-            f"{len(rows)} revision rows still in DB — serving cached"
-        )
     return [
         {
             "id": r.id,
@@ -1761,13 +1751,10 @@ def capture_note_snapshot_api(
     Body: {"source": "auto" | "save"}  — 默认 auto
     返回 {"status": "ok", "snapshot_id": int | null}
     """
-    existing = get_note(db, note_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Note not found")
-
     source = "auto"
-    snapshot_title = existing.title or ""
-    snapshot_content = existing.content or ""
+    snapshot_title = ""
+    snapshot_content = ""
+    has_payload_content = False
     if isinstance(payload, dict):
         raw_source = payload.get("source")
         if raw_source in ("auto", "save", "manual", "pre-save", "stable"):
@@ -1778,6 +1765,14 @@ def capture_note_snapshot_api(
             snapshot_title = raw_title
         if isinstance(raw_content, str):
             snapshot_content = raw_content
+            has_payload_content = True
+
+    if not has_payload_content:
+        existing = get_note(db, note_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Note not found")
+        snapshot_title = existing.title or ""
+        snapshot_content = existing.content or ""
 
     try:
         rev = revision_service.maybe_snapshot(

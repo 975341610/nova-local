@@ -878,13 +878,37 @@ function loadRevisionSnapshotQueue() {
     )));
   } catch (error) {
     console.warn('[revision] failed to load snapshot queue:', error && error.message ? error.message : error);
+    try {
+      const corruptPath = path.join(
+        path.dirname(REVISION_SNAPSHOT_QUEUE_PATH),
+        `revision-snapshot-queue.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+      );
+      fs.renameSync(REVISION_SNAPSHOT_QUEUE_PATH, corruptPath);
+      console.warn('[revision] corrupt snapshot queue moved to:', corruptPath);
+    } catch (moveError) {
+      console.warn('[revision] failed to quarantine corrupt snapshot queue:', moveError && moveError.message ? moveError.message : moveError);
+    }
+    revisionSnapshotQueue.splice(0, revisionSnapshotQueue.length);
   }
 }
 
 function persistRevisionSnapshotQueue() {
   try {
-    fs.mkdirSync(path.dirname(REVISION_SNAPSHOT_QUEUE_PATH), { recursive: true });
-    fs.writeFileSync(REVISION_SNAPSHOT_QUEUE_PATH, JSON.stringify(revisionSnapshotQueue.slice(-300), null, 2), 'utf8');
+    const queueDir = path.dirname(REVISION_SNAPSHOT_QUEUE_PATH);
+    fs.mkdirSync(queueDir, { recursive: true });
+    const tmpPath = `${REVISION_SNAPSHOT_QUEUE_PATH}.tmp-${process.pid}`;
+    const backupPath = `${REVISION_SNAPSHOT_QUEUE_PATH}.bak`;
+    fs.writeFileSync(tmpPath, JSON.stringify(revisionSnapshotQueue.slice(-300), null, 2), 'utf8');
+    try {
+      fs.rmSync(backupPath, { force: true });
+    } catch {}
+    if (fs.existsSync(REVISION_SNAPSHOT_QUEUE_PATH)) {
+      fs.renameSync(REVISION_SNAPSHOT_QUEUE_PATH, backupPath);
+    }
+    fs.renameSync(tmpPath, REVISION_SNAPSHOT_QUEUE_PATH);
+    try {
+      fs.rmSync(backupPath, { force: true });
+    } catch {}
   } catch (error) {
     console.warn('[revision] failed to persist snapshot queue:', error && error.message ? error.message : error);
   }
