@@ -339,6 +339,20 @@ function escapeAttribute(value: string): string {
   return escapeHtml(value).replace(/'/g, '&#39;')
 }
 
+function isSafeLinkUrl(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  if (trimmed.startsWith('#') || trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../')) {
+    return true
+  }
+  try {
+    const parsed = new URL(trimmed)
+    return ['http:', 'https:', 'mailto:'].includes(parsed.protocol)
+  } catch {
+    return false
+  }
+}
+
 function inlineMarkdownToHtml(value: string): string {
   let out = escapeHtml(value)
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -346,7 +360,11 @@ function inlineMarkdownToHtml(value: string): string {
   out = out.replace(/`([^`]+)`/g, '<code>$1</code>')
   out = out.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
-    (_match, text: string, url: string) => `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">${text}</a>`,
+    (_match, text: string, url: string) => (
+      isSafeLinkUrl(url)
+        ? `<a href="${escapeAttribute(url.trim())}" target="_blank" rel="noopener noreferrer">${text}</a>`
+        : text
+    ),
   )
   return out
 }

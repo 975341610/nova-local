@@ -11,6 +11,7 @@ import uuid
 import shutil
 import asyncio
 import hashlib
+import logging
 import re
 import time
 from PIL import Image
@@ -137,6 +138,61 @@ from backend.services.local_ai import local_ai_manager
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+def _delete_vector_chunks_for_notes(note_ids: list[int] | set[int]) -> None:
+    """Best-effort cleanup so deleted notes stop appearing in RAG results."""
+    for note_id in sorted({int(note_id) for note_id in note_ids if note_id is not None}):
+        try:
+            vector_store.delete_note_chunks(note_id)
+        except Exception as exc:
+            logger.warning("Failed to delete vector chunks for note %s: %s", note_id, exc)
+
+
+UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+
+
+def _raise_upload_too_large(filename: str | None = None) -> None:
+    label = f" '{filename}'" if filename else ""
+    raise HTTPException(
+        status_code=413,
+        detail=f"Uploaded file{label} exceeds the {settings.max_upload_bytes} byte limit",
+    )
+
+
+def _enforce_upload_size(content: bytes, *, filename: str | None = None) -> bytes:
+    if len(content) > settings.max_upload_bytes:
+        _raise_upload_too_large(filename)
+    return content
+
+
+async def read_upload_file_limited(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > settings.max_upload_bytes:
+            _raise_upload_too_large(file.filename)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def read_upload_file_sync_limited(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = file.file.read(UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > settings.max_upload_bytes:
+            _raise_upload_too_large(file.filename)
+        chunks.append(chunk)
+    return b"".join(chunks)
 ai_client = AIClient()
 note_indexing_queue: NoteIndexingQueue | None = None
 
@@ -569,7 +625,7 @@ async def upload_documents(background_tasks: BackgroundTasks, files: list[Upload
     imported: list[NoteResponse] = []
     default_notebook = get_or_create_default_notebook(db)
     for file in files:
-        content = await file.read()
+        content = await read_upload_file_limited(file)
         title, parsed = parse_document(file.filename, content)
         imported.append(persist_note_sync(db, title, parsed, background_tasks, default_notebook.id))
     return UploadResponse(imported_notes=imported)
@@ -584,7 +640,7 @@ async def upload_media_api(file: UploadFile = File(...), note_id: str = Form(Non
         upload_base.mkdir(parents=True, exist_ok=True)
             
         save_path = upload_base / unique_name
-        content = await file.read()
+        content = await read_upload_file_limited(file)
         await run_in_threadpool(save_path.write_bytes, content)
             
         url_path = f"{note_id}/{unique_name}" if note_id else unique_name
@@ -651,7 +707,7 @@ async def upload_media_chunk(
     temp_dir = safe_named_file(Path(settings.uploads_path) / "temp", upload_id, detail="Invalid upload_id")
     if not temp_dir.exists():
         raise HTTPException(status_code=400, detail="Invalid upload_id")
-    content = await file.read()
+    content = await read_upload_file_limited(file)
     if chunk_sha256:
         actual_sha = hashlib.sha256(content).hexdigest()
         if actual_sha.lower() != chunk_sha256.lower():
@@ -720,7 +776,7 @@ async def upload_media_complete(
 async def preview_import_files(files: list[UploadFile] = File(...)) -> ImportPreviewResponse:
     items: list[ImportPreviewItem] = []
     for file in files:
-        content = await file.read()
+        content = await read_upload_file_limited(file)
         items.append(ImportPreviewItem(**build_import_preview_item(file.filename, content)))
     return ImportPreviewResponse(items=items)
 
@@ -756,7 +812,7 @@ async def import_and_generate_note(
 ) -> GeneratedNoteResponse:
     documents: list[dict[str, str]] = []
     for file in files:
-        content = await file.read()
+        content = await read_upload_file_limited(file)
         title, parsed = parse_document(file.filename, content)
         documents.append({"file_name": file.filename, "title": title, "content": parsed})
 
@@ -1408,9 +1464,14 @@ def update_notebook_api(notebook_id: int, payload: NotebookUpdate, db: Session =
 
 @router.delete("/notebooks/{notebook_id}")
 def delete_notebook_api(notebook_id: int, db: Session = Depends(get_db)) -> dict:
+    active_note_ids = [
+        note.id for note in list_notes(db, include_content=False)
+        if note.notebook_id == notebook_id and not note.is_folder
+    ]
     notebook = soft_delete_notebook(db, notebook_id)
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found or cannot delete default notebook")
+    _delete_vector_chunks_for_notes(active_note_ids)
     return {"status": "ok"}
 
 @router.post("/notebooks/{notebook_id}/restore", response_model=NotebookResponse)
@@ -1422,8 +1483,13 @@ def restore_notebook_api(notebook_id: int, db: Session = Depends(get_db)) -> Not
 
 @router.delete("/notebooks/{notebook_id}/purge")
 def purge_notebook_api(notebook_id: int, db: Session = Depends(get_db)) -> dict:
+    trashed_note_ids = [
+        note.id for note in list_trashed_notes(db)
+        if note.notebook_id == notebook_id and not note.is_folder
+    ]
     if not purge_notebook(db, notebook_id):
         raise HTTPException(status_code=404, detail="Notebook not found or cannot purge default notebook")
+    _delete_vector_chunks_for_notes(trashed_note_ids)
     return {"status": "ok"}
 
 @router.post("/notes", response_model=NoteResponse)
@@ -1550,6 +1616,7 @@ def bulk_move_notes_api(payload: BulkNoteAction, db: Session = Depends(get_db)) 
 @router.post("/notes/bulk-delete")
 def bulk_delete_notes_api(payload: BulkNoteAction, db: Session = Depends(get_db)) -> dict:
     notes = bulk_soft_delete_notes(db, payload.note_ids)
+    _delete_vector_chunks_for_notes([note.id for note in notes if not getattr(note, "is_folder", False)])
     return {"notes": [note_to_response(note).model_dump() for note in notes]}
 
 @router.delete("/notes/{note_id}")
@@ -1557,6 +1624,8 @@ def delete_note_api(note_id: int, db: Session = Depends(get_db)) -> dict:
     note = soft_delete_note(db, note_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
+    if not getattr(note, "is_folder", False):
+        _delete_vector_chunks_for_notes([note_id])
     return {"status": "ok"}
 
 @router.post("/notes/{note_id}/restore", response_model=NoteResponse)
@@ -1568,14 +1637,19 @@ def restore_note_api(note_id: int, db: Session = Depends(get_db)) -> NoteRespons
 
 @router.delete("/notes/{note_id}/purge")
 def delete_note_purge_api(note_id: int, db: Session = Depends(get_db)) -> dict:
+    target = next((note for note in list_trashed_notes(db) if note.id == note_id), None)
     if not purge_note(db, note_id):
         raise HTTPException(status_code=404, detail="Note not found")
+    if target is None or not getattr(target, "is_folder", False):
+        _delete_vector_chunks_for_notes([note_id])
     return {"status": "ok"}
 
 @router.delete("/trash/purge")
 def purge_trash_api(db: Session = Depends(get_db)) -> dict:
+    trashed_note_ids = [note.id for note in list_trashed_notes(db) if not note.is_folder]
     if not purge_trash(db):
         raise HTTPException(status_code=500, detail="Failed to purge trash")
+    _delete_vector_chunks_for_notes(trashed_note_ids)
     return {"status": "ok"}
 
 
@@ -1858,7 +1932,7 @@ async def save_music_link(payload: dict):
     music_dir = Path(settings.music_path)
     music_dir.mkdir(parents=True, exist_ok=True)
     
-    json_path = music_dir / f"{title}.json"
+    json_path = safe_named_file(music_dir, f"{title}.json", detail="Invalid title")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({
             "title": title, 
@@ -1883,7 +1957,7 @@ def upload_music(file: UploadFile = File(...), cover: UploadFile = File(None)):
     
     try:
         with open(audio_path, "wb") as f:
-            f.write(file.file.read())
+            f.write(read_upload_file_sync_limited(file))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save audio file: {str(e)}")
         
@@ -1894,7 +1968,7 @@ def upload_music(file: UploadFile = File(...), cover: UploadFile = File(None)):
         cover_path = safe_named_file(music_dir, safe_cover_name)
         try:
             with open(cover_path, "wb") as f:
-                f.write(cover.file.read())
+                f.write(read_upload_file_sync_limited(cover))
             cover_url = f"/api/media/static/music/{safe_cover_name}"
         except Exception as e:
             print(f"[!] Error saving cover: {str(e)}")
@@ -1985,7 +2059,7 @@ def upload_sticker(file: UploadFile = File(...)):
         save_path = safe_named_file(settings.stickers_path, unique_name)
         
         with open(save_path, "wb") as f:
-            f.write(file.file.read())
+            f.write(read_upload_file_sync_limited(file))
             
         return {
             "name": unique_name,
@@ -2056,7 +2130,7 @@ def upload_emoticon(file: UploadFile = File(...)):
         save_path = safe_named_file(emoticons_path, unique_name)
         
         with open(save_path, "wb") as f:
-            f.write(file.file.read())
+            f.write(read_upload_file_sync_limited(file))
             
         return {
             "name": unique_name,

@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     chunk_size_words: int = 650
     chunk_overlap_words: int = 80
     top_k: int = 5
+    max_upload_bytes: int = Field(default=200 * 1024 * 1024, validation_alias="NOVA_MAX_UPLOAD_BYTES")
     cors_origins: list[str] = [
         "http://127.0.0.1",
         "http://localhost",
@@ -122,4 +123,3 @@ def get_settings() -> Settings:
     Path(settings.music_path).mkdir(parents=True, exist_ok=True)
     Path(settings.stickers_path).mkdir(parents=True, exist_ok=True)
     return settings
-

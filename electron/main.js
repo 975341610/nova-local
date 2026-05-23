@@ -492,6 +492,42 @@ function isPathInsideRoot(root, targetPath) {
   return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function isTrustedRendererUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return false;
+  }
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === 'file:') {
+      let filePath = decodeURIComponent(parsed.pathname || '');
+      if (process.platform === 'win32') {
+        filePath = filePath.replace(/^\/([A-Za-z]:\/)/, '$1');
+      }
+      return path.resolve(filePath) === path.resolve(FRONTEND_INDEX);
+    }
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname);
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function requireTrustedIpcSender(event) {
+  const rawUrl = event?.senderFrame?.url || event?.sender?.getURL?.() || '';
+  if (!isTrustedRendererUrl(rawUrl)) {
+    throw new Error('Untrusted IPC sender');
+  }
+}
+
+function trustedIpcHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    requireTrustedIpcSender(event);
+    return handler(event, ...args);
+  });
+}
+
 function pathFromBackendMediaUrl(rawPath) {
   if (typeof rawPath !== 'string') {
     return null;
@@ -1118,9 +1154,9 @@ function pickNoteWritePayload(payload) {
 }
 
 function registerIpcHandlers() {
-  ipcMain.handle('desktop:api-request', async (_event, payload) => requestBackendApi(payload));
-  ipcMain.handle('desktop:get-backend-base-url', async () => BACKEND_API_BASE);
-  ipcMain.handle('desktop:window-control', async (event, payload = {}) => {
+  trustedIpcHandle('desktop:api-request', async (_event, payload) => requestBackendApi(payload));
+  trustedIpcHandle('desktop:get-backend-base-url', async () => BACKEND_API_BASE);
+  trustedIpcHandle('desktop:window-control', async (event, payload = {}) => {
     const targetWindow = BrowserWindow.fromWebContents(event.sender);
     if (!targetWindow) return { ok: false, reason: 'window-not-found' };
 
@@ -1139,12 +1175,12 @@ function registerIpcHandlers() {
         return { ok: false, reason: 'unsupported-action' };
     }
   });
-  ipcMain.handle('system:open-file', async (_event, payload) => openLocalFile(payload));
-  ipcMain.handle('system:switch-data-path', async (_event, payload) => switchDataPath(payload));
-  ipcMain.handle('system:import-data', async (_event, payload) => importData(payload));
-  ipcMain.handle('system:update', async (_event, payload) => updateSystem(payload));
-  ipcMain.handle('system:restart', async () => restartSystem());
-  ipcMain.handle('ai:update-ollama', async () => runUpdateOllama());
+  trustedIpcHandle('system:open-file', async (_event, payload) => openLocalFile(payload));
+  trustedIpcHandle('system:switch-data-path', async (_event, payload) => switchDataPath(payload));
+  trustedIpcHandle('system:import-data', async (_event, payload) => importData(payload));
+  trustedIpcHandle('system:update', async (_event, payload) => updateSystem(payload));
+  trustedIpcHandle('system:restart', async () => restartSystem());
+  trustedIpcHandle('ai:update-ollama', async () => runUpdateOllama());
 
   // v0.23.0 · 离线更新与版本管理 IPC
   // ---------------------------------------------------------------
@@ -1165,19 +1201,19 @@ function registerIpcHandlers() {
     console.warn(`[updater] failed to register IPC: ${error.message}`);
   }
 
-  ipcMain.handle('notes:list', async (_event, payload = {}) => {
+  trustedIpcHandle('notes:list', async (_event, payload = {}) => {
     const input = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
     return fsBridge.listNotes({ includeContent: input.includeContent === true });
   });
-  ipcMain.handle('notes:get', async (_event, payload) => {
+  trustedIpcHandle('notes:get', async (_event, payload) => {
     const input = ensurePlainObject(payload);
     return fsBridge.getNote(ensureInteger(input.id, 'id'));
   });
-  ipcMain.handle('notes:changed', async (_event, payload = {}) => {
+  trustedIpcHandle('notes:changed', async (_event, payload = {}) => {
     const input = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
     return fsBridge.getNotesByPaths(input.filenames, { includeContent: input.includeContent !== false });
   });
-  ipcMain.handle('notes:create', async (_event, payload) => {
+  trustedIpcHandle('notes:create', async (_event, payload) => {
     const input = pickNoteWritePayload(payload);
     if (typeof input.title !== 'string' || input.title.trim().length === 0) {
       throw new Error('title is required');
@@ -1186,7 +1222,7 @@ function registerIpcHandlers() {
     markLocalVaultChange(created.file_path);
     return created;
   });
-  ipcMain.handle('folders:create', async (_event, payload) => {
+  trustedIpcHandle('folders:create', async (_event, payload) => {
     const input = ensurePlainObject(payload);
     if (typeof input.title !== 'string' || input.title.trim().length === 0) {
       throw new Error('title is required');
@@ -1195,7 +1231,7 @@ function registerIpcHandlers() {
     markLocalVaultChange(created.file_path);
     return created;
   });
-  ipcMain.handle('notes:update', async (_event, payload) => {
+  trustedIpcHandle('notes:update', async (_event, payload) => {
     const input = pickNoteWritePayload(payload);
     const noteId = ensureInteger(input.id, 'id');
     if (typeof input.file_path === 'string') {
@@ -1209,7 +1245,7 @@ function registerIpcHandlers() {
     }
     return updated;
   });
-  ipcMain.handle('notes:delete', async (_event, payload) => {
+  trustedIpcHandle('notes:delete', async (_event, payload) => {
     const input = ensurePlainObject(payload);
     return fsBridge.deleteNote(ensureInteger(input.id, 'id'));
   });

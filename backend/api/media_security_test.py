@@ -41,3 +41,29 @@ def test_bgm_stream_rejects_path_like_filename(isolated_data_root: Path):
     assert response.status_code in {400, 404}
     if response.status_code == 400:
         assert "Invalid" in response.json()["detail"]
+
+
+def test_music_link_rejects_title_path_traversal(isolated_data_root: Path):
+    response = client.post(
+        "/api/media/music-link",
+        json={"title": "../escape", "url": "https://example.com/audio.mp3"},
+    )
+
+    assert response.status_code == 400
+    assert not (isolated_data_root / "escape.json").exists()
+    assert not (isolated_data_root.parent / "escape.json").exists()
+
+
+def test_media_upload_rejects_files_over_configured_limit(isolated_data_root: Path):
+    settings = get_settings()
+    original_limit = settings.max_upload_bytes
+    settings.max_upload_bytes = 4
+    try:
+        response = client.post(
+            "/api/media/upload",
+            files={"file": ("too-large.txt", b"12345", "text/plain")},
+        )
+    finally:
+        settings.max_upload_bytes = original_limit
+
+    assert response.status_code == 413

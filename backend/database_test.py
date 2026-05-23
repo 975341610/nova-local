@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from backend.database import ensure_sqlite_database_file
+from sqlalchemy import text
+
+from backend.database import engine, ensure_sqlite_database_file
 
 
 def test_ensure_sqlite_database_file_moves_corrupt_database_aside(tmp_path: Path):
@@ -19,3 +21,8 @@ def test_ensure_sqlite_database_file_moves_corrupt_database_aside(tmp_path: Path
     assert not db_path.exists()
     assert not wal_path.exists()
     assert not shm_path.exists()
+
+
+def test_sqlite_foreign_keys_are_enabled():
+    with engine.connect() as conn:
+        assert conn.execute(text("PRAGMA foreign_keys")).scalar() == 1

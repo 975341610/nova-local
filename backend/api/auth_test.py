@@ -91,6 +91,18 @@ def test_auth_middleware_exempt_paths():
         settings.access_token = original_token
 
 
+def test_revision_auth_exemption_requires_exact_revision_route():
+    settings = get_settings()
+    original_token = settings.access_token
+    settings.access_token = "test-token"
+    try:
+        response = client.get("/api/notes/1/revisions-bypass")
+    finally:
+        settings.access_token = original_token
+
+    assert response.status_code == 401
+
+
 def test_server_mode_requires_access_token():
     settings = get_settings()
     original_mode = settings.run_mode

@@ -268,3 +268,23 @@ def test_system_restart_does_not_use_shell(monkeypatch, tmp_path: Path):
     assert response["status"] == "ok"
     assert popen_calls
     assert popen_calls[0][1].get("shell") is not True
+
+
+def test_note_delete_clears_vector_chunks(monkeypatch):
+    deleted_chunks: list[int] = []
+
+    monkeypatch.setattr(routes, "soft_delete_note", lambda db, note_id: object())
+    monkeypatch.setattr(routes.vector_store, "delete_note_chunks", lambda note_id: deleted_chunks.append(note_id))
+
+    assert routes.delete_note_api(42, db=None) == {"status": "ok"}
+    assert deleted_chunks == [42]
+
+
+def test_note_purge_clears_vector_chunks(monkeypatch):
+    deleted_chunks: list[int] = []
+
+    monkeypatch.setattr(routes, "purge_note", lambda db, note_id: True)
+    monkeypatch.setattr(routes.vector_store, "delete_note_chunks", lambda note_id: deleted_chunks.append(note_id))
+
+    assert routes.delete_note_purge_api(43, db=None) == {"status": "ok"}
+    assert deleted_chunks == [43]

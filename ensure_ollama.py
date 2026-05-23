@@ -5,6 +5,7 @@ import sys
 import shutil
 import json
 import subprocess
+from pathlib import Path
 
 MIN_REQUIRED_OLLAMA_VERSION = "0.1.29"
 
@@ -60,6 +61,30 @@ def download_with_progress(url, dest):
     urllib.request.urlretrieve(url, dest, reporthook=reporthook)
     print("\n[*] Download completed.")
 
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def safe_extract_zip(zip_path, destination):
+    destination_path = Path(destination).resolve()
+    destination_path.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        for item in zip_ref.namelist():
+            target_path = (destination_path / item).resolve()
+            if target_path == destination_path or not _is_relative_to(target_path, destination_path):
+                raise ValueError(f"Unsafe zip entry: {item}")
+            if item.endswith('/'):
+                target_path.mkdir(parents=True, exist_ok=True)
+                continue
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with zip_ref.open(item) as source, open(target_path, "wb") as target:
+                shutil.copyfileobj(source, target)
+
 def install_ollama(force=False):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(base_dir, "data")
@@ -81,7 +106,6 @@ def install_ollama(force=False):
     
     version_file = os.path.join(bin_dir, "ollama_version.txt")
     
-    # 检查本地版本
     local_version = get_local_ollama_version(ollama_exe)
     if not force and local_version:
         if not is_version_older(local_version, MIN_REQUIRED_OLLAMA_VERSION):
@@ -92,7 +116,6 @@ def install_ollama(force=False):
     print(f"[*] Target Ollama version: {current_version}")
 
     if os.path.exists(ollama_exe):
-        # 检查是否为旧版本，如果是旧版本，我们需要重新下载
         if os.path.exists(version_file):
             with open(version_file, "r") as f:
                 if f.read().strip() == current_version and not force:
@@ -108,18 +131,7 @@ def install_ollama(force=False):
     try:
         download_with_progress(url, zip_path)
         print("[*] Extracting Ollama engine...")
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            for item in zip_ref.namelist():
-                # 跳过根目录，直接解压到 bin_dir
-                target_path = os.path.join(bin_dir, item)
-                if item.endswith('/'):
-                    os.makedirs(target_path, exist_ok=True)
-                    continue
-                os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                source = zip_ref.open(item)
-                target = open(target_path, "wb")
-                with source, target:
-                    shutil.copyfileobj(source, target)
+        safe_extract_zip(zip_path, bin_dir)
         os.remove(zip_path)
         with open(version_file, "w") as f:
             f.write(current_version)

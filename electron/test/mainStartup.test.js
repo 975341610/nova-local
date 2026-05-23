@@ -45,3 +45,11 @@ test('renderer sandbox is enabled by default', () => {
   assert.match(mainSource, /sandbox:\s*true/);
   assert.doesNotMatch(mainSource, /sandbox:\s*false/);
 });
+
+test('main IPC handlers verify the renderer sender before privileged work', () => {
+  assert.match(mainSource, /function requireTrustedIpcSender/);
+  assert.match(mainSource, /function trustedIpcHandle/);
+  assert.match(mainSource, /trustedIpcHandle\('system:switch-data-path'/);
+  assert.doesNotMatch(mainSource, /ipcMain\.handle\('system:switch-data-path'/);
+  assert.match(mainSource, /trustedIpcHandle\('desktop:api-request'/);
+});

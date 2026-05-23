@@ -94,4 +94,12 @@ describe('AI Markdown rendering', () => {
   it('shouldRenderAIMarkdown detects table syntax', () => {
     expect(shouldRenderAIMarkdown('| A | B |\n| --- | --- |\n| 1 | 2 |')).toBe(true)
   })
+
+  it('does not render unsafe markdown link protocols', () => {
+    const html = aiMarkdownToHtml('[click](javascript:alert(1)) and [ok](https://example.com)')
+
+    expect(html).not.toContain('javascript:')
+    expect(html).toContain('click')
+    expect(html).toContain('href="https://example.com"')
+  })
 })

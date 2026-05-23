@@ -9,6 +9,7 @@ except ImportError:
 import os
 import sys
 import json
+import re
 import uuid
 import shutil
 import secrets
@@ -126,6 +127,11 @@ def is_protected_api_path(path: str) -> bool:
     )
 
 
+def is_revision_api_path(path: str) -> bool:
+    api_prefix = re.escape(settings.api_prefix.rstrip("/"))
+    return bool(re.fullmatch(fr"{api_prefix}/notes/\d+/revisions(?:/\d+(?:/restore)?)?", path))
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -168,7 +174,7 @@ async def auth_middleware(request: Request, call_next):
         or request.url.path == f"{settings.api_prefix}/system/vault-health"
         or request.url.path == f"{settings.api_prefix}/system/revision-settings"
         or request.url.path == f"{settings.api_prefix}/system/export-all"
-        or ("/revisions" in request.url.path and request.url.path.startswith(f"{settings.api_prefix}/notes/"))
+        or is_revision_api_path(request.url.path)
         or (request.url.path.endswith("/snapshot") and request.url.path.startswith(f"{settings.api_prefix}/notes/"))
     )
 
