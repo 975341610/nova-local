@@ -44,9 +44,19 @@ describe('autosave regressions', () => {
     const editorSource = readFileSync(editorPath, 'utf8')
     const switchEffectBody = sliceBetween(editorSource, 'if (note.id !== prevNoteId) {', 'replaceEditorContentWithoutAutosave(')
 
-    expect(switchEffectBody).toContain('const draftSnapshot = flushCurrentEditorDraft(prevNoteId);')
+    expect(switchEffectBody).toContain('const shouldFlushPreviousDraft = isDirtyRef.current || isDirty;')
+    expect(switchEffectBody).toContain('const draftSnapshot = shouldFlushPreviousDraft ? flushCurrentEditorDraft(prevNoteId) : null;')
     expect(switchEffectBody).toContain('onLiveChange?.({')
     expect(switchEffectBody).toContain('handleSaveRef.current?.(')
+  })
+
+  it('does not mark a clean previous note as modified when merely opening another note', () => {
+    const editorSource = readFileSync(editorPath, 'utf8')
+    const switchEffectBody = sliceBetween(editorSource, 'if (note.id !== prevNoteId) {', 'replaceEditorContentWithoutAutosave(')
+
+    expect(switchEffectBody).not.toContain('const draftSnapshot = flushCurrentEditorDraft(prevNoteId);')
+    expect(switchEffectBody).toContain('const shouldFlushPreviousDraft = isDirtyRef.current || isDirty;')
+    expect(switchEffectBody).toContain('currentDraft: shouldFlushPreviousDraft ? draftSnapshot?.note ?? latestNoteRef.current : null,')
   })
 
   it('does not pre-bind latestNoteRef to the incoming note before the previous note switch flush runs', () => {

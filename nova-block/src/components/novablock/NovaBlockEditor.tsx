@@ -2859,11 +2859,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     if (!editor || !note?.id) return;
     
     if (note.id !== prevNoteId) {
-      const draftSnapshot = flushCurrentEditorDraft(prevNoteId);
+      const shouldFlushPreviousDraft = isDirtyRef.current || isDirty;
+      const draftSnapshot = shouldFlushPreviousDraft ? flushCurrentEditorDraft(prevNoteId) : null;
       const pendingSwitchSave = buildPendingSwitchSavePayload({
-        currentDraft: draftSnapshot?.note ?? latestNoteRef.current,
+        currentDraft: shouldFlushPreviousDraft ? draftSnapshot?.note ?? latestNoteRef.current : null,
         previousNoteId: prevNoteId,
-        isDirty,
+        isDirty: shouldFlushPreviousDraft,
         html: draftSnapshot?.content ?? editor.getHTML(),
       });
 
