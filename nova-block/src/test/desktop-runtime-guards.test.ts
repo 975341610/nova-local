@@ -179,17 +179,17 @@ describe('desktop runtime guards', () => {
     expect(preloadSource).toContain("'desktop:api-request'")
     expect(preloadSource).not.toContain('getDesktopAuthToken')
     expect(preloadSource).not.toContain("'desktop:get-auth-token'")
-    expect(mainSource).toContain("ipcMain.handle('system:open-file'")
-    expect(mainSource).toContain("ipcMain.handle('system:switch-data-path'")
-    expect(mainSource).toContain("ipcMain.handle('system:import-data'")
-    expect(mainSource).toContain("ipcMain.handle('system:update'")
-    expect(mainSource).toContain("ipcMain.handle('system:restart'")
-    expect(mainSource).toContain("ipcMain.handle('ai:update-ollama'")
-    expect(mainSource).toContain("ipcMain.handle('desktop:api-request'")
+    expect(mainSource).toContain("trustedIpcHandle('system:open-file'")
+    expect(mainSource).toContain("trustedIpcHandle('system:switch-data-path'")
+    expect(mainSource).toContain("trustedIpcHandle('system:import-data'")
+    expect(mainSource).toContain("trustedIpcHandle('system:update'")
+    expect(mainSource).toContain("trustedIpcHandle('system:restart'")
+    expect(mainSource).toContain("trustedIpcHandle('ai:update-ollama'")
+    expect(mainSource).toContain("trustedIpcHandle('desktop:api-request'")
     expect(mainSource).not.toContain("['system:open-file', { method: 'POST', path: '/system/open-file' }]")
     expect(mainSource).not.toContain("['ai:update-ollama', { method: 'POST', path: '/ai/update-ollama' }]")
     expect(mainSource).not.toContain("ipcMain.handle('desktop:get-auth-token'")
-    expect(mainSource).toContain("ipcMain.handle('desktop:get-backend-base-url'")
+    expect(mainSource).toContain("trustedIpcHandle('desktop:get-backend-base-url'")
   })
 
   it('refreshes vault watcher changes incrementally before falling back to full reloads', () => {
@@ -206,7 +206,7 @@ describe('desktop runtime guards', () => {
     expect(appSource).toContain('api.getChangedNotes(changedFilenames)')
     expect(appSource).toContain('handleVaultChanged(payload)')
     expect(preloadSource).toContain("'notes:changed'")
-    expect(mainSource).toContain("ipcMain.handle('notes:changed'")
+    expect(mainSource).toContain("trustedIpcHandle('notes:changed'")
     expect(fsBridgeSource).toContain('async function getNotesByPaths')
   })
 
@@ -268,8 +268,8 @@ describe('desktop runtime guards', () => {
   it('queues revision snapshots outside the desktop local note write critical path', () => {
     const mainPath = path.resolve(__dirname, '../../../electron/main.js')
     const mainSource = fs.readFileSync(mainPath, 'utf8')
-    const updateHandlerStart = mainSource.indexOf("ipcMain.handle('notes:update'")
-    const updateHandlerEnd = mainSource.indexOf("ipcMain.handle('notes:delete'", updateHandlerStart)
+    const updateHandlerStart = mainSource.indexOf("'notes:update'")
+    const updateHandlerEnd = mainSource.indexOf("'notes:delete'", updateHandlerStart)
     const updateHandler = mainSource.slice(updateHandlerStart, updateHandlerEnd)
 
     expect(mainSource).toContain('async function captureRevisionSnapshotBeforeLocalUpdate')
@@ -292,6 +292,17 @@ describe('desktop runtime guards', () => {
     const closeHandler = mainSource.slice(closeHandlerStart, closeHandlerEnd)
     expect(closeHandler).not.toContain('await flushPendingRevisionSnapshotTimersWithTimeout()')
     expect(closeHandler).toContain('persistRevisionSnapshotQueue();')
+  })
+
+  it('drops unrecoverable revision snapshot queue items so one bad note cannot block the queue', () => {
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+
+    expect(mainSource).toContain('const MAX_REVISION_SNAPSHOT_ATTEMPTS = 3')
+    expect(mainSource).toContain('function isPermanentRevisionSnapshotError')
+    expect(mainSource).toContain('FOREIGN KEY constraint failed')
+    expect(mainSource).toContain('if (isPermanentRevisionSnapshotError(error) || item.attempts >= MAX_REVISION_SNAPSHOT_ATTEMPTS)')
+    expect(mainSource).toContain('revisionSnapshotQueue.shift();')
   })
 
   it('keeps Electron high-DPI rendering enabled for mixed-resolution monitors', () => {

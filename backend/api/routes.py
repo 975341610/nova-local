@@ -150,6 +150,31 @@ def _delete_vector_chunks_for_notes(note_ids: list[int] | set[int]) -> None:
             logger.warning("Failed to delete vector chunks for note %s: %s", note_id, exc)
 
 
+def _ensure_revision_note_row(db: Session, note) -> None:
+    """Create the DB shadow row that note_revisions references for file-backed notes."""
+    note_id = getattr(note, "id", None)
+    if not isinstance(note_id, int):
+        return
+    if db.get(Note, note_id) is not None:
+        return
+    db.add(
+        Note(
+            id=note_id,
+            title=(getattr(note, "title", "") or "Untitled")[:255],
+            icon=getattr(note, "icon", "") or "",
+            content=getattr(note, "content", "") or "",
+            summary=getattr(note, "summary", "") or "",
+            tags=getattr(note, "tags", "") or "",
+            type=getattr(note, "type", "") or "note",
+            notebook_id=None,
+            parent_id=None,
+            is_folder=bool(getattr(note, "is_folder", False)),
+            is_title_manually_edited=bool(getattr(note, "is_title_manually_edited", False)),
+        )
+    )
+    db.flush()
+
+
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
 
@@ -1560,6 +1585,7 @@ def update_note_api(note_id: int, payload: NoteUpdate, background_tasks: Backgro
 
     # v0.22.0 · 旁路打快照(去重+去抖)
     try:
+        _ensure_revision_note_row(db, note)
         revision_service.maybe_snapshot(
             db,
             note_id=note_id,
@@ -1765,6 +1791,7 @@ def restore_note_revision_api(note_id: int, revision_id: int, db: Session = Depe
     rows_before = db.query(_NR).filter(_NR.note_id == note_id).count()
     print(f"[revision][restore] before: note={note_id} revisions={rows_before}")
 
+    _ensure_revision_note_row(db, existing)
     result = revision_service.restore_revision(
         db,
         note_id=note_id,
@@ -1796,6 +1823,7 @@ def restore_note_revision_api(note_id: int, revision_id: int, db: Session = Depe
 
     # 再为"新当前版本"打一条 manual 快照, 方便后续继续版本回溯
     try:
+        _ensure_revision_note_row(db, note)
         revision_service.maybe_snapshot(
             db,
             note_id=note_id,
@@ -1829,6 +1857,14 @@ def capture_note_snapshot_api(
     snapshot_title = ""
     snapshot_content = ""
     has_payload_content = False
+    existing = get_note(db, note_id)
+    if not existing or getattr(existing, "deleted_at", None) is not None:
+        return {
+            "status": "skipped",
+            "snapshot_id": None,
+            "skipped": True,
+            "detail": "Note not found",
+        }
     if isinstance(payload, dict):
         raw_source = payload.get("source")
         if raw_source in ("auto", "save", "manual", "pre-save", "stable"):
@@ -1842,13 +1878,11 @@ def capture_note_snapshot_api(
             has_payload_content = True
 
     if not has_payload_content:
-        existing = get_note(db, note_id)
-        if not existing:
-            raise HTTPException(status_code=404, detail="Note not found")
         snapshot_title = existing.title or ""
         snapshot_content = existing.content or ""
 
     try:
+        _ensure_revision_note_row(db, existing)
         rev = revision_service.maybe_snapshot(
             db,
             note_id=note_id,

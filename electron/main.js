@@ -101,6 +101,7 @@ let revisionSnapshotDrainPromise = null;
 let revisionSnapshotDrainTimer = null;
 const REVISION_FINAL_SNAPSHOT_DELAY_MS = 3_000;
 const CLOSE_WINDOW_RENDERER_FLUSH_TIMEOUT_MS = 5_000;
+const MAX_REVISION_SNAPSHOT_ATTEMPTS = 3;
 const REVISION_SNAPSHOT_QUEUE_PATH = path.join(DATA_ROOT, 'revision-snapshot-queue.json');
 
 const fsBridge = createFsBridge({ vaultRoot: VAULT_ROOT });
@@ -978,6 +979,15 @@ function scheduleRevisionSnapshotQueueDrain(delayMs = 500) {
   }, delayMs);
 }
 
+function isPermanentRevisionSnapshotError(error) {
+  const message = error && error.message ? error.message : String(error || '');
+  return (
+    message.includes('Note not found') ||
+    message.includes('FOREIGN KEY constraint failed') ||
+    message.includes('"status":"skipped"')
+  );
+}
+
 function enqueueRevisionSnapshot({ noteId, title = '', content = '', source = 'auto' }) {
   if (!Number.isInteger(noteId) || typeof content !== 'string') {
     return;
@@ -1042,6 +1052,12 @@ async function drainRevisionSnapshotQueue() {
         item.attempts = (item.attempts || 0) + 1;
         item.lastError = error && error.message ? error.message : String(error);
         item.lastAttemptAt = new Date().toISOString();
+        if (isPermanentRevisionSnapshotError(error) || item.attempts >= MAX_REVISION_SNAPSHOT_ATTEMPTS) {
+          revisionSnapshotQueue.shift();
+          persistRevisionSnapshotQueue();
+          setRevisionSnapshotStatus(item.noteId, 'saved');
+          continue;
+        }
         persistRevisionSnapshotQueue();
         setRevisionSnapshotStatus(item.noteId, 'failed', item.lastError);
         scheduleRevisionSnapshotQueueDrain(Math.min(60_000, 5_000 * item.attempts));
