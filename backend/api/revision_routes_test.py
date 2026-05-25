@@ -1,6 +1,7 @@
 from backend.api import routes
 from backend.models.db_models import Base, Note, NoteRevision
 
+from datetime import datetime
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from types import SimpleNamespace
@@ -90,3 +91,25 @@ def test_snapshot_with_payload_creates_revision_for_file_backed_note_with_foreig
     finally:
         db.close()
         engine.dispose()
+
+
+def test_revision_list_serializes_naive_datetimes_as_utc(monkeypatch):
+    monkeypatch.setattr(
+        routes.revision_service,
+        "list_revisions",
+        lambda db, note_id: [
+            SimpleNamespace(
+                id=1,
+                note_id=note_id,
+                created_at=datetime(2026, 5, 25, 3, 9, 21, 593504),
+                content_hash="abc",
+                title_snapshot="需求：",
+                byte_size=12,
+                source="stable",
+            )
+        ],
+    )
+
+    result = routes.list_note_revisions_api(11, db=object())
+
+    assert result[0]["created_at"] == "2026-05-25T03:09:21.593504+00:00"

@@ -14,6 +14,7 @@ import hashlib
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from PIL import Image
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form, BackgroundTasks
@@ -173,6 +174,14 @@ def _ensure_revision_note_row(db: Session, note) -> None:
         )
     )
     db.flush()
+
+
+def _revision_timestamp_iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
 
 
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
@@ -1712,7 +1721,7 @@ def list_note_revisions_api(note_id: int, db: Session = Depends(get_db)) -> list
         {
             "id": r.id,
             "note_id": r.note_id,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "created_at": _revision_timestamp_iso(r.created_at),
             "content_hash": r.content_hash,
             "title_snapshot": r.title_snapshot,
             "byte_size": r.byte_size,
@@ -1753,7 +1762,7 @@ def get_note_revision_api(note_id: int, revision_id: int, db: Session = Depends(
     return {
         "id": rev.id,
         "note_id": rev.note_id,
-        "created_at": rev.created_at.isoformat() if rev.created_at else None,
+        "created_at": _revision_timestamp_iso(rev.created_at),
         "content_hash": rev.content_hash,
         "title_snapshot": rev.title_snapshot,
         "byte_size": rev.byte_size,

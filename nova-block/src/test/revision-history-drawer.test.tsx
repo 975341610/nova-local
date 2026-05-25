@@ -3,7 +3,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { RevisionHistoryDrawer } from '../components/editor/RevisionHistoryDrawer'
+import { parseRevisionTimestamp, RevisionHistoryDrawer } from '../components/editor/RevisionHistoryDrawer'
 import { api } from '../lib/api'
 
 vi.mock('../lib/api', () => ({
@@ -36,6 +36,14 @@ describe('RevisionHistoryDrawer', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     document.body.innerHTML = ''
+  })
+
+  it('parses legacy timezone-less revision timestamps as UTC', () => {
+    const legacy = parseRevisionTimestamp('2026-05-25T03:09:21.593504')
+    const explicit = parseRevisionTimestamp('2026-05-25T03:09:21.593504Z')
+
+    expect(legacy?.getTime()).toBe(explicit?.getTime())
+    expect(legacy?.toISOString()).toBe('2026-05-25T03:09:21.593Z')
   })
 
   it('ignores stale revision list responses from a previous note', async () => {
