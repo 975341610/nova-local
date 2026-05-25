@@ -102,6 +102,7 @@ let revisionSnapshotDrainTimer = null;
 const REVISION_FINAL_SNAPSHOT_DELAY_MS = 3_000;
 const CLOSE_WINDOW_RENDERER_FLUSH_TIMEOUT_MS = 5_000;
 const MAX_REVISION_SNAPSHOT_ATTEMPTS = 3;
+const REVISION_SNAPSHOT_REQUEST_TIMEOUT_MS = 15_000;
 const REVISION_SNAPSHOT_QUEUE_PATH = path.join(DATA_ROOT, 'revision-snapshot-queue.json');
 
 const fsBridge = createFsBridge({ vaultRoot: VAULT_ROOT });
@@ -911,11 +912,12 @@ function loadRevisionSnapshotQueue() {
     if (!Array.isArray(rows)) {
       return;
     }
-    revisionSnapshotQueue.splice(0, revisionSnapshotQueue.length, ...rows.filter((item) => (
-      item &&
-      Number.isInteger(item.noteId) &&
-      typeof item.content === 'string'
-    )));
+    const normalized = normalizeRevisionSnapshotQueue(rows);
+    revisionSnapshotQueue.splice(0, revisionSnapshotQueue.length, ...normalized);
+    if (normalized.length !== rows.length) {
+      persistRevisionSnapshotQueue();
+      console.info(`[revision] compacted snapshot queue ${rows.length} -> ${normalized.length}`);
+    }
   } catch (error) {
     console.warn('[revision] failed to load snapshot queue:', error && error.message ? error.message : error);
     try {
@@ -932,13 +934,49 @@ function loadRevisionSnapshotQueue() {
   }
 }
 
+function normalizeRevisionSnapshotQueue(items) {
+  const normalized = [];
+  const stableByNoteId = new Map();
+  const preSaveByNoteId = new Set();
+
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || !Number.isInteger(item.noteId) || typeof item.content !== 'string') {
+      continue;
+    }
+
+    if (item.source === 'stable') {
+      const previousIndex = stableByNoteId.get(item.noteId);
+      if (previousIndex !== undefined) {
+        normalized[previousIndex] = item;
+      } else {
+        stableByNoteId.set(item.noteId, normalized.length);
+        normalized.push(item);
+      }
+      continue;
+    }
+
+    if (item.source === 'pre-save') {
+      if (preSaveByNoteId.has(item.noteId)) {
+        continue;
+      }
+      preSaveByNoteId.add(item.noteId);
+    }
+
+    normalized.push(item);
+  }
+
+  return normalized.slice(-300);
+}
+
 function persistRevisionSnapshotQueue() {
   try {
     const queueDir = path.dirname(REVISION_SNAPSHOT_QUEUE_PATH);
     fs.mkdirSync(queueDir, { recursive: true });
     const tmpPath = `${REVISION_SNAPSHOT_QUEUE_PATH}.tmp-${process.pid}`;
     const backupPath = `${REVISION_SNAPSHOT_QUEUE_PATH}.bak`;
-    fs.writeFileSync(tmpPath, JSON.stringify(revisionSnapshotQueue.slice(-300), null, 2), 'utf8');
+    const normalized = normalizeRevisionSnapshotQueue(revisionSnapshotQueue);
+    revisionSnapshotQueue.splice(0, revisionSnapshotQueue.length, ...normalized);
+    fs.writeFileSync(tmpPath, JSON.stringify(normalized, null, 2), 'utf8');
     try {
       fs.rmSync(backupPath, { force: true });
     } catch {}
@@ -996,6 +1034,12 @@ function enqueueRevisionSnapshot({ noteId, title = '', content = '', source = 'a
   if (revisionSnapshotQueue.some((item) => item.noteId === noteId && item.contentHash === contentHash && item.source === source)) {
     return;
   }
+  const hasQueuedPreSaveSnapshot = source === 'pre-save' && revisionSnapshotQueue.some((item) => (
+    item.noteId === noteId && item.source === 'pre-save'
+  ));
+  if (hasQueuedPreSaveSnapshot) {
+    return;
+  }
   if (source === 'stable') {
     for (let index = revisionSnapshotQueue.length - 1; index >= 0; index -= 1) {
       const queued = revisionSnapshotQueue[index];
@@ -1032,7 +1076,7 @@ async function drainRevisionSnapshotQueue() {
         const result = await requestBackendApi({
           channel: 'notes:snapshot',
           path: '/notes/' + item.noteId + '/snapshot',
-          timeoutMs: 2_000,
+          timeoutMs: REVISION_SNAPSHOT_REQUEST_TIMEOUT_MS,
           options: {
             method: 'POST',
             body: JSON.stringify({

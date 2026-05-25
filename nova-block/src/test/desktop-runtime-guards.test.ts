@@ -299,6 +299,11 @@ describe('desktop runtime guards', () => {
     const mainSource = fs.readFileSync(mainPath, 'utf8')
 
     expect(mainSource).toContain('const MAX_REVISION_SNAPSHOT_ATTEMPTS = 3')
+    expect(mainSource).toContain('const REVISION_SNAPSHOT_REQUEST_TIMEOUT_MS = 15_000')
+    expect(mainSource).toContain('function normalizeRevisionSnapshotQueue')
+    expect(mainSource).toContain("if (item.source === 'pre-save')")
+    expect(mainSource).toContain('hasQueuedPreSaveSnapshot')
+    expect(mainSource).toContain('timeoutMs: REVISION_SNAPSHOT_REQUEST_TIMEOUT_MS')
     expect(mainSource).toContain('function isPermanentRevisionSnapshotError')
     expect(mainSource).toContain('FOREIGN KEY constraint failed')
     expect(mainSource).toContain('if (isPermanentRevisionSnapshotError(error) || item.attempts >= MAX_REVISION_SNAPSHOT_ATTEMPTS)')
