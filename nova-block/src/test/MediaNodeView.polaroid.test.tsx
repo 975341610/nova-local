@@ -15,9 +15,9 @@ import { MediaNodeView } from '../components/MediaNodeView'
 // 不需要把它整套接入 Tiptap.
 import { createElement } from 'react'
 
-function makeProps(kind: 'image' | 'video' | 'audio') {
+function makeProps(kind: 'image' | 'video' | 'audio' | 'file') {
   return {
-    node: { attrs: { src: 'https://example.com/x.png', width: '100%' }, type: { name: kind } },
+    node: { attrs: { src: 'https://example.com/x.png', width: '100%', name: 'demo.md', size: 42, type: 'text/markdown', viewMode: 'card' }, type: { name: kind } },
     updateAttributes: () => {},
     deleteNode: () => {},
     selected: false,
@@ -71,5 +71,13 @@ describe('MediaNodeView · 无相框样式', () => {
     expect(cls).not.toMatch(/\bshadow-sm\b/)
     expect(cls).toMatch(/\brounded-xl\b/)
     expect(cls).toMatch(/hover:-translate-y-0\.5/)
+  })
+
+  it('file 节点显示文档卡片和预览入口', () => {
+    const { getByText, getByTitle } = render(createElement(MediaNodeView, makeProps('file')))
+    expect(getByText('demo.md')).toBeTruthy()
+    expect(getByText('点击预览')).toBeTruthy()
+    expect(getByTitle('预览视图')).toBeTruthy()
+    expect(getByTitle('全屏浏览')).toBeTruthy()
   })
 })

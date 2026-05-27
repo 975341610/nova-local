@@ -133,6 +133,22 @@ describe('api browser fallback', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('fetches document previews through the backend preview endpoint', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ kind: 'markdown', title: 'demo.md', can_preview: true, page_count: null, sections: [], html: '<p>x</p>' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    await api.previewDocument({ src: '/api/media/static/files/demo.md', name: 'demo.md' })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('http://127.0.0.1:8765/api/documents/preview?')
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('src=%2Fapi%2Fmedia%2Fstatic%2Ffiles%2Fdemo.md')
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('name=demo.md')
+  })
+
   it('routes local system maintenance actions through dedicated Electron IPC channels', async () => {
     const ipcInvoke = vi.fn().mockResolvedValue({ status: 'ok' })
     ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }
@@ -283,6 +299,22 @@ describe('api browser fallback', () => {
   it('rebases plain /api links to absolute backend URLs for file:// desktop runtime', () => {
     const content = '<p><img src="/api/media/static/files/example.png" /></p>'
     expect(sanitizeLegacyApiUrlsInHtml(content)).toContain('src="http://127.0.0.1:8765/api/media/static/files/example.png"')
+  })
+
+  it('preserves file-card attachment attributes while sanitizing restored revision HTML', () => {
+    const content = (
+      '<div data-type="file-card" class="notion-file-block" ' +
+      'src="/api/media/static/files/demo.pdf" name="demo.pdf" ' +
+      'size="69427" type="application/pdf" data-upload-id="upload-1"></div>'
+    )
+    const sanitized = sanitizeLegacyApiUrlsInHtml(content)
+
+    expect(sanitized).toContain('data-type="file-card"')
+    expect(sanitized).toContain('src="http://127.0.0.1:8765/api/media/static/files/demo.pdf"')
+    expect(sanitized).toContain('name="demo.pdf"')
+    expect(sanitized).toContain('size="69427"')
+    expect(sanitized).toContain('type="application/pdf"')
+    expect(sanitized).toContain('data-upload-id="upload-1"')
   })
 
   it('removes script tags from stored editor HTML', () => {

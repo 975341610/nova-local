@@ -14,6 +14,7 @@ import hashlib
 import logging
 import re
 import time
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from PIL import Image
 from pathlib import Path
@@ -21,6 +22,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form, B
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from backend.agent.planner import run_agent
 from backend.config import get_settings
@@ -78,6 +80,7 @@ from backend.config import get_settings, get_custom_config_path, PROJECT_DIR
 from backend.rag.pipeline import citations_from_results, cosine_similarity, search_knowledge
 from backend.services.ai_client import AIClient
 from backend.services.ai_mode import AI_MODE_LOCAL, AI_MODE_REMOTE, normalize_ai_mode, read_ai_runtime_config, should_run_remote_ai_indexing
+from backend.services.document_preview import preview_document
 from backend.services.document_service import build_import_preview_item, build_url_preview_item, chunk_text, combine_imported_documents_for_note_generation, combine_imported_urls_for_note_generation, fetch_url_article, parse_document
 from backend.services.import_generation import generate_note_from_imported_documents
 from backend.services.note_generation import generate_structured_note
@@ -156,7 +159,18 @@ def _ensure_revision_note_row(db: Session, note) -> None:
     note_id = getattr(note, "id", None)
     if not isinstance(note_id, int):
         return
-    if db.get(Note, note_id) is not None:
+    existing = db.get(Note, note_id)
+    if existing is not None:
+        existing.title = (getattr(note, "title", "") or "Untitled")[:255]
+        existing.icon = getattr(note, "icon", "") or ""
+        existing.content = getattr(note, "content", "") or ""
+        existing.summary = getattr(note, "summary", "") or ""
+        existing.tags = getattr(note, "tags", "") or ""
+        existing.type = getattr(note, "type", "") or "note"
+        existing.is_folder = bool(getattr(note, "is_folder", False))
+        existing.is_title_manually_edited = bool(getattr(note, "is_title_manually_edited", False))
+        existing.deleted_at = None
+        db.flush()
         return
     db.add(
         Note(
@@ -174,6 +188,67 @@ def _ensure_revision_note_row(db: Session, note) -> None:
         )
     )
     db.flush()
+
+
+def _force_revision_note_row(db: Session, note_id: int, note, title: str = "", content: str = "") -> None:
+    """Force-create the DB row required by note_revisions after an FK failure.
+
+    Local-vault notes are file-backed, while revisions still use a relational
+    foreign key. In rare races the normal shadow-row creation can miss the row;
+    this helper is deliberately independent of _ensure_revision_note_row so the
+    snapshot endpoint can recover instead of leaving the desktop queue stuck.
+    """
+    existing = db.get(Note, note_id)
+    if existing is not None:
+        existing.title = (getattr(note, "title", None) or title or "Untitled")[:255]
+        existing.icon = getattr(note, "icon", "") or ""
+        existing.content = getattr(note, "content", None) or content or ""
+        existing.summary = getattr(note, "summary", "") or ""
+        existing.tags = getattr(note, "tags", "") or ""
+        existing.type = getattr(note, "type", "") or "note"
+        existing.is_folder = bool(getattr(note, "is_folder", False))
+        existing.is_title_manually_edited = bool(getattr(note, "is_title_manually_edited", False))
+        existing.deleted_at = None
+        db.flush()
+        return
+    db.add(
+        Note(
+            id=note_id,
+            title=(getattr(note, "title", None) or title or "Untitled")[:255],
+            icon=getattr(note, "icon", "") or "",
+            content=getattr(note, "content", None) or content or "",
+            summary=getattr(note, "summary", "") or "",
+            tags=getattr(note, "tags", "") or "",
+            type=getattr(note, "type", "") or "note",
+            notebook_id=None,
+            parent_id=None,
+            is_folder=bool(getattr(note, "is_folder", False)),
+            is_title_manually_edited=bool(getattr(note, "is_title_manually_edited", False)),
+        )
+    )
+    db.flush()
+
+
+def _payload_backed_revision_note(note_id: int, title: str, content: str):
+    return SimpleNamespace(
+        id=note_id,
+        title=title or "Untitled",
+        icon="",
+        content=content or "",
+        summary="",
+        tags="",
+        type="note",
+        notebook_id=None,
+        parent_id=None,
+        is_folder=False,
+        is_title_manually_edited=False,
+        deleted_at=None,
+    )
+
+
+def _is_revision_foreign_key_error(error: Exception) -> bool:
+    message = str(error)
+    return "FOREIGN KEY constraint failed" in message or "foreign key" in message.lower()
 
 
 def _revision_timestamp_iso(value: datetime | None) -> str | None:
@@ -204,14 +279,24 @@ def _enforce_upload_size(content: bytes, *, filename: str | None = None) -> byte
 async def read_upload_file_limited(file: UploadFile) -> bytes:
     chunks: list[bytes] = []
     total = 0
+    single_read_mode = False
     while True:
-        chunk = await file.read(UPLOAD_READ_CHUNK_BYTES)
+        try:
+            chunk = await file.read(UPLOAD_READ_CHUNK_BYTES)
+        except TypeError:
+            # Some tests and adapters expose an async read() method without a
+            # size argument. Read once through the async API instead of falling
+            # back to file.file.read(), which would block the event loop.
+            chunk = await file.read()
+            single_read_mode = True
         if not chunk:
             break
         total += len(chunk)
         if total > settings.max_upload_bytes:
             _raise_upload_too_large(file.filename)
         chunks.append(chunk)
+        if single_read_mode:
+            break
     return b"".join(chunks)
 
 
@@ -805,6 +890,18 @@ async def upload_media_complete(
         "size": final_path.stat().st_size,
         "type": content_type
     }
+
+
+@router.get("/documents/preview")
+def preview_document_api(src: str, name: str | None = None):
+    try:
+        return preview_document(src, name=name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Document file not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Document preview failed: {exc}")
 
 @router.post("/import/preview", response_model=ImportPreviewResponse)
 async def preview_import_files(files: list[UploadFile] = File(...)) -> ImportPreviewResponse:
@@ -1784,7 +1881,9 @@ def restore_note_revision_api(note_id: int, revision_id: int, db: Session = Depe
     v0.23.4 hotfix (idle-collapse) · 在关键步骤前后打印快照行数, 方便回退后
     "历史变空"时定位是: (a) DB 真被清了 / (b) vault 扫描抖动 / (c) 前端未触发刷新.
     """
-    existing = get_note(db, note_id)
+    existing = db.get(Note, note_id) if isinstance(db, Session) else None
+    if not existing:
+        existing = get_note(db, note_id)
     if not existing:
         # v0.23.4 idle-collapse v2: vault 扫描瞬时抖动不应阻断 restore.
         # 只要有任意快照行, 再等 3ms 重试一次; 依旧 None 才真 404
@@ -1792,7 +1891,9 @@ def restore_note_revision_api(note_id: int, revision_id: int, db: Session = Depe
         if db.query(_NR0).filter(_NR0.note_id == note_id).count() > 0:
             import time as _time
             _time.sleep(0.003)
-            existing = get_note(db, note_id)
+            existing = db.get(Note, note_id) if isinstance(db, Session) else None
+            if not existing:
+                existing = get_note(db, note_id)
         if not existing:
             raise HTTPException(status_code=404, detail="Note not found")
 
@@ -1827,6 +1928,16 @@ def restore_note_revision_api(note_id: int, revision_id: int, db: Session = Depe
         )
 
     note = do_restore()
+    if not note and isinstance(db, Session):
+        note = db.get(Note, note_id)
+        if note:
+            note.title = existing.title or note.title
+            note.content = target_content
+            note.summary = existing.summary or ""
+            note.updated_at = datetime.utcnow()
+            db.add(note)
+            db.commit()
+            db.refresh(note)
     if not note:
         raise HTTPException(status_code=500, detail="Failed to restore revision")
 
@@ -1866,14 +1977,6 @@ def capture_note_snapshot_api(
     snapshot_title = ""
     snapshot_content = ""
     has_payload_content = False
-    existing = get_note(db, note_id)
-    if not existing or getattr(existing, "deleted_at", None) is not None:
-        return {
-            "status": "skipped",
-            "snapshot_id": None,
-            "skipped": True,
-            "detail": "Note not found",
-        }
     if isinstance(payload, dict):
         raw_source = payload.get("source")
         if raw_source in ("auto", "save", "manual", "pre-save", "stable"):
@@ -1887,18 +1990,56 @@ def capture_note_snapshot_api(
             has_payload_content = True
 
     if not has_payload_content:
+        existing = get_note(db, note_id)
+        if not existing or getattr(existing, "deleted_at", None) is not None:
+            return {
+                "status": "skipped",
+                "snapshot_id": None,
+                "skipped": True,
+                "detail": "Note not found",
+            }
         snapshot_title = existing.title or ""
         snapshot_content = existing.content or ""
+    else:
+        if not isinstance(db, Session):
+            return {
+                "status": "skipped",
+                "snapshot_id": None,
+                "skipped": True,
+                "detail": "Note not found",
+            }
+        # The desktop save path already sends the exact title/content that must
+        # be snapshotted. Do not call get_note() here: the vault-backed
+        # repository scans note files and can take tens of seconds for document
+        # heavy notes, causing Electron's snapshot queue to time out.
+        existing = db.get(Note, note_id) or _payload_backed_revision_note(
+            note_id,
+            snapshot_title,
+            snapshot_content,
+        )
 
     try:
         _ensure_revision_note_row(db, existing)
-        rev = revision_service.maybe_snapshot(
-            db,
-            note_id=note_id,
-            title=snapshot_title,
-            content=snapshot_content,
-            source=source,
-        )
+        try:
+            rev = revision_service.maybe_snapshot(
+                db,
+                note_id=note_id,
+                title=snapshot_title,
+                content=snapshot_content,
+                source=source,
+            )
+        except IntegrityError as err:
+            if not _is_revision_foreign_key_error(err):
+                raise
+            db.rollback()
+            _force_revision_note_row(db, note_id, existing, snapshot_title, snapshot_content)
+            rev = revision_service.maybe_snapshot(
+                db,
+                note_id=note_id,
+                title=snapshot_title,
+                content=snapshot_content,
+                source=source,
+            )
     except Exception as err:
         print(f"[revision] snapshot API failed for note {note_id}: {err}")
         return {"status": "error", "snapshot_id": None, "detail": str(err)}

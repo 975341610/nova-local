@@ -375,6 +375,51 @@ class VaultStore:
         )
         return note
 
+    def _read_markdown_frontmatter(self, note_path: Path) -> dict[str, Any]:
+        try:
+            with note_path.open("r", encoding="utf-8") as handle:
+                if handle.readline() != "---\n":
+                    return {}
+                lines: list[str] = []
+                for line in handle:
+                    if line == "---\n":
+                        break
+                    lines.append(line)
+            return yaml.safe_load("".join(lines)) or {}
+        except Exception:
+            return {}
+
+    def _find_note_in_folder(
+        self,
+        notebook: VaultNotebook,
+        folder_dir: Path,
+        note_id: int,
+        parent_id: int | None,
+        deleted: bool = False,
+    ) -> VaultNote | None:
+        for item in sorted(folder_dir.iterdir(), key=lambda path: path.name.lower()):
+            if item.name in {NOTEBOOK_META_NAME, FOLDER_META_NAME}:
+                continue
+            if item.is_dir():
+                meta = self._load_yaml(self._folder_meta_path(item))
+                folder_id = int(meta.get("id", 0) or 0)
+                if folder_id == note_id:
+                    return self._folder_to_note(item, notebook, parent_id, deleted=deleted)
+                found = self._find_note_in_folder(
+                    notebook,
+                    item,
+                    note_id,
+                    folder_id or parent_id,
+                    deleted=deleted,
+                )
+                if found is not None:
+                    return found
+            elif item.suffix.lower() == ".md":
+                meta = self._read_markdown_frontmatter(item)
+                if int(meta.get("id", 0) or 0) == note_id:
+                    return self._parse_note_file(item, notebook, parent_id, deleted=deleted)
+        return None
+
     def _iter_folder_notes(self, notebook: VaultNotebook, folder_dir: Path, parent_id: int | None, deleted: bool = False) -> list[VaultNote]:
         notes: list[VaultNote] = []
         for item in sorted(folder_dir.iterdir(), key=lambda path: path.name.lower()):
@@ -511,12 +556,24 @@ class VaultStore:
         return notes
 
     def get_note(self, note_id: int) -> VaultNote | None:
-        for note in self.list_notes(include_content=True):
-            if note.id == note_id:
-                return note
-        for note in self.list_trashed_notes():
-            if note.id == note_id:
-                return note
+        for notebook in self.list_notebooks():
+            if notebook.path is None:
+                continue
+            found = self._find_note_in_folder(notebook, notebook.path, note_id, None)
+            if found is not None:
+                return found
+        for notebook in self.list_trashed_notebooks():
+            if notebook.path is None:
+                continue
+            found = self._find_note_in_folder(notebook, notebook.path, note_id, None, deleted=True)
+            if found is not None:
+                return found
+        if self.trash_root.exists():
+            trash_notebook = VaultNotebook(id=0, name="Trash", path=self.trash_root)
+            for item in sorted(self.trash_root.glob("*.md"), key=lambda path: path.name.lower()):
+                meta = self._read_markdown_frontmatter(item)
+                if int(meta.get("id", 0) or 0) == note_id:
+                    return self._parse_note_file(item, trash_notebook, None, deleted=True)
         return None
 
     def _resolve_parent_dir(self, notebook_name: str | None, parent_id: int | None) -> tuple[Path, int | None]:

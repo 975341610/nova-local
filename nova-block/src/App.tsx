@@ -603,7 +603,7 @@ function App() {
     { id: 'daily', label: '日历', hint: '打开 Daily Notes', Icon: CalendarIcon, run: () => setIsDailyOpen(true) },
     { id: 'command', label: '命令面板', hint: '打开命令面板', Icon: CommandIcon, run: () => setIsCommandPaletteOpen(true) },
     { id: 'reader', label: '阅读', hint: '进入阅读模式', Icon: BookOpenIcon, run: () => setIsReaderOpen(true) },
-    { id: 'inspect', label: '检视', hint: '打开检视面板', Icon: PanelRightIcon, run: () => setIsInspectorOpen(true) },
+    { id: 'inspect', label: '检视', hint: '打开检视面板', Icon: PanelRightIcon, run: () => setIsInspectorOpen((open) => !open) },
     { id: 'graph', label: '图谱', hint: '打开 Graph View', Icon: Share2Icon, run: () => setIsGraphOpen(true) },
     { id: 'ask', label: 'AI 灵感', hint: 'Ask My Notes', Icon: MessageSquareIcon, run: () => setIsAskOpen(true) },
     { id: 'task-mirror', label: '任务', hint: '打开任务镜像', Icon: CheckSquareIcon, run: () => setIsTaskMirrorOpen(true) },
@@ -2028,7 +2028,7 @@ function App() {
                   onOpenGraph={() => setIsGraphOpen(true)}
                   onOpenDaily={() => setIsDailyOpen(true)}
                   onOpenCommand={() => setIsCommandPaletteOpen(true)}
-                  onOpenInspector={() => setIsInspectorOpen(true)}
+                  onOpenInspector={() => setIsInspectorOpen((open) => !open)}
                   onOpenAsk={() => setIsAskOpen(true)}
                   onOpenTaskMirror={() => setIsTaskMirrorOpen(true)}
                   onOpenRecap={() => setIsRecapOpen(true)}

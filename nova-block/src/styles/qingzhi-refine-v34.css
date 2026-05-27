@@ -2141,3 +2141,63 @@ html:not([data-nv-theme]) {
   background: color-mix(in srgb, var(--nv-color-jade, #80a89c) 12%, #fff 88%) !important;
   border-left-color: var(--nv-color-jade, #80a89c) !important;
 }
+
+/* v49 inline document previews */
+.qingzhi-document-html {
+  font-size: 15px;
+  line-height: 1.85;
+}
+
+.qingzhi-document-html :where(h1, h2, h3, h4) {
+  margin: 1.2em 0 .55em;
+  font-family: var(--nv-font-serif, Georgia, serif);
+  font-weight: 700;
+  color: var(--nv-color-text, #2b2b2b);
+}
+
+.qingzhi-document-html :where(p, ul, ol, blockquote, table, pre) {
+  margin: .75em 0;
+}
+
+.qingzhi-document-html blockquote {
+  border-left: 4px solid var(--nv-color-jade, #80a89c);
+  border-radius: 0 14px 14px 0;
+  background: color-mix(in srgb, var(--nv-color-jade, #80a89c) 11%, white 89%);
+  padding: .85rem 1rem;
+  color: color-mix(in srgb, var(--nv-color-text, #2b2b2b) 82%, white 18%);
+}
+
+.qingzhi-document-html pre {
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--nv-color-gold, #c8a873) 32%, white 68%);
+  border-radius: 14px;
+  background: rgba(246, 243, 239, .72);
+  padding: 1rem;
+}
+
+.qingzhi-document-html code {
+  border-radius: 6px;
+  background: rgba(128, 168, 156, .14);
+  padding: .1em .35em;
+  color: #2f6f62;
+}
+
+.qingzhi-document-html table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid #e1d8cc;
+  border-radius: 14px;
+}
+
+.qingzhi-document-html :where(td, th) {
+  border-right: 1px solid #e1d8cc;
+  border-bottom: 1px solid #e1d8cc;
+  padding: .65rem .8rem;
+  vertical-align: top;
+}
+
+.qingzhi-document-html tr:last-child :where(td, th) {
+  border-bottom: 0;
+}

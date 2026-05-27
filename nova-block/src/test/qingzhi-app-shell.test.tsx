@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import React from 'react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -124,6 +126,8 @@ vi.mock('../store/useNoteStore', () => ({
 
 import App from '../App'
 
+const appSourcePath = resolve(__dirname, '../App.tsx')
+
 describe('QingZhi V9 app shell', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -174,6 +178,13 @@ describe('QingZhi V9 app shell', () => {
     expect(screen.getByTestId('qingzhi-window-minimize')).toBeTruthy()
     expect(screen.getByTestId('qingzhi-window-maximize')).toBeTruthy()
     expect(screen.getByTestId('qingzhi-window-close')).toBeTruthy()
+  })
+
+  it('keeps the inspect entry as a toggle instead of one-way open', () => {
+    const appSource = readFileSync(appSourcePath, 'utf8')
+
+    expect(appSource).toContain("run: () => setIsInspectorOpen((open) => !open)")
+    expect(appSource).toContain("onOpenInspector={() => setIsInspectorOpen((open) => !open)}")
   })
 
   it('exposes a drag region and overflow entries for pomodoro and white noise', () => {

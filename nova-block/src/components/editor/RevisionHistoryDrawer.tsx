@@ -102,6 +102,38 @@ function getRememberedRevisionRows(noteId: number): RevisionMeta[] {
   }
 }
 
+function forgetRevisionRows(noteId: number) {
+  revisionCacheByNoteId.delete(noteId)
+  try {
+    sessionStorage.removeItem(`${REVISION_CACHE_STORAGE_PREFIX}${noteId}`)
+  } catch {
+    // sessionStorage can be unavailable in restricted WebViews.
+  }
+}
+
+function forgetRevisionDetails(noteId: number) {
+  const prefix = `${noteId}:`
+  for (const key of Array.from(revisionDetailCacheByKey.keys())) {
+    if (key.startsWith(prefix)) {
+      revisionDetailCacheByKey.delete(key)
+    }
+  }
+}
+
+export function __resetRevisionHistoryCachesForTests() {
+  revisionCacheByNoteId.clear()
+  revisionDetailCacheByKey.clear()
+  try {
+    for (const key of Object.keys(sessionStorage)) {
+      if (key.startsWith(REVISION_CACHE_STORAGE_PREFIX)) {
+        sessionStorage.removeItem(key)
+      }
+    }
+  } catch {
+    // sessionStorage can be unavailable in restricted WebViews.
+  }
+}
+
 export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: Props) {
   const [revisions, setRevisions] = useState<RevisionMeta[]>([])
   const [loading, setLoading] = useState(false)
@@ -331,6 +363,9 @@ export function RevisionHistoryDrawer({ isOpen, noteId, onClose, onRestored }: P
       // v0.22.0-a hotfix8 · 恢复成功先通知父组件,再关闭抽屉,
       // 避免"立刻重新拉列表"触发的 vault 扫描竞态 404
       onRestored?.(updated)
+      forgetRevisionRows(activeNoteId)
+      forgetRevisionDetails(activeNoteId)
+      setPreviewContent('')
       setError(null)
       await load()
     } catch (err: any) {

@@ -210,7 +210,21 @@ const sanitizeEditorHtml = (html: string) => {
   return DOMPurify.sanitize(stripUnsafeIframes(html), {
     USE_PROFILES: { html: true },
     ADD_TAGS: ['iframe', 'figure', 'figcaption'],
-    ADD_ATTR: ['data-ai-source-card', 'data-embed', 'allow', 'allowfullscreen', 'referrerpolicy', 'loading'],
+    ADD_ATTR: [
+      'data-ai-source-card',
+      'data-embed',
+      'data-upload-id',
+      'allow',
+      'allowfullscreen',
+      'referrerpolicy',
+      'loading',
+      'name',
+      'size',
+      'src',
+      'type',
+      'width',
+      'height',
+    ],
     ALLOW_DATA_ATTR: true,
     FORBID_TAGS: ['script', 'object', 'embed', 'meta', 'link'],
   })

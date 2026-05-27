@@ -26,6 +26,28 @@ export const TableOfContents: React.FC<TableOfContentsProps> = ({
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [activeId, setActiveId] = useState<string | undefined>(propActiveId)
   const isCollapsed = controlledCollapsed ?? internalCollapsed
+  const resolveActiveHeading = useCallback(() => {
+    const stableOutline = outline.filter((item) => !item.id.startsWith('h-pending-'))
+    if (!stableOutline.length) return undefined
+
+    const containerElement = scrollContainerRef?.current
+    const rootTop = containerElement?.getBoundingClientRect().top ?? 0
+    const activationTop = rootTop + 112
+    let nextActiveId: string | undefined
+
+    for (const item of stableOutline) {
+      const element = document.getElementById(item.id)
+      if (!element) continue
+      const top = element.getBoundingClientRect().top
+      if (top <= activationTop) {
+        nextActiveId = item.id
+        continue
+      }
+      break
+    }
+
+    return nextActiveId || stableOutline[0].id
+  }, [outline, scrollContainerRef])
 
   const toggleCollapsed = useCallback(() => {
     const next = !isCollapsed
@@ -38,6 +60,24 @@ export const TableOfContents: React.FC<TableOfContentsProps> = ({
       setActiveId(propActiveId)
     }
   }, [propActiveId])
+
+  useEffect(() => {
+    if (propActiveId) return
+
+    const syncActiveHeading = () => {
+      setActiveId(resolveActiveHeading())
+    }
+    const raf = window.requestAnimationFrame(syncActiveHeading)
+    const container = scrollContainerRef?.current || window
+    container.addEventListener('scroll', syncActiveHeading, { passive: true })
+    window.addEventListener('resize', syncActiveHeading)
+
+    return () => {
+      window.cancelAnimationFrame(raf)
+      container.removeEventListener('scroll', syncActiveHeading)
+      window.removeEventListener('resize', syncActiveHeading)
+    }
+  }, [propActiveId, resolveActiveHeading, scrollContainerRef])
 
   const handleClick = useCallback((id: string) => {
     const element = document.getElementById(id)

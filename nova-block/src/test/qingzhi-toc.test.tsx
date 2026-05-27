@@ -8,6 +8,9 @@ import { TableOfContents } from '../components/novablock/components/TableOfConte
 describe('QingZhi right TOC', () => {
   afterEach(() => {
     cleanup()
+    document.body.innerHTML = ''
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('renders as a right-side reserved panel instead of a floating overlay', () => {
@@ -68,5 +71,30 @@ describe('QingZhi right TOC', () => {
     expect(screen.getByTestId('qingzhi-right-toc-head')).toBeTruthy()
     expect(screen.getByTestId('qingzhi-right-toc-title')).toBeTruthy()
     expect(screen.getAllByTestId('qingzhi-right-toc-toggle')).toHaveLength(1)
+  })
+
+  it('recalculates the active item after switching notes without waiting for another scroll', async () => {
+    vi.stubGlobal('IntersectionObserver', undefined)
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => {
+      callback(0)
+      return 1
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+
+    const firstHeading = document.createElement('h1')
+    firstHeading.id = 'h-first'
+    firstHeading.getBoundingClientRect = () => ({ top: 120, bottom: 160, left: 0, right: 0, width: 0, height: 40, x: 0, y: 120, toJSON: () => ({}) })
+    document.body.appendChild(firstHeading)
+
+    const secondHeading = document.createElement('h1')
+    secondHeading.id = 'h-second'
+    secondHeading.getBoundingClientRect = () => ({ top: 80, bottom: 120, left: 0, right: 0, width: 0, height: 40, x: 0, y: 80, toJSON: () => ({}) })
+    document.body.appendChild(secondHeading)
+
+    const { rerender } = render(<TableOfContents outline={[{ id: 'h-first', text: 'First', level: 1 }]} />)
+    rerender(<TableOfContents outline={[{ id: 'h-second', text: 'Second', level: 1 }]} />)
+
+    expect(await screen.findByText('Second')).toBeTruthy()
+    expect(screen.getByText('Second').closest('button')?.getAttribute('data-active')).toBe('true')
   })
 })

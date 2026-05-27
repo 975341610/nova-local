@@ -696,6 +696,23 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   // v0.22.0 · 版本历史抽屉
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [historyNoteId, setHistoryNoteId] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isHistoryOpen) {
+      if (document.body.dataset.qzDocumentPreviewSuspended === 'true') {
+        delete document.body.dataset.qzDocumentPreviewSuspended;
+        window.dispatchEvent(new CustomEvent('qz:document-preview-resume'));
+      }
+      return;
+    }
+    document.body.dataset.qzDocumentPreviewSuspended = 'true';
+    window.dispatchEvent(new CustomEvent('qz:document-preview-suspend'));
+    return () => {
+      if (document.body.dataset.qzDocumentPreviewSuspended === 'true') {
+        delete document.body.dataset.qzDocumentPreviewSuspended;
+        window.dispatchEvent(new CustomEvent('qz:document-preview-resume'));
+      }
+    };
+  }, [isHistoryOpen]);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   // F1-T3 · Ctrl/Cmd+H toggles find/replace panel
   useEffect(() => {
@@ -802,6 +819,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const blockMenuRef = useRef<HTMLDivElement>(null);
   const emoticonPanelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollTopByNoteIdRef = useRef<Record<string, number>>({});
   const activeDragHandlePosRef = useRef(-1);
   const dragHandleRepositionFrameRef = useRef<number | null>(null);
   const dragInteractionRef = useRef<{ startX: number; startY: number; startTime: number } | null>(null);
@@ -2859,6 +2877,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     if (!editor || !note?.id) return;
     
     if (note.id !== prevNoteId) {
+      if (scrollContainerRef.current && prevNoteId != null) {
+        scrollTopByNoteIdRef.current[String(prevNoteId)] = scrollContainerRef.current.scrollTop;
+      }
+      const nextScrollTop = scrollTopByNoteIdRef.current[String(note.id)] ?? 0;
       const shouldFlushPreviousDraft = isDirtyRef.current || isDirty;
       const draftSnapshot = shouldFlushPreviousDraft ? flushCurrentEditorDraft(prevNoteId) : null;
       const pendingSwitchSave = buildPendingSwitchSavePayload({
@@ -2888,6 +2910,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         });
       }
 
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = nextScrollTop;
+      }
       replaceEditorContentWithoutAutosave(
         stripLeadingDuplicateTitleBlockFromHtml(sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>', note.title),
       );
@@ -2899,8 +2924,13 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       setIsDirty(false);
       setPrevNoteId(note.id);
       updateOutline(editor);
+      requestAnimationFrame(() => {
+        if (!scrollContainerRef.current || latestNoteRef.current?.id !== note.id) return;
+        scrollContainerRef.current.scrollTop = nextScrollTop;
+        scheduleDragHandleReposition();
+      });
     }
-  }, [editor, flushCurrentEditorDraft, isDirty, note, onLiveChange, onNotify, prevNoteId, replaceEditorContentWithoutAutosave, updateOutline]);
+  }, [editor, flushCurrentEditorDraft, isDirty, note, onLiveChange, onNotify, prevNoteId, replaceEditorContentWithoutAutosave, scheduleDragHandleReposition, updateOutline]);
 
   useEffect(() => {
     if (!editor || !note?.id || note.id !== prevNoteId || isDirty || isSavingRef.current) {
@@ -3265,6 +3295,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                     : typeof note?.id === 'number'
                       ? note.id
                       : null;
+                if (isHistoryOpen && historyNoteId === stableNoteId) {
+                  setIsHistoryOpen(false);
+                  setHistoryNoteId(null);
+                  return;
+                }
                 setHistoryNoteId(stableNoteId);
                 setIsHistoryOpen(true);
               }}
@@ -3297,6 +3332,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         ref={scrollContainerRef}
         className="flex-1 overflow-y-auto relative scrollbar-hide pt-0 custom-scrollbar"
         onScroll={() => {
+          const activeScrollNoteId = latestNoteRef.current?.id ?? note?.id;
+          if (activeScrollNoteId != null && scrollContainerRef.current) {
+            scrollTopByNoteIdRef.current[String(activeScrollNoteId)] = scrollContainerRef.current.scrollTop;
+          }
           scheduleDragHandleReposition();
         }}
         onDragEnd={() => {
@@ -4477,6 +4516,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               ),
             );
             latestNoteRef.current = { ...latestNoteRef.current, ...patched } as Note;
+            onLiveChange?.(patched);
             isDirtyRef.current = false;
             setIsDirty(false);
             onNotify?.('已恢复到所选版本', 'success');

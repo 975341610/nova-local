@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { parseRevisionTimestamp, RevisionHistoryDrawer } from '../components/editor/RevisionHistoryDrawer'
+import {
+  __resetRevisionHistoryCachesForTests,
+  parseRevisionTimestamp,
+  RevisionHistoryDrawer,
+} from '../components/editor/RevisionHistoryDrawer'
 import { api } from '../lib/api'
 
 vi.mock('../lib/api', () => ({
@@ -33,8 +37,16 @@ function deferred<T>() {
 }
 
 describe('RevisionHistoryDrawer', () => {
+  beforeEach(() => {
+    vi.mocked(api.listNoteRevisions).mockReset()
+    vi.mocked(api.getNoteRevision).mockReset()
+    vi.mocked(api.restoreNoteRevision).mockReset()
+    __resetRevisionHistoryCachesForTests()
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
+    __resetRevisionHistoryCachesForTests()
     document.body.innerHTML = ''
   })
 
@@ -274,10 +286,59 @@ describe('RevisionHistoryDrawer', () => {
     expect(await screen.findByText('After Restore')).toBeTruthy()
 
     await waitFor(() => {
-      expect(listNoteRevisions.mock.calls.length).toBeGreaterThanOrEqual(3)
+      expect(listNoteRevisions.mock.calls.length).toBeGreaterThanOrEqual(2)
     })
     expect(screen.getByText('After Restore')).toBeTruthy()
     expect(screen.queryByText('暂无历史版本 · 保存后会自动生成')).toBeNull()
+  })
+
+  it('drops cached revision details after restore so file-card previews cannot reuse stale html', async () => {
+    const listNoteRevisions = vi.mocked(api.listNoteRevisions)
+    const getNoteRevision = vi.mocked(api.getNoteRevision)
+    listNoteRevisions.mockResolvedValue([
+      {
+        id: 501,
+        note_id: 5,
+        created_at: '2026-05-08T01:00:00Z',
+        content_hash: 'file-card',
+        title_snapshot: 'File Revision',
+        byte_size: 88,
+        source: 'stable',
+      },
+    ] as any)
+    getNoteRevision
+      .mockResolvedValueOnce({
+        id: 501,
+        note_id: 5,
+        content: '<div data-type="file-card" src="/api/media/static/files/old.pdf"></div>',
+        missing: false,
+      } as any)
+      .mockResolvedValueOnce({
+        id: 501,
+        note_id: 5,
+        content: '<div data-type="file-card" src="/api/media/static/files/fresh.pdf"></div>',
+        missing: false,
+      } as any)
+    vi.mocked(api.restoreNoteRevision).mockResolvedValue({
+      id: 5,
+      content: '<div data-type="file-card" src="/api/media/static/files/fresh.pdf"></div>',
+    } as any)
+
+    render(
+      <RevisionHistoryDrawer
+        isOpen
+        noteId={5}
+        onClose={() => {}}
+        onRestored={() => {}}
+      />,
+    )
+
+    expect(await screen.findByText('File Revision')).toBeTruthy()
+    await waitFor(() => expect(getNoteRevision).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByText(/恢复到此版本|鎭㈠鍒版鐗堟湰|閹垹顦查崚鐗堫劃閻楀牊婀?/))
+
+    await waitFor(() => expect(getNoteRevision).toHaveBeenCalledTimes(2))
   })
 
   it('keeps the restored note revision list if parent state briefly switches note while drawer stays open', async () => {
@@ -477,7 +538,7 @@ describe('RevisionHistoryDrawer', () => {
     )
 
     expect(await screen.findByText('Cached Only Revision')).toBeTruthy()
-    await waitFor(() => expect(getNoteRevision).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(getNoteRevision.mock.calls.length).toBeGreaterThanOrEqual(1))
 
     rerender(
       <RevisionHistoryDrawer

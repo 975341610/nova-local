@@ -82,6 +82,14 @@ app.add_middleware(
  )
 
 
+class CachedAttachmentStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code < 400:
+            response.headers.setdefault("Cache-Control", "public, max-age=86400")
+        return response
+
+
 def validate_runtime_security() -> None:
     run_mode = (settings.run_mode or "desktop_local").strip().lower()
     if run_mode == "server_mode" and not settings.access_token:
@@ -205,7 +213,7 @@ uploads_dir = Path(settings.uploads_path)
 if uploads_dir.exists():
     app.mount("/api/media/files", StaticFiles(directory=uploads_dir), name="media_files_legacy")
     # Use a more specific path to avoid prefix matching other API routes
-    app.mount("/api/media/static/files", StaticFiles(directory=uploads_dir), name="media_files")
+    app.mount("/api/media/static/files", CachedAttachmentStaticFiles(directory=uploads_dir), name="media_files")
 
 app.include_router(router, prefix=settings.api_prefix)
 

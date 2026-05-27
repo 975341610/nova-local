@@ -17,6 +17,7 @@
 
 import DOMPurify from 'dompurify'
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from './aiMarkdown'
+import { formatUrl } from './apiUrl'
 
 function looksLikeHtml(text: string): boolean {
   const sample = text.slice(0, 200).toLowerCase()
@@ -254,6 +255,32 @@ function renderSlider(el: Element): string {
   return staticWidget('图片轮播', `<div class="nv-rw-slider">${tiles}</div>`)
 }
 
+function renderFileCard(el: Element): string {
+  const rawSrc = (el.getAttribute('src') || '').trim()
+  const src = rawSrc ? formatUrl(rawSrc) : ''
+  const name = (el.getAttribute('name') || '附件').trim() || '附件'
+  const size = (el.getAttribute('size') || '').trim()
+  const type = (el.getAttribute('type') || '').trim().toLowerCase()
+  const uploadId = (el.getAttribute('data-upload-id') || '').trim()
+
+  if (!src) {
+    return staticWidget('附件', `<div class="nv-rw-file-card"><strong>${escapeHtml(name)}</strong></div>`)
+  }
+
+  const metaBits = [size, type ? type.toUpperCase() : '', uploadId ? `ID:${uploadId}` : ''].filter(Boolean)
+  const meta = metaBits.length > 0 ? `<div class="nv-rw-file-meta">${escapeHtml(metaBits.join(' 路 '))}</div>` : ''
+
+  return `<div data-reader-widget="true" data-reader-file-card="true">
+    <div class="nv-rw-file-card">
+      <div class="nv-rw-file-head">
+        <div class="nv-rw-file-title">${escapeHtml(name)}</div>
+        <a class="nv-rw-file-link" href="${escapeHtml(src)}" target="_blank" rel="noopener noreferrer">打开</a>
+      </div>
+      ${meta}
+    </div>
+  </div>`
+}
+
 function staticWidget(title: string, bodyHtml: string): string {
   return `<div data-reader-widget="true">
     <div class="nv-rw-title">${escapeHtml(title)}</div>
@@ -285,6 +312,7 @@ function transformWidgets(html: string): string {
   replace('div[data-type="habit-tracker"]', renderHabitTracker)
   replace('div[data-timeline="true"]', renderTimeline)
   replace('div[data-type="slider"]', renderSlider)
+  replace('div[data-type="file-card"]', renderFileCard)
 
   return doc.body.innerHTML
 }
@@ -339,6 +367,7 @@ export function renderReaderHtml(rawContent: string): string {
       'data-images', 'data-upload-id',
       'data-ai-source-card', 'data-embed',
       'data-list-style',
+      'name', 'size', 'src', 'type', 'width', 'height',
       // v0.19.5 · video / audio 播放控件
       'controls', 'muted', 'playsinline', 'autoplay', 'loop', 'preload', 'poster',
       'allow', 'allowfullscreen', 'referrerpolicy', 'loading',

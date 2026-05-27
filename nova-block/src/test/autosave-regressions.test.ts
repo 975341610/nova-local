@@ -114,7 +114,7 @@ describe('autosave regressions', () => {
 
     expect(mainSource).toContain('const CLOSE_WINDOW_RENDERER_FLUSH_TIMEOUT_MS = 5_000;')
     expect(mainSource).not.toContain('const CLOSE_REVISION_FLUSH_TIMEOUT_MS = 5_000;')
-    expect(mainSource).not.toContain('await captureRevisionSnapshotBeforeLocalUpdate')
+    expect(mainSource).toContain('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input);')
     expect(mainSource).not.toContain('await flushPendingRevisionSnapshotTimersWithTimeout()')
     expect(mainSource).toContain('const REVISION_SNAPSHOT_QUEUE_PATH')
     expect(mainSource).toContain('setRevisionSnapshotStatus(noteId,')
@@ -194,5 +194,32 @@ describe('autosave regressions', () => {
     expect(refineCss).toContain('color: var(--nv-color-text, #2b2b2b) !important;')
     expect(refineCss).toContain('opacity: 1 !important;')
     expect(refineCss).toContain('.qz-revision-preview :where(h1, h2, h3, h4, h5, h6, p, li, blockquote, td, th, span, strong, em)')
+  })
+
+  it('stores editor scroll position per note instead of sharing one scrollTop across notes', () => {
+    const editorSource = readFileSync(editorPath, 'utf8')
+    const switchEffectBody = sliceBetween(editorSource, 'if (note.id !== prevNoteId) {', 'replaceEditorContentWithoutAutosave(')
+
+    expect(editorSource).toContain('const scrollTopByNoteIdRef = useRef<Record<string, number>>({});')
+    expect(editorSource).toContain('scrollTopByNoteIdRef.current[String(activeScrollNoteId)] = scrollContainerRef.current.scrollTop;')
+    expect(switchEffectBody).toContain('const nextScrollTop = scrollTopByNoteIdRef.current[String(note.id)] ?? 0;')
+    expect(switchEffectBody).toContain('scrollContainerRef.current.scrollTop = nextScrollTop;')
+  })
+
+  it('lets the revision history toolbar button toggle the open drawer closed', () => {
+    const editorSource = readFileSync(editorPath, 'utf8')
+    const historyButtonBody = sliceBetween(editorSource, 'onOpenHistory={() => {', 'onChangeBackgroundPaper={(type) => {')
+
+    expect(historyButtonBody).toContain('if (isHistoryOpen && historyNoteId === stableNoteId) {')
+    expect(historyButtonBody).toContain('setIsHistoryOpen(false);')
+    expect(historyButtonBody).toContain('setHistoryNoteId(null);')
+  })
+
+  it('updates the outer note store immediately after restoring a revision with attachments', () => {
+    const editorSource = readFileSync(editorPath, 'utf8')
+    const restoredBody = sliceBetween(editorSource, 'onRestored={(updated: any) => {', "window.dispatchEvent(new CustomEvent('nova:notes-invalidate'")
+
+    expect(restoredBody).toContain('const patched: any = { ...updated, content: cleanContent };')
+    expect(restoredBody).toContain('onLiveChange?.(patched);')
   })
 })

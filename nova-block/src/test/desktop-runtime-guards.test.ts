@@ -265,7 +265,7 @@ describe('desktop runtime guards', () => {
     expect(transportSource).toContain('desktop:api-request')
   })
 
-  it('queues revision snapshots outside the desktop local note write critical path', () => {
+  it('captures the pre-save revision before desktop local note writes, then queues stable snapshots', () => {
     const mainPath = path.resolve(__dirname, '../../../electron/main.js')
     const mainSource = fs.readFileSync(mainPath, 'utf8')
     const updateHandlerStart = mainSource.indexOf("'notes:update'")
@@ -279,8 +279,10 @@ describe('desktop runtime guards', () => {
     expect(mainSource).toContain("source: 'pre-save'")
     expect(mainSource).toContain("source: 'stable'")
     expect(mainSource).toContain('const REVISION_FINAL_SNAPSHOT_DELAY_MS = 3_000')
-    expect(updateHandler).toContain('void captureRevisionSnapshotBeforeLocalUpdate(noteId, input);')
-    expect(updateHandler).not.toContain('await captureRevisionSnapshotBeforeLocalUpdate')
+    expect(updateHandler).toContain('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input);')
+    expect(updateHandler.indexOf('await captureRevisionSnapshotBeforeLocalUpdate(noteId, input);')).toBeLessThan(
+      updateHandler.indexOf('fsBridge.updateNote(noteId, input)'),
+    )
     expect(updateHandler.indexOf('scheduleRevisionSnapshotAfterLocalUpdate(noteId, updated)')).toBeGreaterThan(
       updateHandler.indexOf('fsBridge.updateNote(noteId, input)'),
     )
@@ -305,9 +307,22 @@ describe('desktop runtime guards', () => {
     expect(mainSource).toContain('hasQueuedPreSaveSnapshot')
     expect(mainSource).toContain('timeoutMs: REVISION_SNAPSHOT_REQUEST_TIMEOUT_MS')
     expect(mainSource).toContain('function isPermanentRevisionSnapshotError')
-    expect(mainSource).toContain('FOREIGN KEY constraint failed')
+    expect(mainSource).not.toContain("message.includes('FOREIGN KEY constraint failed')")
     expect(mainSource).toContain('if (isPermanentRevisionSnapshotError(error) || item.attempts >= MAX_REVISION_SNAPSHOT_ATTEMPTS)')
     expect(mainSource).toContain('revisionSnapshotQueue.shift();')
+  })
+
+  it('does not create empty stable revision snapshots when a pending note is missing', () => {
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+    const stableStart = mainSource.indexOf('async function captureStableRevisionSnapshot')
+    const stableEnd = mainSource.indexOf('async function flushPendingRevisionSnapshotTimers', stableStart)
+    const stableBody = mainSource.slice(stableStart, stableEnd)
+
+    expect(stableBody).toContain('async function captureStableRevisionSnapshot')
+    expect(stableBody).toContain('const note = pending?.note || await fsBridge.getNote(noteId).catch(() => null);')
+    expect(stableBody).toContain('if (!note) {')
+    expect(stableBody).not.toContain("content: pending?.note?.content || ''")
   })
 
   it('keeps Electron high-DPI rendering enabled for mixed-resolution monitors', () => {

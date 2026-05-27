@@ -74,6 +74,27 @@ describe('AI Markdown rendering', () => {
     expect(html).toContain('https://example.com')
   })
 
+  it('reader renders file-card attachments into a visible static card', () => {
+    const html = renderReaderHtml(
+      '<div data-type="file-card" src="/api/media/static/files/demo.docx" name="demo.docx" size="10240" type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"></div>',
+    )
+
+    expect(html).toContain('data-reader-file-card="true"')
+    expect(html).toContain('demo.docx')
+    expect(html).toContain('href="http://127.0.0.1:8765/api/media/static/files/demo.docx"')
+    expect(html).toContain('<a class="nv-rw-file-link"')
+  })
+
+  it('reader keeps pdf file-card attachments in card mode without inline iframe preview', () => {
+    const html = renderReaderHtml(
+      '<div data-type="file-card" src="/api/media/static/files/demo.pdf" name="demo.pdf" size="69427" type="application/pdf"></div>',
+    )
+
+    expect(html).toContain('data-reader-file-card="true"')
+    expect(html).not.toContain('<iframe')
+    expect(html).toContain('href="http://127.0.0.1:8765/api/media/static/files/demo.pdf"')
+  })
+
   it('converts Markdown table into HTML table', () => {
     const md = `| Name | Age | City |
 | --- | --- | --- |

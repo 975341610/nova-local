@@ -1021,7 +1021,6 @@ function isPermanentRevisionSnapshotError(error) {
   const message = error && error.message ? error.message : String(error || '');
   return (
     message.includes('Note not found') ||
-    message.includes('FOREIGN KEY constraint failed') ||
     message.includes('"status":"skipped"')
   );
 }
@@ -1155,12 +1154,20 @@ function scheduleRevisionSnapshotAfterLocalUpdate(noteId, note) {
   revisionSnapshotTimers.set(noteId, { timer, note });
 }
 
-function captureStableRevisionSnapshot(noteId) {
+async function captureStableRevisionSnapshot(noteId) {
   const pending = revisionSnapshotTimers.get(noteId);
+  if (pending?.timer) {
+    clearTimeout(pending.timer);
+  }
+  revisionSnapshotTimers.delete(noteId);
+  const note = pending?.note || await fsBridge.getNote(noteId).catch(() => null);
+  if (!note) {
+    return drainRevisionSnapshotQueue();
+  }
   enqueueRevisionSnapshot({
     noteId,
-    title: pending?.note?.title || '',
-    content: pending?.note?.content || '',
+    title: note?.title || '',
+    content: note?.content || '',
     source: 'stable',
   });
   return drainRevisionSnapshotQueue();
@@ -1297,7 +1304,7 @@ function registerIpcHandlers() {
     if (typeof input.file_path === 'string') {
       markLocalVaultChange(input.file_path);
     }
-    void captureRevisionSnapshotBeforeLocalUpdate(noteId, input);
+    await captureRevisionSnapshotBeforeLocalUpdate(noteId, input);
     const updated = await fsBridge.updateNote(noteId, input);
     markLocalVaultChange(updated.file_path);
     if (Object.prototype.hasOwnProperty.call(input, 'content')) {
