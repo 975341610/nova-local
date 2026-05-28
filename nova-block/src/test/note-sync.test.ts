@@ -28,8 +28,8 @@ const baseNote: Note = {
 describe('noteSync helpers', () => {
   it('extracts linked note ids from supported link markup', () => {
     expect(
-      extractLinkedNoteIds('<span data-id="4">A</span><span data-wiki-id="9">B</span><span data-id="4">A2</span>'),
-    ).toEqual([4, 9])
+      extractLinkedNoteIds('<span data-id="4">A</span><span data-wiki-id="9">B</span><a data-type="block-link" data-note-id="12" data-block-id="blk-a">C</a><span data-id="4">A2</span>'),
+    ).toEqual([4, 9, 12])
   })
 
   it('detects when a note filename should be synchronized with the title', () => {

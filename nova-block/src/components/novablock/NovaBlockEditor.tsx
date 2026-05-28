@@ -22,7 +22,7 @@ import { StickerLayer } from '../editor/StickerLayer';
 import { StickyNotesLayer } from '../editor/StickyNotesLayer';
 import { StickerPanel } from '../editor/StickerPanel';
 import type { StickerData, StickyNoteData, BackgroundPaperType } from '../../lib/types';
-import { 
+import {
     GripVertical, Bold, Italic, 
     Underline, Eraser, Cpu, Strikethrough, Timer,
     Type, Heading1, Heading2, Heading3, CheckSquare, Table as TableIcon, Code, Quote, Sparkles, Zap, Waves,
@@ -93,6 +93,15 @@ import {
   getDragHandleTargetPosFromPoint,
   shouldKeepDragHandlePositionOnNodeLoss,
 } from './dragHandlePositioning';
+import { useNoteStore } from '../../store/useNoteStore';
+import {
+  clearPendingBlockJump,
+  extractBlockLinkTargets,
+  readPendingBlockJump,
+  type BlockLinkTarget,
+} from '../../lib/novablock/blockLinks';
+import { BlockId } from '../../lib/novablock/extensions/BlockId';
+import { BlockLink } from '../../lib/novablock/extensions/BlockLink';
 
 const ADVANCED_TABLE_CELL_COLORS = [
   { label: '无', value: 'transparent' },
@@ -102,6 +111,14 @@ const ADVANCED_TABLE_CELL_COLORS = [
   { label: '朱砂', value: '#f5dccd' },
   { label: '玉色', value: '#e7f0ec' },
 ];
+
+function escapeCssIdentifier(value: string): string {
+  const css = globalThis.CSS as typeof CSS | undefined;
+  if (css?.escape) {
+    return css.escape(value);
+  }
+  return value.replace(/["\\]/g, '\\$&');
+}
 
 const NOVA_BLOCK_SLASH_ITEMS = [
   {
@@ -679,6 +696,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   isTypewriterOn = false, onToggleTypewriter,
 }) => {
   const { isAiEnabled } = useAI();
+  const allNotes = useNoteStore((state) => state.notes);
   const [isSaving, setIsSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [revisionSnapshotStatus, setRevisionSnapshotStatus] = useState<RevisionSnapshotStatus | null>(null);
@@ -729,6 +747,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   // v0.21.1 · BubbleMenu 两个新 popover 的展开状态（合并高亮+取色）
   const [isTextColorOpen, setIsTextColorOpen] = useState(false);
   const [isHighlightColorOpen, setIsHighlightColorOpen] = useState(false);
+  const [isBlockLinkPickerOpen, setIsBlockLinkPickerOpen] = useState(false);
+  const [blockLinkQuery, setBlockLinkQuery] = useState('');
+  const [blockLinkAnchor, setBlockLinkAnchor] = useState<{ x: number; y: number } | null>(null);
+  const blockLinkSelectionRef = useRef<{ from: number; to: number } | null>(null);
+  const blockLinkPickerRef = useRef<HTMLDivElement>(null);
   const [showAdvancedTableToolbar, setShowAdvancedTableToolbar] = useState(false);
   const [advancedTableSize, setAdvancedTableSize] = useState({ open: false, rows: 4, cols: 4 });
   const [advancedTableEdgeIntent, setAdvancedTableEdgeIntent] = useState<AdvancedTableEdgeIntent>(null);
@@ -951,8 +974,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       mode: 'shallowest',
     }),
     Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
+    BlockId,
     Blockquote,
     CodeBlock,
+    BlockLink,
     Link.configure({ openOnClick: true, autolink: true }),
     Highlight.configure({ multicolor: true }),
     UnderlineExtension,
@@ -1067,6 +1092,19 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     const html = sanitizeLegacyApiUrlsInHtml(note?.content) || '<p></p>';
     return stripLeadingDuplicateTitleBlockFromHtml(html, note?.title);
   }, [note?.content, note?.title]);
+
+  const blockLinkTargets = useMemo(() => {
+    const query = blockLinkQuery.trim().toLowerCase();
+    const targets = extractBlockLinkTargets(allNotes)
+      .filter((target) => Number(target.noteId) !== Number(note?.id) || target.blockId)
+      .slice(0, 300);
+    if (!query) return targets.slice(0, 80);
+    return targets.filter((target) => (
+      target.noteTitle.toLowerCase().includes(query) ||
+      target.label.toLowerCase().includes(query) ||
+      target.preview.toLowerCase().includes(query)
+    )).slice(0, 80);
+  }, [allNotes, blockLinkQuery, note?.id]);
 
   const getAdvancedTableCellPosAtPoint = useCallback((view: any, clientX: number, clientY: number): number | null => {
     if (!view?.state?.doc) return null;
@@ -1209,6 +1247,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       // 寮哄埗杩愯涓€娆?ID 琛ュ叏
       // @ts-ignore
       editor.commands.ensureHeadingIds();
+      editor.commands.ensureBlockIds();
       updateOutline(editor);
       setEditorViewReadyToken((value) => value + 1);
     },
@@ -2853,6 +2892,107 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       startTime: Date.now(),
     };
   };
+
+  const closeBlockLinkPicker = useCallback(() => {
+    setIsBlockLinkPickerOpen(false);
+    setBlockLinkAnchor(null);
+    setBlockLinkQuery('');
+  }, []);
+
+  const openBlockLinkPicker = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!editor || editor.state.selection.empty) {
+      onNotify?.('请先选中一段文字', 'info');
+      return;
+    }
+    const { from, to } = editor.state.selection;
+    blockLinkSelectionRef.current = { from, to };
+    const rect = event.currentTarget.getBoundingClientRect();
+    setBlockLinkAnchor({ x: rect.left + rect.width / 2, y: rect.bottom + 8 });
+    setBlockLinkQuery('');
+    setIsTextColorOpen(false);
+    setIsHighlightColorOpen(false);
+    setIsEmoticonPanelOpen(false);
+    setIsBlockLinkPickerOpen((open) => !open);
+  }, [editor, onNotify]);
+
+  const applyBlockLinkTarget = useCallback((target: BlockLinkTarget) => {
+    if (!editor) return;
+    const selection = blockLinkSelectionRef.current;
+    if (!selection) {
+      closeBlockLinkPicker();
+      return;
+    }
+    editor
+      .chain()
+      .focus()
+      .setTextSelection(selection)
+      .setBlockLink({
+        noteId: target.noteId,
+        blockId: target.blockId,
+        label: `${target.noteTitle} · ${target.label}`,
+      })
+      .run();
+    closeBlockLinkPicker();
+  }, [closeBlockLinkPicker, editor]);
+
+  const scrollToBlockId = useCallback((blockId: string) => {
+    if (!editor || editor.isDestroyed || !blockId) return false;
+    const editorDom = editor.view.dom;
+    const escaped = escapeCssIdentifier(blockId);
+    const target = editorDom.querySelector<HTMLElement>(
+      `[data-block-id="${escaped}"], #${escaped}`,
+    );
+    if (!target) return false;
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('qz-block-jump-flash');
+    window.setTimeout(() => {
+      target.classList.remove('qz-block-jump-flash');
+    }, 1600);
+    return true;
+  }, [editor]);
+
+  useEffect(() => {
+    if (!editor || !note?.id) return;
+
+    const tryPendingJump = () => {
+      const pending = readPendingBlockJump();
+      if (!pending || Number(pending.noteId) !== Number(note.id)) return;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (scrollToBlockId(pending.blockId)) {
+            clearPendingBlockJump();
+          }
+        });
+      });
+    };
+
+    tryPendingJump();
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ noteId?: number; blockId?: string }>).detail;
+      if (!detail || Number(detail.noteId) !== Number(note.id) || !detail.blockId) {
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (scrollToBlockId(detail.blockId!)) {
+          clearPendingBlockJump();
+        }
+      });
+    };
+    window.addEventListener('nova:block-jump-requested', handler);
+    return () => window.removeEventListener('nova:block-jump-requested', handler);
+  }, [editor, note?.id, scrollToBlockId]);
+
+  useEffect(() => {
+    if (!isBlockLinkPickerOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as globalThis.Node | null;
+      if (target && blockLinkPickerRef.current?.contains(target)) return;
+      closeBlockLinkPicker();
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [closeBlockLinkPicker, isBlockLinkPickerOpen]);
   
   // 鎬ц兘鐩戞帶 (uipro 鏍稿績閾佸緥锛氭€ц兘绗竴)
   useEffect(() => {
@@ -2919,6 +3059,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       // 鍒囨崲鍐呭鍚庯紝寮哄埗琛ラ綈 ID 骞舵洿鏂板ぇ绾?
       // @ts-ignore
       editor.commands.ensureHeadingIds();
+      editor.commands.ensureBlockIds();
       latestNoteRef.current = note;
       isDirtyRef.current = false;
       setIsDirty(false);
@@ -2953,6 +3094,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     replaceEditorContentWithoutAutosave(incomingContent);
     // @ts-ignore
     editor.commands.ensureHeadingIds();
+    editor.commands.ensureBlockIds();
     latestNoteRef.current = note;
     isDirtyRef.current = false;
     setIsDirty(false);
@@ -2978,6 +3120,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       replaceEditorContentWithoutAutosave(nextContent);
       // @ts-ignore
       editor.commands.ensureHeadingIds();
+      editor.commands.ensureBlockIds();
       latestNoteRef.current = { ...latestNoteRef.current, ...note, content: detail.content } as Note;
       isDirtyRef.current = false;
       setIsDirty(false);
@@ -4128,6 +4271,19 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                     <LinkIcon size={16} />
                   </button>
 
+                  <button
+                    data-testid="qingzhi-block-link-trigger"
+                    onMouseDown={(e) => { e.preventDefault(); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openBlockLinkPicker(e);
+                    }}
+                    className={`p-2 rounded-xl hover:bg-accent transition-all duration-300 ${isBlockLinkPickerOpen ? 'text-primary bg-primary/10' : 'text-muted-foreground'}`}
+                    title="链接到块"
+                  >
+                    <ListPlus size={16} />
+                  </button>
+
                   {/* v0.21.1 · 文字颜色 */}
                   <button
                     data-color-trigger="text"
@@ -4286,6 +4442,55 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                   </div>
                 </motion.div>
               </BubbleMenu>
+            )}
+
+            {isBlockLinkPickerOpen && blockLinkAnchor && createPortal(
+              <div
+                ref={blockLinkPickerRef}
+                data-testid="qingzhi-block-link-picker"
+                className="qz-block-link-picker"
+                style={{
+                  left: blockLinkAnchor.x,
+                  top: blockLinkAnchor.y,
+                }}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="qz-block-link-picker-head">
+                  <span>链接到块</span>
+                  <button type="button" onClick={closeBlockLinkPicker} aria-label="关闭块链接选择器">
+                    <X size={13} />
+                  </button>
+                </div>
+                <input
+                  value={blockLinkQuery}
+                  onChange={(event) => setBlockLinkQuery(event.target.value)}
+                  autoFocus
+                  placeholder="搜索笔记或块内容..."
+                  className="qz-block-link-picker-input"
+                />
+                <div className="qz-block-link-picker-list">
+                  {blockLinkTargets.length === 0 ? (
+                    <div className="qz-block-link-picker-empty">暂无可链接块。打开并保存旧笔记后会自动生成块锚点。</div>
+                  ) : (
+                    blockLinkTargets.map((target) => (
+                      <button
+                        type="button"
+                        key={`${target.noteId}:${target.blockId}`}
+                        className="qz-block-link-picker-item"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => applyBlockLinkTarget(target)}
+                      >
+                        <span className="qz-block-link-picker-title">{target.label}</span>
+                        <span className="qz-block-link-picker-meta">{target.noteTitle} · {target.type}</span>
+                        {target.preview && target.preview !== target.label && (
+                          <span className="qz-block-link-picker-preview">{target.preview}</span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>,
+              document.body,
             )}
 
             {/* F3 · AI inline popover (Bug 4 fix) — Portal 到 body 避免裁切 */}

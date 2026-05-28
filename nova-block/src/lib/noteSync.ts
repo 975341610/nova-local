@@ -1,6 +1,6 @@
 import type { Note } from './types'
 
-const NOTE_LINK_PATTERNS = [/data-id="(\d+)"/g, /data-wiki-id="(\d+)"/g]
+const NOTE_LINK_PATTERNS = [/data-id="(\d+)"/g, /data-wiki-id="(\d+)"/g, /data-type="block-link"[^>]*data-note-id="(\d+)"/g]
 
 export function extractLinkedNoteIds(content?: string) {
   if (typeof content !== 'string' || !content.trim()) {
