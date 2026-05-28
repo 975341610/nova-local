@@ -1,9 +1,10 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
+import Link from '@tiptap/extension-link'
 
 import type { Note } from '../../lib/types'
 import {
@@ -119,5 +120,30 @@ describe('BlockLink extension', () => {
     expect(html).toContain('data-note-id="3"')
     expect(html).toContain('data-block-id="blk-target"')
     expect(html).toContain('href="nova://block?note=3&amp;block=blk-target')
+  })
+
+  it('intercepts block jump clicks before the normal link handler can open nova protocol externally', () => {
+    const editor = new Editor({
+      extensions: [
+        StarterKit,
+        BlockLink,
+        Link.configure({ openOnClick: true, autolink: true }),
+      ],
+      content: '<p><a data-type="block-link" data-note-id="3" data-block-id="blk-target" href="nova://block?note=3&amp;block=blk-target">跳到目标</a></p>',
+    })
+    document.body.appendChild(editor.view.dom)
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const selectSpy = vi.fn()
+    window.addEventListener('nova-select-note', selectSpy)
+
+    const link = editor.view.dom.querySelector('a[data-type="block-link"]') as HTMLAnchorElement
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+
+    expect(openSpy).not.toHaveBeenCalled()
+    expect(selectSpy).toHaveBeenCalledTimes(1)
+
+    window.removeEventListener('nova-select-note', selectSpy)
+    openSpy.mockRestore()
+    editor.destroy()
   })
 })

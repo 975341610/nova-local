@@ -97,32 +97,42 @@ export const BlockLink = Mark.create<BlockLinkOptions>({
   },
 
   addProseMirrorPlugins() {
+    const openBlockLink = (event: Event): boolean => {
+      const target = event.target as HTMLElement | null
+      const link = target?.closest?.('a[data-type="block-link"]') as HTMLAnchorElement | null
+      const parsed = parseBlockLinkHref(link?.getAttribute('href') || '')
+      if (!parsed) return false
+
+      event.preventDefault()
+      event.stopPropagation()
+      if ('stopImmediatePropagation' in event && typeof event.stopImmediatePropagation === 'function') {
+        event.stopImmediatePropagation()
+      }
+      if (typeof window !== 'undefined') {
+        storePendingBlockJump(parsed)
+        window.dispatchEvent(new CustomEvent('nova-select-note', {
+          detail: {
+            noteId: parsed.noteId,
+            blockId: parsed.blockId,
+            blockLabel: parsed.label,
+          },
+        }))
+        window.dispatchEvent(new CustomEvent('nova:block-jump-requested', {
+          detail: parsed,
+        }))
+      }
+      return true
+    }
+
     return [
       new Plugin({
         key: new PluginKey('qingzhi-block-link-click'),
         props: {
+          handleDOMEvents: {
+            click: (_view, event) => openBlockLink(event),
+          },
           handleClick: (_view, _pos, event) => {
-            const target = event.target as HTMLElement | null
-            const link = target?.closest?.('a[data-type="block-link"]') as HTMLAnchorElement | null
-            const parsed = parseBlockLinkHref(link?.getAttribute('href') || '')
-            if (!parsed) return false
-
-            event.preventDefault()
-            event.stopPropagation()
-            if (typeof window !== 'undefined') {
-              storePendingBlockJump(parsed)
-              window.dispatchEvent(new CustomEvent('nova-select-note', {
-                detail: {
-                  noteId: parsed.noteId,
-                  blockId: parsed.blockId,
-                  blockLabel: parsed.label,
-                },
-              }))
-              window.dispatchEvent(new CustomEvent('nova:block-jump-requested', {
-                detail: parsed,
-              }))
-            }
-            return true
+            return openBlockLink(event)
           },
         },
       }),
