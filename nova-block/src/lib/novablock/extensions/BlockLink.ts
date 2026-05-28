@@ -1,7 +1,7 @@
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
-import { buildBlockLinkHref, parseBlockLinkHref, storePendingBlockJump } from '../blockLinks'
+import { parseBlockLinkHref, storePendingBlockJump } from '../blockLinks'
 
 export type BlockLinkOptions = {
   HTMLAttributes: Record<string, unknown>
@@ -52,12 +52,7 @@ export const BlockLink = Mark.create<BlockLinkOptions>({
       href: {
         default: null,
         parseHTML: element => element.getAttribute('href'),
-        renderHTML: attributes => {
-          const noteId = Number(attributes.noteId)
-          const blockId = typeof attributes.blockId === 'string' ? attributes.blockId : ''
-          if (!Number.isFinite(noteId) || !blockId) return {}
-          return { href: buildBlockLinkHref({ noteId, blockId, label: attributes.label }) }
-        },
+        renderHTML: () => ({}),
       },
     }
   },
@@ -72,6 +67,8 @@ export const BlockLink = Mark.create<BlockLinkOptions>({
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
         'data-type': 'block-link',
         class: 'qz-block-link',
+        role: 'link',
+        tabindex: '0',
       }),
       0,
     ]
@@ -97,6 +94,20 @@ export const BlockLink = Mark.create<BlockLinkOptions>({
   },
 
   addProseMirrorPlugins() {
+    const readBlockLink = (link: HTMLAnchorElement | null): ReturnType<typeof parseBlockLinkHref> => {
+      if (!link) return null
+      const noteId = Number(link.getAttribute('data-note-id'))
+      const blockId = link.getAttribute('data-block-id')?.trim()
+      if (Number.isFinite(noteId) && noteId > 0 && blockId) {
+        return {
+          noteId,
+          blockId,
+          label: link.getAttribute('data-label') || undefined,
+        }
+      }
+      return parseBlockLinkHref(link.getAttribute('href') || '')
+    }
+
     const findBlockLink = (event: Event): HTMLAnchorElement | null => {
       const path = typeof event.composedPath === 'function' ? event.composedPath() : []
       for (const item of path) {
@@ -120,7 +131,7 @@ export const BlockLink = Mark.create<BlockLinkOptions>({
 
     const openBlockLink = (event: Event): boolean => {
       const link = findBlockLink(event)
-      const parsed = parseBlockLinkHref(link?.getAttribute('href') || '')
+      const parsed = readBlockLink(link)
       if (!parsed) return false
 
       event.preventDefault()
@@ -147,6 +158,23 @@ export const BlockLink = Mark.create<BlockLinkOptions>({
     return [
       new Plugin({
         key: new PluginKey('qingzhi-block-link-click'),
+        view: view => {
+          const captureClick = (event: MouseEvent) => {
+            openBlockLink(event)
+          }
+          const captureKeydown = (event: KeyboardEvent) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            openBlockLink(event)
+          }
+          view.dom.addEventListener('click', captureClick, true)
+          view.dom.addEventListener('keydown', captureKeydown, true)
+          return {
+            destroy() {
+              view.dom.removeEventListener('click', captureClick, true)
+              view.dom.removeEventListener('keydown', captureKeydown, true)
+            },
+          }
+        },
         props: {
           handleDOMEvents: {
             click: (_view, event) => openBlockLink(event),

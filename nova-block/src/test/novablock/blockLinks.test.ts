@@ -124,7 +124,8 @@ describe('BlockLink extension', () => {
     expect(html).toContain('data-type="block-link"')
     expect(html).toContain('data-note-id="3"')
     expect(html).toContain('data-block-id="blk-target"')
-    expect(html).toContain('href="#nova-block?note=3&amp;block=blk-target')
+    expect(html).not.toContain('href=')
+    expect(html).not.toContain('target=')
   })
 
   it('intercepts block jump clicks before the normal link handler can open nova protocol externally', () => {
@@ -177,6 +178,52 @@ describe('BlockLink extension', () => {
 
     window.removeEventListener('nova-select-note', selectSpy)
     openSpy.mockRestore()
+    editor.destroy()
+  })
+
+  it('captures block jump clicks even if the normal link handler is registered first', () => {
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({ link: false }),
+        Link.configure({ openOnClick: true, autolink: true }),
+        BlockLink,
+      ],
+      content: '<p>跳到目标</p>',
+    })
+    editor.commands.setTextSelection({ from: 1, to: 5 })
+    editor.commands.setBlockLink({ noteId: 3, blockId: 'blk-target', label: '目标块' })
+    document.body.appendChild(editor.view.dom)
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const selectSpy = vi.fn()
+    window.addEventListener('nova-select-note', selectSpy)
+
+    const link = editor.view.dom.querySelector('a[data-type="block-link"]') as HTMLAnchorElement
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+
+    expect(openSpy).not.toHaveBeenCalled()
+    expect(selectSpy).toHaveBeenCalledTimes(1)
+
+    window.removeEventListener('nova-select-note', selectSpy)
+    openSpy.mockRestore()
+    editor.destroy()
+  })
+
+  it('does not let the normal link mark keep a target blank wrapper for persisted block links', () => {
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({ link: false }),
+        BlockLink,
+        Link.configure({ openOnClick: true, autolink: true }),
+      ],
+      content: '<p><a data-type="block-link" data-note-id="3" data-block-id="blk-target" href="#nova-block?note=3&amp;block=blk-target" target="_blank">跳到目标</a></p>',
+    })
+
+    const html = editor.getHTML()
+
+    expect(html).toContain('data-type="block-link"')
+    expect(html).not.toContain('target="_blank"')
+    expect(html).not.toContain('href="#nova-block')
+
     editor.destroy()
   })
 })
