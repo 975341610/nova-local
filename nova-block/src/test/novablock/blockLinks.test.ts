@@ -75,11 +75,16 @@ describe('block link helpers', () => {
     ])
   })
 
-  it('round-trips nova block link hrefs without using normal web urls', () => {
+  it('round-trips block link hrefs without using external custom protocols', () => {
     const href = buildBlockLinkHref({ noteId: 12, blockId: 'blk-abcd', label: '目标块' })
 
-    expect(href).toBe('nova://block?note=12&block=blk-abcd&label=%E7%9B%AE%E6%A0%87%E5%9D%97')
+    expect(href).toBe('#nova-block?note=12&block=blk-abcd&label=%E7%9B%AE%E6%A0%87%E5%9D%97')
     expect(parseBlockLinkHref(href)).toEqual({
+      noteId: 12,
+      blockId: 'blk-abcd',
+      label: '目标块',
+    })
+    expect(parseBlockLinkHref('nova://block?note=12&block=blk-abcd&label=%E7%9B%AE%E6%A0%87%E5%9D%97')).toEqual({
       noteId: 12,
       blockId: 'blk-abcd',
       label: '目标块',
@@ -119,7 +124,7 @@ describe('BlockLink extension', () => {
     expect(html).toContain('data-type="block-link"')
     expect(html).toContain('data-note-id="3"')
     expect(html).toContain('data-block-id="blk-target"')
-    expect(html).toContain('href="nova://block?note=3&amp;block=blk-target')
+    expect(html).toContain('href="#nova-block?note=3&amp;block=blk-target')
   })
 
   it('intercepts block jump clicks before the normal link handler can open nova protocol externally', () => {
@@ -138,6 +143,34 @@ describe('BlockLink extension', () => {
 
     const link = editor.view.dom.querySelector('a[data-type="block-link"]') as HTMLAnchorElement
     link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+
+    expect(openSpy).not.toHaveBeenCalled()
+    expect(selectSpy).toHaveBeenCalledTimes(1)
+
+    window.removeEventListener('nova-select-note', selectSpy)
+    openSpy.mockRestore()
+    editor.destroy()
+  })
+
+  it('intercepts block jump clicks when the real event target is a nested text node', () => {
+    const editor = new Editor({
+      extensions: [
+        StarterKit,
+        BlockLink,
+        Link.configure({ openOnClick: true, autolink: true }),
+      ],
+      content: '<p>跳到目标块</p>',
+    })
+    editor.commands.setTextSelection({ from: 1, to: 5 })
+    editor.commands.setBlockLink({ noteId: 3, blockId: 'blk-target', label: '目标块' })
+    document.body.appendChild(editor.view.dom)
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const selectSpy = vi.fn()
+    window.addEventListener('nova-select-note', selectSpy)
+
+    const link = editor.view.dom.querySelector('a[data-type="block-link"]') as HTMLAnchorElement
+    const textNode = link.firstChild as Text
+    textNode.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
 
     expect(openSpy).not.toHaveBeenCalled()
     expect(selectSpy).toHaveBeenCalledTimes(1)

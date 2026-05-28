@@ -97,9 +97,29 @@ export const BlockLink = Mark.create<BlockLinkOptions>({
   },
 
   addProseMirrorPlugins() {
+    const findBlockLink = (event: Event): HTMLAnchorElement | null => {
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : []
+      for (const item of path) {
+        if (item instanceof HTMLAnchorElement && item.matches('a[data-type="block-link"]')) {
+          return item
+        }
+        if (item instanceof HTMLElement) {
+          const link = item.closest('a[data-type="block-link"]')
+          if (link instanceof HTMLAnchorElement) return link
+        }
+      }
+
+      const target = event.target
+      const element = target instanceof HTMLElement
+        ? target
+        : target instanceof Node
+          ? target.parentElement
+          : null
+      return element?.closest('a[data-type="block-link"]') as HTMLAnchorElement | null
+    }
+
     const openBlockLink = (event: Event): boolean => {
-      const target = event.target as HTMLElement | null
-      const link = target?.closest?.('a[data-type="block-link"]') as HTMLAnchorElement | null
+      const link = findBlockLink(event)
       const parsed = parseBlockLinkHref(link?.getAttribute('href') || '')
       if (!parsed) return false
 

@@ -24,26 +24,38 @@ export function buildBlockLinkHref(target: BlockLinkRef): string {
   if (target.label) {
     params.set('label', target.label)
   }
-  return `nova://block?${params.toString()}`
+  return `#nova-block?${params.toString()}`
 }
 
 export function parseBlockLinkHref(href: string | null | undefined): BlockLinkRef | null {
   if (!href) return null
   try {
+    const trimmed = href.trim()
+    if (trimmed.startsWith('#nova-block?')) {
+      return parseBlockLinkParams(new URLSearchParams(trimmed.slice('#nova-block?'.length)))
+    }
+
     const url = new URL(href)
+    if (url.hash.startsWith('#nova-block?')) {
+      return parseBlockLinkParams(new URLSearchParams(url.hash.slice('#nova-block?'.length)))
+    }
     if (url.protocol !== 'nova:' || url.hostname !== 'block') {
       return null
     }
-    const noteId = Number(url.searchParams.get('note'))
-    const blockId = url.searchParams.get('block')?.trim()
-    if (!Number.isFinite(noteId) || noteId <= 0 || !blockId) {
-      return null
-    }
-    const label = url.searchParams.get('label') || undefined
-    return { noteId, blockId, label }
+    return parseBlockLinkParams(url.searchParams)
   } catch {
     return null
   }
+}
+
+function parseBlockLinkParams(params: URLSearchParams): BlockLinkRef | null {
+  const noteId = Number(params.get('note'))
+  const blockId = params.get('block')?.trim()
+  if (!Number.isFinite(noteId) || noteId <= 0 || !blockId) {
+    return null
+  }
+  const label = params.get('label') || undefined
+  return { noteId, blockId, label }
 }
 
 export function storePendingBlockJump(target: BlockLinkRef): void {
