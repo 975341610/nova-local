@@ -58,9 +58,21 @@ type DocumentPdfFrameCacheEntry = {
   iframe: HTMLIFrameElement;
   wrapper: HTMLDivElement;
   src: string;
+  attached: boolean;
+  lastPlacement?: string;
 };
 
 const documentPdfFrameCache = new Map<string, DocumentPdfFrameCacheEntry>();
+
+type DocumentPdfFrameTarget = {
+  entry: DocumentPdfFrameCacheEntry;
+  host: HTMLElement;
+  isSuspended: () => boolean;
+};
+
+const documentPdfFrameTargets = new Map<string, DocumentPdfFrameTarget>();
+let documentPdfFrameRaf = 0;
+let documentPdfFrameHeartbeat = 0;
 
 const getDocumentPreviewCacheKey = (src: string, name = '', type = '') => `${src}::${name}::${type}`;
 
@@ -84,6 +96,8 @@ const getOrCreateDocumentPreviewCacheEntry = (key: string) => {
 
 export const __resetDocumentPreviewSessionCacheForTests = () => {
   documentPreviewSessionCache.clear();
+  documentPdfFrameTargets.clear();
+  stopDocumentPdfFrameHeartbeatIfIdle();
   documentPdfFrameCache.forEach((entry) => entry.wrapper.remove());
   documentPdfFrameCache.clear();
   document.querySelector('[data-qz-document-pdf-layer]')?.remove();
@@ -117,7 +131,7 @@ const getDocumentPdfLayer = () => {
 const evictDocumentPdfFrameCache = () => {
   while (documentPdfFrameCache.size > MAX_DOCUMENT_PDF_FRAME_CACHE) {
     const hidden = Array.from(documentPdfFrameCache.entries()).find(([, entry]) => {
-      return entry.wrapper.style.visibility === 'hidden';
+      return !entry.attached;
     });
     if (!hidden) break;
     hidden[1].wrapper.remove();
@@ -129,15 +143,19 @@ const getOrCreateDocumentPdfFrame = (key: string, src: string, title: string) =>
   let entry = documentPdfFrameCache.get(key);
   if (!entry) {
     const wrapper = document.createElement('div');
+    wrapper.dataset.qzDocumentPdfWrapper = 'true';
     wrapper.style.position = 'fixed';
+    wrapper.style.left = '0';
+    wrapper.style.top = '0';
     wrapper.style.overflow = 'hidden';
     wrapper.style.borderRadius = '12px';
     wrapper.style.background = '#fff';
     wrapper.style.pointerEvents = 'auto';
     wrapper.style.visibility = 'hidden';
-    wrapper.style.zIndex = '12';
+    wrapper.style.transform = 'translate3d(-10000px, -10000px, 0)';
+    wrapper.style.willChange = 'transform, width, height';
     const iframe = document.createElement('iframe');
-    entry = { iframe, wrapper, src };
+    entry = { iframe, wrapper, src, attached: false };
     entry.iframe.src = src;
     entry.wrapper.appendChild(entry.iframe);
     getDocumentPdfLayer().appendChild(entry.wrapper);
@@ -154,24 +172,88 @@ const getOrCreateDocumentPdfFrame = (key: string, src: string, title: string) =>
   entry.iframe.style.border = '0';
   entry.iframe.style.display = 'block';
   entry.iframe.style.margin = '0';
-  if (!entry.wrapper.parentElement) {
-    getDocumentPdfLayer().appendChild(entry.wrapper);
-  }
   documentPdfFrameCache.set(key, entry);
   evictDocumentPdfFrameCache();
   return entry;
 };
 
+const isRectVisible = (rect: DOMRect) => {
+  const viewportWidth = window.visualViewport?.width || window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0;
+  return rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.bottom > 0 && rect.left < viewportWidth && rect.top < viewportHeight;
+};
+
 const placeDocumentPdfFrame = (entry: DocumentPdfFrameCacheEntry, host: HTMLElement, hidden: boolean) => {
+  if (!host.isConnected) {
+    entry.wrapper.style.visibility = 'hidden';
+    entry.wrapper.style.pointerEvents = 'none';
+    return;
+  }
   const rect = host.getBoundingClientRect();
-  entry.wrapper.style.left = `${rect.left}px`;
-  entry.wrapper.style.top = `${rect.top}px`;
-  entry.wrapper.style.width = `${rect.width}px`;
-  entry.wrapper.style.height = `${rect.height}px`;
-  entry.wrapper.style.visibility = hidden || rect.width <= 0 || rect.height <= 0 ? 'hidden' : 'visible';
-  entry.wrapper.style.pointerEvents = hidden ? 'none' : 'auto';
-  entry.iframe.style.width = `${Math.max(0, rect.width)}px`;
-  entry.iframe.style.height = `${Math.max(0, rect.height)}px`;
+  const shouldHide = hidden || !isRectVisible(rect);
+  const left = Math.round(rect.left * 100) / 100;
+  const top = Math.round(rect.top * 100) / 100;
+  const width = Math.max(0, Math.round(rect.width * 100) / 100);
+  const height = Math.max(0, Math.round(rect.height * 100) / 100);
+  const visibility = shouldHide ? 'hidden' : 'visible';
+  const pointerEvents = shouldHide ? 'none' : 'auto';
+  const placement = `${left}|${top}|${width}|${height}|${visibility}|${pointerEvents}`;
+  if (entry.lastPlacement !== placement) {
+    entry.lastPlacement = placement;
+    entry.wrapper.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+    entry.wrapper.style.width = `${width}px`;
+    entry.wrapper.style.height = `${height}px`;
+    entry.wrapper.style.visibility = visibility;
+    entry.wrapper.style.pointerEvents = pointerEvents;
+  }
+  entry.iframe.style.width = '100%';
+  entry.iframe.style.height = '100%';
+};
+
+const syncDocumentPdfFrames = () => {
+  documentPdfFrameTargets.forEach(({ entry, host, isSuspended }) => {
+    placeDocumentPdfFrame(entry, host, isSuspended());
+  });
+};
+
+const scheduleDocumentPdfFrameSync = () => {
+  if (documentPdfFrameRaf) return;
+  documentPdfFrameRaf = window.requestAnimationFrame(() => {
+    documentPdfFrameRaf = 0;
+    syncDocumentPdfFrames();
+  });
+};
+
+const stopDocumentPdfFrameHeartbeatIfIdle = () => {
+  if (documentPdfFrameTargets.size > 0) return;
+  if (documentPdfFrameRaf) {
+    window.cancelAnimationFrame(documentPdfFrameRaf);
+    documentPdfFrameRaf = 0;
+  }
+  if (documentPdfFrameHeartbeat) {
+    window.clearInterval(documentPdfFrameHeartbeat);
+    documentPdfFrameHeartbeat = 0;
+  }
+};
+
+const ensureDocumentPdfFrameHeartbeat = () => {
+  if (documentPdfFrameHeartbeat) return;
+  documentPdfFrameHeartbeat = window.setInterval(() => {
+    if (document.hidden || documentPdfFrameTargets.size === 0) return;
+    scheduleDocumentPdfFrameSync();
+  }, 80);
+};
+
+const registerDocumentPdfFrameTarget = (key: string, target: DocumentPdfFrameTarget) => {
+  documentPdfFrameTargets.set(key, target);
+  ensureDocumentPdfFrameHeartbeat();
+  scheduleDocumentPdfFrameSync();
+  return () => {
+    if (documentPdfFrameTargets.get(key) === target) {
+      documentPdfFrameTargets.delete(key);
+    }
+    stopDocumentPdfFrameHeartbeatIfIdle();
+  };
 };
 
 function DocumentPdfFrame({
@@ -190,25 +272,50 @@ function DocumentPdfFrame({
   suspended?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const entryRef = useRef<DocumentPdfFrameCacheEntry | null>(null);
+  const suspendedRef = useRef(Boolean(suspended));
+  suspendedRef.current = Boolean(suspended);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const entry = getOrCreateDocumentPdfFrame(cacheKey, src, title);
-    const updatePlacement = () => placeDocumentPdfFrame(entry, host, Boolean(suspended));
-    updatePlacement();
-    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updatePlacement) : null;
+    entryRef.current = entry;
+    entry.attached = true;
+    placeDocumentPdfFrame(entry, host, suspendedRef.current);
+    const unregisterTarget = registerDocumentPdfFrameTarget(cacheKey, {
+      entry,
+      host,
+      isSuspended: () => suspendedRef.current,
+    });
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleDocumentPdfFrameSync) : null;
     resizeObserver?.observe(host);
-    window.addEventListener('resize', updatePlacement);
-    window.addEventListener('scroll', updatePlacement, true);
+    window.addEventListener('resize', scheduleDocumentPdfFrameSync);
+    window.addEventListener('scroll', scheduleDocumentPdfFrameSync, true);
+    window.visualViewport?.addEventListener('resize', scheduleDocumentPdfFrameSync);
+    window.visualViewport?.addEventListener('scroll', scheduleDocumentPdfFrameSync);
     return () => {
+      unregisterTarget();
       resizeObserver?.disconnect();
-      window.removeEventListener('resize', updatePlacement);
-      window.removeEventListener('scroll', updatePlacement, true);
+      window.removeEventListener('resize', scheduleDocumentPdfFrameSync);
+      window.removeEventListener('scroll', scheduleDocumentPdfFrameSync, true);
+      window.visualViewport?.removeEventListener('resize', scheduleDocumentPdfFrameSync);
+      window.visualViewport?.removeEventListener('scroll', scheduleDocumentPdfFrameSync);
+      entry.attached = false;
       entry.wrapper.style.visibility = 'hidden';
       entry.wrapper.style.pointerEvents = 'none';
+      if (entryRef.current === entry) {
+        entryRef.current = null;
+      }
     };
-  }, [cacheKey, src, title, suspended]);
+  }, [cacheKey, src, title]);
+
+  useLayoutEffect(() => {
+    const entry = entryRef.current;
+    const host = hostRef.current;
+    if (!entry || !host) return;
+    placeDocumentPdfFrame(entry, host, Boolean(suspended));
+  }, [suspended]);
 
   return (
     <div

@@ -21,7 +21,7 @@ afterEach(() => {
 })
 
 describe('DocumentAttachmentView', () => {
-  it('keeps inline pdf previews in a stable body layer so the native viewer is not remounted', () => {
+  it('keeps inline pdf previews in a stable portal layer so the native viewer is not remounted', () => {
     const source = readFileSync(resolve(__dirname, '../components/document/DocumentAttachmentView.tsx'), 'utf8')
 
     expect(source).not.toContain('data-qz-document-pdf-host')
@@ -94,8 +94,7 @@ describe('DocumentAttachmentView', () => {
     })
     const iframe = document.body.querySelector('iframe[title="demo.pdf"]') as HTMLIFrameElement | null
     expect(iframe).toBeTruthy()
-    expect(iframe?.parentElement?.style.visibility).toBe('hidden')
-    expect(document.body.querySelector('[data-qz-document-pdf-host]')).toBeNull()
+    expect((iframe?.closest('[data-qz-document-pdf-wrapper]') as HTMLElement | null)?.style.visibility).toBe('hidden')
   })
 
   it('keeps inline pdf previews in normal document flow during overlay scrolling', async () => {
@@ -130,7 +129,7 @@ describe('DocumentAttachmentView', () => {
 
     window.dispatchEvent(new Event('scroll'))
 
-    expect(document.body.querySelector('[data-qz-document-pdf-host]')).toBeNull()
+    expect(document.body.querySelector('[data-qz-document-pdf-layer]')).toBeTruthy()
   })
 
   it('renders fullscreen as a body portal so editor block handles cannot leak over it', () => {
@@ -293,7 +292,7 @@ describe('DocumentAttachmentView', () => {
     await waitFor(() => {
       expect(document.body.querySelector('iframe[title="memo.pdf"]')?.getAttribute('src')).toContain('/api/media/static/files/memo.pdf#toolbar=0&navpanes=0')
     })
-    expect(document.body.querySelector('[data-qz-document-pdf-host]')).toBeNull()
+    expect(document.body.querySelector('[data-qz-document-pdf-layer]')).toBeTruthy()
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
@@ -329,7 +328,7 @@ describe('DocumentAttachmentView', () => {
     const firstIframe = document.body.querySelector('iframe[title="memo.pdf"]')
     first.unmount()
 
-    expect(firstIframe?.parentElement?.style.visibility).toBe('hidden')
+    expect(firstIframe?.closest('[data-qz-document-pdf-layer]')).toBeTruthy()
 
     render(
       <DocumentAttachmentView
@@ -346,6 +345,105 @@ describe('DocumentAttachmentView', () => {
     await waitFor(() => {
       expect(document.body.querySelector('iframe[title="memo.pdf"]')).toBe(firstIframe)
     })
+  })
+
+  it('drives the fixed pdf portal from a flow placeholder instead of moving the iframe into the editor', async () => {
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 12,
+      y: 34,
+      left: 12,
+      top: 34,
+      right: 412,
+      bottom: 554,
+      width: 400,
+      height: 520,
+      toJSON: () => ({}),
+    } as DOMRect)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        kind: 'pdf',
+        title: 'floating.pdf',
+        extension: 'pdf',
+        can_preview: true,
+        page_count: 1,
+        sections: [{ title: 'Page 1', page: 1 }],
+        html: '',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+    render(
+      <DocumentAttachmentView
+        src="/api/media/static/files/floating.pdf"
+        name="floating.pdf"
+        size={12}
+        type="application/pdf"
+        viewMode="preview"
+        onViewModeChange={() => {}}
+        onDelete={() => {}}
+      />,
+    )
+
+    await waitFor(() => expect(document.body.querySelector('iframe[title="floating.pdf"]')).toBeTruthy())
+    const placeholder = screen.getByTestId('document-pdf-frame')
+    const iframe = document.body.querySelector('iframe[title="floating.pdf"]') as HTMLIFrameElement
+    const wrapper = iframe.closest('[data-qz-document-pdf-wrapper]') as HTMLDivElement | null
+
+    expect(placeholder.contains(iframe)).toBe(false)
+    expect(wrapper?.parentElement?.getAttribute('data-qz-document-pdf-layer')).toBe('true')
+    expect(wrapper?.style.transform).toContain('translate3d(12px, 34px, 0)')
+    expect(wrapper?.style.width).toBe('400px')
+    expect(wrapper?.style.height).toBe('520px')
+    rectSpy.mockRestore()
+  })
+
+  it('keeps the fixed pdf portal aligned when editor layout shifts without a scroll event', async () => {
+    let top = 34
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      x: 12,
+      y: top,
+      left: 12,
+      top,
+      right: 412,
+      bottom: top + 520,
+      width: 400,
+      height: 520,
+      toJSON: () => ({}),
+    } as DOMRect))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        kind: 'pdf',
+        title: 'shift.pdf',
+        extension: 'pdf',
+        can_preview: true,
+        page_count: 1,
+        sections: [{ title: 'Page 1', page: 1 }],
+        html: '',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+    render(
+      <DocumentAttachmentView
+        src="/api/media/static/files/shift.pdf"
+        name="shift.pdf"
+        size={12}
+        type="application/pdf"
+        viewMode="preview"
+        onViewModeChange={() => {}}
+        onDelete={() => {}}
+      />,
+    )
+
+    await waitFor(() => expect(document.body.querySelector('iframe[title="shift.pdf"]')).toBeTruthy())
+    const iframe = document.body.querySelector('iframe[title="shift.pdf"]') as HTMLIFrameElement
+    const wrapper = iframe.closest('[data-qz-document-pdf-wrapper]') as HTMLDivElement
+    expect(wrapper.style.transform).toContain('translate3d(12px, 34px, 0)')
+
+    top = 140
+
+    await waitFor(() => {
+      expect(wrapper.style.transform).toContain('translate3d(12px, 140px, 0)')
+    })
+    rectSpy.mockRestore()
   })
 
   it('keeps the same pdf iframe mounted when overlay panels suspend and resume previews', async () => {
