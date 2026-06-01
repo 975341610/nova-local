@@ -537,6 +537,8 @@ function App() {
 
   const [activeView, setActiveView] = useState<'notes'>('notes')
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
+  const [appToast, setAppToast] = useState<{ text: string; tone: 'success' | 'error' | 'info' } | null>(null)
+  const appToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isReaderOpen, setIsReaderOpen] = useState(false)
   const [isGraphOpen, setIsGraphOpen] = useState(false)
@@ -626,6 +628,26 @@ function App() {
       .filter((action): action is NonNullable<typeof action> => Boolean(action)),
     [qingzhiActionById, qingzhiSettings.topbarPins],
   )
+
+  const notifyApp = useCallback((text: string, tone: 'success' | 'error' | 'info' = 'info') => {
+    console.log(`[NovaNotify] ${tone}: ${text}`)
+    setAppToast({ text, tone })
+    if (appToastTimerRef.current) {
+      clearTimeout(appToastTimerRef.current)
+    }
+    appToastTimerRef.current = setTimeout(() => {
+      setAppToast(null)
+      appToastTimerRef.current = null
+    }, tone === 'error' ? 5200 : 3600)
+  }, [])
+
+  useEffect(() => (
+    () => {
+      if (appToastTimerRef.current) {
+        clearTimeout(appToastTimerRef.current)
+      }
+    }
+  ), [])
   const qingzhiOverflowTopbarActions = useMemo(
     () => qingzhiTopbarActions.filter((action) => !qingzhiSettings.topbarPins.includes(action.id as QingzhiTopbarActionId)),
     [qingzhiSettings.topbarPins, qingzhiTopbarActions],
@@ -2095,14 +2117,14 @@ function App() {
                       <CanvasEditor
                         note={currentNote}
                         onSave={handleSave}
-                        onNotify={(text, tone) => console.log(`[NovaNotify] ${tone}: ${text}`)}
+                        onNotify={notifyApp}
                       />
                     ) : (
                       <NovaBlockEditor
                         note={currentNote}
                         onLiveChange={handleLiveChange}
                         onSave={handleSave}
-                        onNotify={(text, tone) => console.log(`[NovaNotify] ${tone}: ${text}`)}
+                        onNotify={notifyApp}
                         onSaveAsTemplate={handleSaveAsTemplate}
                         onOpenMarginNotes={() => setIsMarginOpen(true)}
                         isTypewriterOn={isTypewriterOn}
@@ -2270,6 +2292,29 @@ function App() {
               </InspectorPanel>
 
               <div className="fixed top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent z-50 pointer-events-none" />
+              <AnimatePresence>
+                {appToast && (
+                  <motion.div
+                    key={`${appToast.tone}-${appToast.text}`}
+                    initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10, scale: 0.98 }}
+                    transition={{ duration: 0.18 }}
+                    className={[
+                      'fixed left-1/2 top-24 z-[260] max-w-[min(520px,calc(100vw-48px))] -translate-x-1/2 rounded-2xl border px-4 py-3 text-sm shadow-[0_18px_48px_rgba(43,43,43,0.16)] backdrop-blur-xl',
+                      appToast.tone === 'error'
+                        ? 'border-rose-200 bg-rose-50/95 text-rose-800'
+                        : appToast.tone === 'success'
+                          ? 'border-emerald-200 bg-emerald-50/95 text-emerald-800'
+                          : 'border-[rgba(200,168,115,0.35)] bg-[rgba(246,243,239,0.96)] text-[var(--nv-color-fg)]',
+                    ].join(' ')}
+                    role="status"
+                    aria-live={appToast.tone === 'error' ? 'assertive' : 'polite'}
+                  >
+                    {appToast.text}
+                  </motion.div>
+                )}
+              </AnimatePresence>
               <FloatingMusicCapsule />
               <MusicGlobalUI />
 

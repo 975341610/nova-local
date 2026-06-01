@@ -2944,7 +2944,22 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     );
     if (!target) return false;
 
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const scrollContainer = scrollContainerRef.current;
+    if (scrollContainer) {
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const nextTop = scrollContainer.scrollTop
+        + targetRect.top
+        - containerRect.top
+        - (containerRect.height / 2)
+        + (targetRect.height / 2);
+      scrollContainer.scrollTo({
+        top: Math.max(0, nextTop),
+        behavior: 'smooth',
+      });
+    } else {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
     target.classList.add('qz-block-jump-flash');
     window.setTimeout(() => {
       target.classList.remove('qz-block-jump-flash');
@@ -2985,7 +3000,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     const tryPendingJump = () => {
       const pending = readPendingBlockJump();
       if (!pending || Number(pending.noteId) !== Number(note.id)) return;
-      attemptBlockJump(pending.blockId, pending.label);
+      window.setTimeout(() => attemptBlockJump(pending.blockId, pending.label), 220);
     };
 
     tryPendingJump();
@@ -3055,6 +3070,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         scrollTopByNoteIdRef.current[String(prevNoteId)] = scrollContainerRef.current.scrollTop;
       }
       const nextScrollTop = scrollTopByNoteIdRef.current[String(note.id)] ?? 0;
+      const pendingBlockJump = readPendingBlockJump();
+      const hasPendingBlockJumpForNextNote = Boolean(
+        pendingBlockJump && Number(pendingBlockJump.noteId) === Number(note.id),
+      );
       const shouldFlushPreviousDraft = isDirtyRef.current || isDirty;
       const draftSnapshot = shouldFlushPreviousDraft ? flushCurrentEditorDraft(prevNoteId) : null;
       const pendingSwitchSave = buildPendingSwitchSavePayload({
@@ -3084,7 +3103,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         });
       }
 
-      if (scrollContainerRef.current) {
+      if (scrollContainerRef.current && !hasPendingBlockJumpForNextNote) {
         scrollContainerRef.current.scrollTop = nextScrollTop;
       }
       replaceEditorContentWithoutAutosave(
@@ -3101,7 +3120,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       updateOutline(editor);
       requestAnimationFrame(() => {
         if (!scrollContainerRef.current || latestNoteRef.current?.id !== note.id) return;
-        scrollContainerRef.current.scrollTop = nextScrollTop;
+        if (!hasPendingBlockJumpForNextNote) {
+          scrollContainerRef.current.scrollTop = nextScrollTop;
+        }
         scheduleDragHandleReposition();
       });
     }
