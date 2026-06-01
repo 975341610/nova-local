@@ -864,6 +864,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [prevNoteId, setPrevNoteId] = useState<number | string | undefined>(note?.id);
   const latestNoteRef = useRef(note);
   const [draftTitle, setDraftTitle] = useState(note?.title || '未命名笔记');
+  const titleInputFocusedRef = useRef(false);
   const isSavingRef = useRef(false);
   const isDirtyRef = useRef(false);
   const queuedPayloadRef = useRef<any[]>([]);
@@ -923,6 +924,9 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   }, []);
 
   useEffect(() => {
+    if (titleInputFocusedRef.current && note?.id === latestNoteRef.current?.id) {
+      return;
+    }
     setDraftTitle(note?.title || '未命名笔记');
   }, [note?.id, note?.title]);
 
@@ -3601,8 +3605,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
                   data-testid="qingzhi-note-title-input"
                   className="qz-note-title qz-note-title-input"
                   value={draftTitle}
+                  onFocus={() => { titleInputFocusedRef.current = true; }}
                   onChange={handleTitleInputChange}
-                  onBlur={(event) => commitNoteTitle(event.currentTarget.value)}
+                  onBlur={(event) => {
+                    titleInputFocusedRef.current = false;
+                    commitNoteTitle(event.currentTarget.value);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       event.preventDefault();

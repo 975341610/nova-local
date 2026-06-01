@@ -222,4 +222,14 @@ describe('autosave regressions', () => {
     expect(restoredBody).toContain('const patched: any = { ...updated, content: cleanContent };')
     expect(restoredBody).toContain('onLiveChange?.(patched);')
   })
+
+  it('does not let incoming list title sync overwrite the title draft while editing', () => {
+    const editorSource = readFileSync(editorPath, 'utf8')
+
+    expect(editorSource).toContain('const titleInputFocusedRef = useRef(false);')
+    expect(editorSource).toContain('if (titleInputFocusedRef.current && note?.id === latestNoteRef.current?.id) {')
+    expect(editorSource).toContain('return;\n    }\n    setDraftTitle(note?.title || \'未命名笔记\');')
+    expect(editorSource).toContain('onFocus={() => { titleInputFocusedRef.current = true; }}')
+    expect(editorSource).toContain('titleInputFocusedRef.current = false;')
+  })
 })
