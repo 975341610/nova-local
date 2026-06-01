@@ -6,7 +6,12 @@ import StarterKit from '@tiptap/starter-kit'
 import { describe, expect, it } from 'vitest'
 
 import { EmbedNode, WebEmbedNode } from '../lib/tiptapExtensions'
-import { isVideoEmbedUrl, isWebPageEmbedUrl, normalizeWebEmbedUrl } from '../lib/webEmbed'
+import {
+  isIframeBlockedWebEmbedUrl,
+  isVideoEmbedUrl,
+  isWebPageEmbedUrl,
+  normalizeWebEmbedUrl,
+} from '../lib/webEmbed'
 
 const extensions = [StarterKit, EmbedNode, WebEmbedNode]
 
@@ -48,6 +53,22 @@ describe('WebEmbedNode', () => {
     expect(isWebPageEmbedUrl('#nova-block?note=1&block=abc')).toBe(false)
   })
 
+  it('turns unsupported video-site links into web cards without stealing native video embeds', () => {
+    expect(isVideoEmbedUrl('https://www.bilibili.com/video/BV1xx411c7mD')).toBe(true)
+    expect(isWebPageEmbedUrl('https://www.bilibili.com/video/BV1xx411c7mD')).toBe(false)
+
+    expect(isVideoEmbedUrl('https://v.douyin.com/iAbCdEf/')).toBe(false)
+    expect(isWebPageEmbedUrl('https://v.douyin.com/iAbCdEf/')).toBe(true)
+    expect(isVideoEmbedUrl('https://b23.tv/abcdef')).toBe(false)
+    expect(isWebPageEmbedUrl('https://b23.tv/abcdef')).toBe(true)
+  })
+
+  it('detects websites that block embedded iframe previews', () => {
+    expect(isIframeBlockedWebEmbedUrl('https://chatgpt.com/share/abc')).toBe(true)
+    expect(isIframeBlockedWebEmbedUrl('https://chat.openai.com/c/abc')).toBe(true)
+    expect(isIframeBlockedWebEmbedUrl('https://example.com/post')).toBe(false)
+  })
+
   it('turns an exact pasted page URL into a web card node', () => {
     const editor = new Editor({
       extensions,
@@ -65,6 +86,25 @@ describe('WebEmbedNode', () => {
     expect(event.defaultPrevented).toBe(true)
     expect(editor.getHTML()).toContain('data-type="web-embed-card"')
     expect(editor.getHTML()).toContain('data-url="https://example.com/post"')
+  })
+
+  it('turns unsupported video-site pasted URLs into web cards', () => {
+    const editor = new Editor({
+      extensions,
+      content: '<p>hello</p>',
+    })
+
+    const clipboardData = {
+      getData: (type: string) => (type === 'text/plain' ? 'https://v.douyin.com/iAbCdEf/' : ''),
+    } as DataTransfer
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(event, 'clipboardData', { value: clipboardData })
+
+    editor.view.dom.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(editor.getHTML()).toContain('data-type="web-embed-card"')
+    expect(editor.getHTML()).toContain('data-url="https://v.douyin.com/iAbCdEf/"')
   })
 
   it('lets existing video paste rules keep handling video URLs', () => {

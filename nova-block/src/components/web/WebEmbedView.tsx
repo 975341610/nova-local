@@ -4,7 +4,7 @@ import { ExternalLink, Eye, Maximize2, PanelTop, Rows3, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../lib/api';
-import { defaultWebEmbedTitle, normalizeWebEmbedUrl } from '../../lib/webEmbed';
+import { defaultWebEmbedTitle, isIframeBlockedWebEmbedUrl, normalizeWebEmbedUrl } from '../../lib/webEmbed';
 
 type WebEmbedViewMode = 'card' | 'preview';
 
@@ -23,6 +23,7 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
   const [floating, setFloating] = useState(false);
   const title = String(node.attrs.title || '') || defaultWebEmbedTitle(url);
   const viewMode = (node.attrs.viewMode === 'preview' ? 'preview' : 'card') as WebEmbedViewMode;
+  const iframeBlocked = useMemo(() => isIframeBlockedWebEmbedUrl(url), [url]);
 
   useEffect(() => {
     if (!url || node.attrs.title) return;
@@ -63,6 +64,24 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
     </div>
   );
 
+  const renderBlockedPreview = () => (
+    <div className="flex h-full min-h-[320px] items-center justify-center bg-[#fffdfa] px-6 text-center">
+      <div className="max-w-md rounded-2xl border border-[#e2d8ca] bg-[#fbfaf7] p-6 shadow-sm">
+        <div className="text-base font-semibold text-[#2b2b2b]">此网站不允许内嵌预览</div>
+        <div className="mt-2 text-sm leading-6 text-[#6f675f]">
+          {defaultWebEmbedTitle(url)} 会阻止在笔记或悬浮窗中直接打开。你仍然可以保留链接卡片，或使用默认浏览器查看。
+        </div>
+        <button
+          type="button"
+          className="mt-4 rounded-full border border-[#c8a873] bg-[#fffdfa] px-4 py-2 text-sm font-medium text-[#8a642d] hover:bg-[#f6efe4]"
+          onClick={() => openUrlInBrowser(url)}
+        >
+          在浏览器中打开
+        </button>
+      </div>
+    </div>
+  );
+
   const floatingPreview = floating ? createPortal(
     <div className="fixed inset-0 z-[2147482500] flex items-center justify-center bg-black/20 p-8" contentEditable={false}>
       <div className="flex h-[78vh] w-[min(1120px,86vw)] flex-col overflow-hidden rounded-2xl border border-[#d8c9b5] bg-[#fffdfa] shadow-2xl">
@@ -80,12 +99,14 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
             </button>
           </div>
         </div>
-        <iframe
-          title={title}
-          src={url}
-          className="min-h-0 flex-1 bg-white"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-        />
+        {iframeBlocked ? renderBlockedPreview() : (
+          <iframe
+            title={title}
+            src={url}
+            className="min-h-0 flex-1 bg-white"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
+          />
+        )}
       </div>
     </div>,
     document.body,
@@ -118,12 +139,16 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
               卡片
             </button>
           </div>
-          <iframe
-            title={title}
-            src={url}
-            className="h-[520px] w-full bg-white"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-          />
+          <div className="h-[520px] w-full bg-white">
+            {iframeBlocked ? renderBlockedPreview() : (
+              <iframe
+                title={title}
+                src={url}
+                className="h-full w-full bg-white"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
+              />
+            )}
+          </div>
         </div>
       ) : (
         <button

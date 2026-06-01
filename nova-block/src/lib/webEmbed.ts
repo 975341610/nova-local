@@ -16,16 +16,11 @@ export function isVideoEmbedUrl(value: string): boolean {
   try {
     const url = new URL(normalized);
     const host = url.hostname.replace(/^www\./i, '').toLowerCase();
-    return (
-      host === 'bilibili.com' ||
-      host === 'b23.tv' ||
-      host === 'youtube.com' ||
-      host === 'youtu.be' ||
-      host === 'vimeo.com' ||
-      host === 'douyin.com' ||
-      host === 'iesdouyin.com' ||
-      host === 'tiktok.com'
-    );
+    if (host === 'bilibili.com') return /\/video\/BV[\w]+/i.test(url.pathname);
+    if (host === 'b23.tv') return /^\/BV[\w]+/i.test(url.pathname);
+    if (host === 'youtube.com') return url.pathname === '/watch' && Boolean(url.searchParams.get('v'));
+    if (host === 'youtu.be') return /^\/[\w-]+/i.test(url.pathname);
+    return false;
   } catch {
     return false;
   }
@@ -44,5 +39,23 @@ export function defaultWebEmbedTitle(value: string): string {
     return url.hostname.replace(/^www\./i, '') || normalized;
   } catch {
     return normalized;
+  }
+}
+
+export function isIframeBlockedWebEmbedUrl(value: string): boolean {
+  const normalized = normalizeWebEmbedUrl(value);
+  if (!normalized) return false;
+  try {
+    const host = new URL(normalized).hostname.replace(/^www\./i, '').toLowerCase();
+    return [
+      'chatgpt.com',
+      'chat.openai.com',
+      'claude.ai',
+      'gemini.google.com',
+      'notebooklm.google.com',
+      'accounts.google.com',
+    ].some((blockedHost) => host === blockedHost || host.endsWith(`.${blockedHost}`));
+  } catch {
+    return false;
   }
 }
