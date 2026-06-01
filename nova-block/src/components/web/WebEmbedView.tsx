@@ -1,6 +1,6 @@
 import type { NodeViewProps } from '@tiptap/react';
 import { NodeViewWrapper } from '@tiptap/react';
-import { ExternalLink, Eye, Maximize2, PanelTop, Rows3, X } from 'lucide-react';
+import { ExternalLink, Eye, Maximize2, PanelTop, RefreshCw, Rows3, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../lib/api';
@@ -25,6 +25,7 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
   const url = useMemo(() => normalizeWebEmbedUrl(rawUrl) || rawUrl, [rawUrl]);
   const [floating, setFloating] = useState(false);
   const [previewState, setPreviewState] = useState<PreviewState>('idle');
+  const [reloadNonce, setReloadNonce] = useState(0);
   const title = String(node.attrs.title || '') || defaultWebEmbedTitle(url);
   const viewMode = (node.attrs.viewMode === 'preview' ? 'preview' : 'card') as WebEmbedViewMode;
   const iframeBlocked = useMemo(() => isIframeBlockedWebEmbedUrl(url), [url]);
@@ -61,10 +62,17 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
     return () => {
       window.clearTimeout(timer);
     };
-  }, [iframeBlocked, previewActive, url]);
+  }, [iframeBlocked, previewActive, reloadNonce, url]);
 
   const setMode = (mode: WebEmbedViewMode) => {
     updateAttributes({ viewMode: mode });
+  };
+
+  const reloadPreview = () => {
+    if (previewActive && !iframeBlocked) {
+      setPreviewState('loading');
+    }
+    setReloadNonce((current) => current + 1);
   };
 
   const renderToolbar = () => (
@@ -78,9 +86,21 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
       <button className={buttonClass} type="button" title="悬浮预览" onClick={() => setFloating(true)}>
         <Maximize2 size={16} />
       </button>
+      <button className={buttonClass} type="button" title="刷新网页" onClick={reloadPreview}>
+        <RefreshCw size={16} />
+      </button>
       <button className={buttonClass} type="button" title="在浏览器中打开" onClick={() => openUrlInBrowser(url)}>
         <ExternalLink size={16} />
       </button>
+    </div>
+  );
+
+  const renderLoadingOverlay = () => (
+    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#fffdfa]/68 backdrop-blur-[1px]">
+      <div className="flex items-center gap-3 rounded-full border border-[#e2d8ca] bg-white/90 px-4 py-2 text-sm font-medium text-[#467466] shadow-sm">
+        <RefreshCw className="animate-spin" size={16} />
+        <span>正在加载网页预览...</span>
+      </div>
     </div>
   );
 
@@ -105,14 +125,18 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
   const renderPreviewFrame = (className: string) => {
     if (shouldShowBlockedPreview) return renderBlockedPreview();
     return (
-      <iframe
-        title={title}
-        src={url}
-        className={className}
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-        onLoad={() => setPreviewState('loaded')}
-        onError={() => setPreviewState('failed')}
-      />
+      <div className={`relative overflow-hidden ${className}`}>
+        <iframe
+          key={`${url}-${reloadNonce}`}
+          title={title}
+          src={url}
+          className="h-full w-full bg-white"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
+          onLoad={() => setPreviewState('loaded')}
+          onError={() => setPreviewState('failed')}
+        />
+        {previewState === 'loading' ? renderLoadingOverlay() : null}
+      </div>
     );
   };
 
@@ -127,6 +151,9 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
           <div className="flex items-center gap-1">
             <button className={buttonClass} type="button" title="在浏览器中打开" onClick={() => openUrlInBrowser(url)}>
               <ExternalLink size={16} />
+            </button>
+            <button className={buttonClass} type="button" title="刷新网页" onClick={reloadPreview}>
+              <RefreshCw size={16} />
             </button>
             <button className={buttonClass} type="button" title="关闭" onClick={() => setFloating(false)}>
               <X size={16} />

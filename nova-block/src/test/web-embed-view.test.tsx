@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebEmbedView } from '../components/web/WebEmbedView'
 
@@ -88,5 +88,36 @@ describe('WebEmbedView', () => {
     })
 
     expect(screen.queryByText('此网站不允许内嵌预览')).toBeNull()
+  })
+
+  it('shows a loading indicator until the iframe load event fires', () => {
+    vi.useFakeTimers()
+    render(<WebEmbedView {...makeProps('https://example.com/post')} />)
+
+    expect(screen.getByText('正在加载网页预览...')).toBeTruthy()
+
+    const iframe = document.querySelector('iframe[src="https://example.com/post"]') as HTMLIFrameElement
+    act(() => {
+      iframe.dispatchEvent(new Event('load'))
+    })
+
+    expect(screen.queryByText('正在加载网页预览...')).toBeNull()
+  })
+
+  it('reloads the preview iframe from the toolbar refresh button', () => {
+    vi.useFakeTimers()
+    render(<WebEmbedView {...makeProps('https://example.com/post')} />)
+
+    const before = document.querySelector('iframe[src="https://example.com/post"]') as HTMLIFrameElement
+    act(() => {
+      before.dispatchEvent(new Event('load'))
+    })
+    expect(screen.queryByText('正在加载网页预览...')).toBeNull()
+
+    fireEvent.click(screen.getByTitle('刷新网页'))
+
+    const after = document.querySelector('iframe[src="https://example.com/post"]') as HTMLIFrameElement
+    expect(after).not.toBe(before)
+    expect(screen.getByText('正在加载网页预览...')).toBeTruthy()
   })
 })
