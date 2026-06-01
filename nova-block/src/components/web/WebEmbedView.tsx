@@ -9,7 +9,7 @@ import { defaultWebEmbedTitle, isIframeBlockedWebEmbedUrl, normalizeWebEmbedUrl 
 type WebEmbedViewMode = 'card' | 'preview';
 type PreviewState = 'idle' | 'loading' | 'loaded' | 'failed';
 
-const PREVIEW_TIMEOUT_MS = 6000;
+const PREVIEW_TIMEOUT_MS = 20000;
 
 const buttonClass =
   'inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#467466] transition hover:bg-[#e7eee8] hover:text-[#2f6f62]';

@@ -48,11 +48,17 @@ describe('WebEmbedView', () => {
       vi.advanceTimersByTime(6500)
     })
 
+    expect(screen.queryByText('此网站不允许内嵌预览')).toBeNull()
+
+    act(() => {
+      vi.advanceTimersByTime(14000)
+    })
+
     expect(screen.getByText('此网站不允许内嵌预览')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: '在浏览器中打开' }).length).toBeGreaterThan(0)
   })
 
-  it('falls back from a generic blank iframe after a short timeout', () => {
+  it('falls back from a generic blank iframe after the full timeout', () => {
     vi.useFakeTimers()
     render(<WebEmbedView {...makeProps('https://example.com/post')} />)
 
@@ -62,6 +68,25 @@ describe('WebEmbedView', () => {
       vi.advanceTimersByTime(6500)
     })
 
+    expect(screen.queryByText('此网站不允许内嵌预览')).toBeNull()
+
+    act(() => {
+      vi.advanceTimersByTime(14000)
+    })
+
     expect(screen.getByText('此网站不允许内嵌预览')).toBeTruthy()
+  })
+
+  it('does not fall back after the iframe load event fires', () => {
+    vi.useFakeTimers()
+    render(<WebEmbedView {...makeProps('https://example.com/post')} />)
+
+    const iframe = document.querySelector('iframe[src="https://example.com/post"]') as HTMLIFrameElement
+    act(() => {
+      iframe.dispatchEvent(new Event('load'))
+      vi.advanceTimersByTime(25000)
+    })
+
+    expect(screen.queryByText('此网站不允许内嵌预览')).toBeNull()
   })
 })
