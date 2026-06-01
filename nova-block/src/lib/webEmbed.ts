@@ -45,25 +45,5 @@ export function defaultWebEmbedTitle(value: string): string {
 export function isIframeBlockedWebEmbedUrl(value: string): boolean {
   const normalized = normalizeWebEmbedUrl(value);
   if (!normalized) return false;
-  try {
-    const host = new URL(normalized).hostname.replace(/^www\./i, '').toLowerCase();
-    return [
-      'chatgpt.com',
-      'chat.openai.com',
-      'claude.ai',
-      'gemini.google.com',
-      'notebooklm.google.com',
-      'accounts.google.com',
-      'github.com',
-      'gist.github.com',
-      'douyin.com',
-      'iesdouyin.com',
-      'v.douyin.com',
-      'tiktok.com',
-      'bilibili.com',
-      'b23.tv',
-    ].some((blockedHost) => host === blockedHost || host.endsWith(`.${blockedHost}`));
-  } catch {
-    return false;
-  }
+  return false;
 }

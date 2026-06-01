@@ -63,12 +63,12 @@ describe('WebEmbedNode', () => {
     expect(isWebPageEmbedUrl('https://b23.tv/abcdef')).toBe(true)
   })
 
-  it('detects websites that block embedded iframe previews', () => {
-    expect(isIframeBlockedWebEmbedUrl('https://chatgpt.com/share/abc')).toBe(true)
-    expect(isIframeBlockedWebEmbedUrl('https://chat.openai.com/c/abc')).toBe(true)
-    expect(isIframeBlockedWebEmbedUrl('https://github.com/975341610/nova-local')).toBe(true)
-    expect(isIframeBlockedWebEmbedUrl('https://v.douyin.com/iAbCdEf/')).toBe(true)
-    expect(isIframeBlockedWebEmbedUrl('https://www.douyin.com/video/123')).toBe(true)
+  it('does not use a preset blocked-site list for iframe previews', () => {
+    expect(isIframeBlockedWebEmbedUrl('https://chatgpt.com/share/abc')).toBe(false)
+    expect(isIframeBlockedWebEmbedUrl('https://chat.openai.com/c/abc')).toBe(false)
+    expect(isIframeBlockedWebEmbedUrl('https://github.com/975341610/nova-local')).toBe(false)
+    expect(isIframeBlockedWebEmbedUrl('https://v.douyin.com/iAbCdEf/')).toBe(false)
+    expect(isIframeBlockedWebEmbedUrl('https://www.douyin.com/video/123')).toBe(false)
     expect(isIframeBlockedWebEmbedUrl('https://example.com/post')).toBe(false)
   })
 

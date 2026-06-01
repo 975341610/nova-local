@@ -37,8 +37,16 @@ afterEach(() => {
 })
 
 describe('WebEmbedView', () => {
-  it('shows the blocked preview fallback for known iframe-blocked sites', () => {
+  it('tries every site in an iframe before falling back', () => {
+    vi.useFakeTimers()
     render(<WebEmbedView {...makeProps('https://github.com/975341610/nova-local')} />)
+
+    expect(screen.queryByText('此网站不允许内嵌预览')).toBeNull()
+    expect(document.querySelector('iframe[src="https://github.com/975341610/nova-local"]')).toBeTruthy()
+
+    act(() => {
+      vi.advanceTimersByTime(6500)
+    })
 
     expect(screen.getByText('此网站不允许内嵌预览')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: '在浏览器中打开' }).length).toBeGreaterThan(0)
