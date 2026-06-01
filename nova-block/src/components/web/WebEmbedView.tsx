@@ -7,6 +7,9 @@ import { api } from '../../lib/api';
 import { defaultWebEmbedTitle, isIframeBlockedWebEmbedUrl, normalizeWebEmbedUrl } from '../../lib/webEmbed';
 
 type WebEmbedViewMode = 'card' | 'preview';
+type PreviewState = 'idle' | 'loading' | 'loaded' | 'failed';
+
+const PREVIEW_TIMEOUT_MS = 6000;
 
 const buttonClass =
   'inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#467466] transition hover:bg-[#e7eee8] hover:text-[#2f6f62]';
@@ -21,9 +24,12 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
   const rawUrl = String(node.attrs.url || '');
   const url = useMemo(() => normalizeWebEmbedUrl(rawUrl) || rawUrl, [rawUrl]);
   const [floating, setFloating] = useState(false);
+  const [previewState, setPreviewState] = useState<PreviewState>('idle');
   const title = String(node.attrs.title || '') || defaultWebEmbedTitle(url);
   const viewMode = (node.attrs.viewMode === 'preview' ? 'preview' : 'card') as WebEmbedViewMode;
   const iframeBlocked = useMemo(() => isIframeBlockedWebEmbedUrl(url), [url]);
+  const previewActive = viewMode === 'preview' || floating;
+  const shouldShowBlockedPreview = iframeBlocked || previewState === 'failed';
 
   useEffect(() => {
     if (!url || node.attrs.title) return;
@@ -42,6 +48,20 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
       cancelled = true;
     };
   }, [node.attrs.title, updateAttributes, url]);
+
+  useEffect(() => {
+    if (!previewActive || iframeBlocked) {
+      setPreviewState('idle');
+      return;
+    }
+    setPreviewState('loading');
+    const timer = window.setTimeout(() => {
+      setPreviewState((current) => (current === 'loading' ? 'failed' : current));
+    }, PREVIEW_TIMEOUT_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [iframeBlocked, previewActive, url]);
 
   const setMode = (mode: WebEmbedViewMode) => {
     updateAttributes({ viewMode: mode });
@@ -69,7 +89,7 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
       <div className="max-w-md rounded-2xl border border-[#e2d8ca] bg-[#fbfaf7] p-6 shadow-sm">
         <div className="text-base font-semibold text-[#2b2b2b]">此网站不允许内嵌预览</div>
         <div className="mt-2 text-sm leading-6 text-[#6f675f]">
-          {defaultWebEmbedTitle(url)} 会阻止在笔记或悬浮窗中直接打开。你仍然可以保留链接卡片，或使用默认浏览器查看。
+          {defaultWebEmbedTitle(url)} 可能阻止在笔记或悬浮窗中直接打开。你仍然可以保留链接卡片，或使用默认浏览器查看。
         </div>
         <button
           type="button"
@@ -81,6 +101,20 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
       </div>
     </div>
   );
+
+  const renderPreviewFrame = (className: string) => {
+    if (shouldShowBlockedPreview) return renderBlockedPreview();
+    return (
+      <iframe
+        title={title}
+        src={url}
+        className={className}
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
+        onLoad={() => setPreviewState('loaded')}
+        onError={() => setPreviewState('failed')}
+      />
+    );
+  };
 
   const floatingPreview = floating ? createPortal(
     <div className="fixed inset-0 z-[2147482500] flex items-center justify-center bg-black/20 p-8" contentEditable={false}>
@@ -99,14 +133,7 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
             </button>
           </div>
         </div>
-        {iframeBlocked ? renderBlockedPreview() : (
-          <iframe
-            title={title}
-            src={url}
-            className="min-h-0 flex-1 bg-white"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-          />
-        )}
+        {renderPreviewFrame('min-h-0 flex-1 bg-white')}
       </div>
     </div>,
     document.body,
@@ -140,14 +167,7 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
             </button>
           </div>
           <div className="h-[520px] w-full bg-white">
-            {iframeBlocked ? renderBlockedPreview() : (
-              <iframe
-                title={title}
-                src={url}
-                className="h-full w-full bg-white"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-              />
-            )}
+            {renderPreviewFrame('h-full w-full bg-white')}
           </div>
         </div>
       ) : (

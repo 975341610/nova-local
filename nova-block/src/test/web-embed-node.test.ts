@@ -66,6 +66,9 @@ describe('WebEmbedNode', () => {
   it('detects websites that block embedded iframe previews', () => {
     expect(isIframeBlockedWebEmbedUrl('https://chatgpt.com/share/abc')).toBe(true)
     expect(isIframeBlockedWebEmbedUrl('https://chat.openai.com/c/abc')).toBe(true)
+    expect(isIframeBlockedWebEmbedUrl('https://github.com/975341610/nova-local')).toBe(true)
+    expect(isIframeBlockedWebEmbedUrl('https://v.douyin.com/iAbCdEf/')).toBe(true)
+    expect(isIframeBlockedWebEmbedUrl('https://www.douyin.com/video/123')).toBe(true)
     expect(isIframeBlockedWebEmbedUrl('https://example.com/post')).toBe(false)
   })
 
