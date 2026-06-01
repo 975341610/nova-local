@@ -36,7 +36,7 @@ import pixelMaidUrl from '../../assets/pixel-maid.webp';
 
 import {
     AudioNode, CalloutNode, DatabaseTableCell, DatabaseTableHeader,
-    EmbedNode, ResizableImage, TaskItem, TaskList, VideoNode, WikiLink,
+    EmbedNode, WebEmbedNode, ResizableImage, TaskItem, TaskList, VideoNode, WikiLink,
     SlashCommands, FileNode, Heading, MathInline, MathBlock, Footnote,
     ColumnGroup, Column, HighlightBlock,
     WashiTape, JournalStamp, Blockquote, CodeBlock, FilePlaceholder, FileUpload,
@@ -997,6 +997,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     AudioNode,
     VideoNode,
     EmbedNode,
+    WebEmbedNode,
     FileNode,
     CalloutNode,
     TimelineBlock,

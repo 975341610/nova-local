@@ -133,6 +133,18 @@ describe('api browser fallback', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('opens web URLs through dedicated Electron IPC so desktop uses the default browser', async () => {
+    const ipcInvoke = vi.fn().mockResolvedValue({ status: 'ok' })
+    ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+
+    await api.openUrl('https://example.com/post')
+
+    expect(ipcInvoke).toHaveBeenCalledWith('system:open-url', { url: 'https://example.com/post' })
+    expect(ipcInvoke).not.toHaveBeenCalledWith('desktop:api-request', expect.anything())
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('fetches document previews through the backend preview endpoint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ kind: 'markdown', title: 'demo.md', can_preview: true, page_count: null, sections: [], html: '<p>x</p>' }), {

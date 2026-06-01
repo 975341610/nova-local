@@ -600,6 +600,20 @@ async function openLocalFile(payload) {
   return { status: 'ok' };
 }
 
+async function openExternalUrl(payload) {
+  const input = ensurePlainObject(payload);
+  const rawUrl = typeof input.url === 'string' ? input.url.trim() : '';
+  if (!rawUrl) {
+    throw new Error('url is required');
+  }
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Only http and https URLs can be opened externally');
+  }
+  await shell.openExternal(parsed.href);
+  return { status: 'ok' };
+}
+
 function runUpdateOllama() {
   const scriptPath = path.join(APP_ROOT, 'ensure_ollama.py');
   if (!fs.existsSync(scriptPath)) {
@@ -1243,6 +1257,7 @@ function registerIpcHandlers() {
     }
   });
   trustedIpcHandle('system:open-file', async (_event, payload) => openLocalFile(payload));
+  trustedIpcHandle('system:open-url', async (_event, payload) => openExternalUrl(payload));
   trustedIpcHandle('system:switch-data-path', async (_event, payload) => switchDataPath(payload));
   trustedIpcHandle('system:import-data', async (_event, payload) => importData(payload));
   trustedIpcHandle('system:update', async (_event, payload) => updateSystem(payload));

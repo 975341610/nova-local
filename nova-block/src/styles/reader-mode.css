@@ -377,6 +377,37 @@ body.reader-mode [data-reader-hide="true"] {
   color: var(--nv-color-fg-subtle);
   text-decoration: line-through;
 }
+.nv-reader-html .nv-rw-file-card,
+.nv-reader-html .nv-rw-web-card {
+  padding: 12px 14px;
+  border: 1px solid rgba(200, 168, 115, 0.28);
+  border-radius: 14px;
+  background: rgba(255, 253, 250, 0.82);
+}
+.nv-reader-html .nv-rw-file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.nv-reader-html .nv-rw-file-title {
+  font-weight: 700;
+  color: #2b2b2b;
+}
+.nv-reader-html .nv-rw-file-meta {
+  margin-top: 4px;
+  word-break: break-all;
+  color: #8b8277;
+  font-size: 0.82em;
+}
+.nv-reader-html .nv-rw-file-link {
+  flex: 0 0 auto;
+  border: 1px solid rgba(200, 168, 115, 0.42);
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: #467466;
+  text-decoration: none;
+}
 .nv-reader-html [data-reader-widget] .nv-rw-kanban {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

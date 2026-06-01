@@ -281,6 +281,28 @@ function renderFileCard(el: Element): string {
   </div>`
 }
 
+function renderWebEmbedCard(el: Element): string {
+  const rawUrl = (el.getAttribute('data-url') || '').trim()
+  const title = (el.getAttribute('data-title') || rawUrl || '网页链接').trim()
+  const viewMode = (el.getAttribute('data-view-mode') || 'card').trim()
+  if (!rawUrl) {
+    return staticWidget('网页链接', '<div class="nv-rw-file-card"><strong>空链接</strong></div>')
+  }
+  const url = escapeHtml(rawUrl)
+  const caption = viewMode === 'preview' ? '网页预览' : '网页卡片'
+  return `<div data-reader-widget="true" data-reader-web-card="true">
+    <div class="nv-rw-web-card">
+      <div class="nv-rw-file-head">
+        <div>
+          <div class="nv-rw-file-title">${escapeHtml(title)}</div>
+          <div class="nv-rw-file-meta">${escapeHtml(caption)} · ${url}</div>
+        </div>
+        <a class="nv-rw-file-link" href="${url}" target="_blank" rel="noopener noreferrer">打开</a>
+      </div>
+    </div>
+  </div>`
+}
+
 function staticWidget(title: string, bodyHtml: string): string {
   return `<div data-reader-widget="true">
     <div class="nv-rw-title">${escapeHtml(title)}</div>
@@ -313,6 +335,7 @@ function transformWidgets(html: string): string {
   replace('div[data-timeline="true"]', renderTimeline)
   replace('div[data-type="slider"]', renderSlider)
   replace('div[data-type="file-card"]', renderFileCard)
+  replace('div[data-type="web-embed-card"]', renderWebEmbedCard)
 
   return doc.body.innerHTML
 }
@@ -365,7 +388,7 @@ export function renderReaderHtml(rawContent: string): string {
       'data-target-date', 'data-title', 'data-show-bubble',
       'data-timeline', 'data-timeline-item', 'data-date',
       'data-images', 'data-upload-id',
-      'data-ai-source-card', 'data-embed',
+      'data-ai-source-card', 'data-embed', 'data-reader-web-card', 'data-url', 'data-view-mode',
       'data-list-style',
       'name', 'size', 'src', 'type', 'width', 'height',
       // v0.19.5 · video / audio 播放控件

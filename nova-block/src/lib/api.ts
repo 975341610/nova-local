@@ -353,6 +353,7 @@ export const api = {
   getSystemVersion: () => invoke<{ version: string; git_commit?: string; build_time?: string; executable?: string }>('system:version', '/system/version'),
   getVaultHealth: () => invoke<VaultHealthReport>('system:vault-health', '/system/vault-health'),
   openFile: (path: string) => invoke('system:open-file', '/system/open-file', { method: 'POST', body: JSON.stringify({ path }) }),
+  openUrl: (url: string) => invoke('system:open-url', '/system/open-url', { method: 'POST', body: JSON.stringify({ url }) }),
   previewDocument: async (payload: { src: string; name?: string }) => {
     const API_BASE = getApiBase();
     const params = new URLSearchParams({ src: payload.src });

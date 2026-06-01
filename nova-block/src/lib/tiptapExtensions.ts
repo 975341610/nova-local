@@ -21,6 +21,8 @@ import { MediaNodeView } from '../components/MediaNodeView';
 import { MathBlockComponent } from '../components/editor/MathBlockComponent';
 import { FootnoteComponent } from '../components/editor/FootnoteComponent';
 import { CodeBlockComponent } from '../components/editor/CodeBlockComponent';
+import { WebEmbedView } from '../components/web/WebEmbedView';
+import { defaultWebEmbedTitle, isWebPageEmbedUrl, normalizeWebEmbedUrl } from './webEmbed';
 
 import { SliderExtension } from '../components/novablock/extensions/SliderExtension';
 import { TextEffect } from '../components/novablock/extensions/TextEffect';
@@ -769,6 +771,69 @@ export const EmbedNode = Node.create({
           return {
             src: `https://www.youtube.com/embed/${match[1]}`,
           };
+        },
+      }),
+    ];
+  },
+});
+
+export const WebEmbedNode = Node.create({
+  name: 'webEmbedNode',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: true,
+  addAttributes() {
+    return {
+      url: {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-url') || element.getAttribute('href') || '',
+        renderHTML: (attributes) => attributes.url ? { 'data-url': attributes.url } : {},
+      },
+      title: {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-title') || '',
+        renderHTML: (attributes) => attributes.title ? { 'data-title': attributes.title } : {},
+      },
+      viewMode: {
+        default: 'card',
+        parseHTML: (element) => element.getAttribute('data-view-mode') === 'preview' ? 'preview' : 'card',
+        renderHTML: (attributes) => ({ 'data-view-mode': attributes.viewMode === 'preview' ? 'preview' : 'card' }),
+      },
+    };
+  },
+  parseHTML() {
+    return [{ tag: 'div[data-type="web-embed-card"]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, {
+      'data-type': 'web-embed-card',
+      class: 'qz-web-embed-card',
+    })];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(WebEmbedView);
+  },
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey('qingzhi-web-embed-paste'),
+        props: {
+          handlePaste: (view, event) => {
+            const text = event.clipboardData?.getData('text/plain')?.trim() || '';
+            const url = normalizeWebEmbedUrl(text);
+            if (!url || !isWebPageEmbedUrl(url)) {
+              return false;
+            }
+            const node = this.type.create({
+              url,
+              title: defaultWebEmbedTitle(url),
+              viewMode: 'card',
+            });
+            view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView());
+            event.preventDefault();
+            return true;
+          },
         },
       }),
     ];
