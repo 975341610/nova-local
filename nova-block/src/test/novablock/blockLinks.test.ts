@@ -11,6 +11,7 @@ import {
   buildBlockLinkHref,
   extractBlockLinkTargets,
   parseBlockLinkHref,
+  resolveBlockLink,
 } from '../../lib/novablock/blockLinks'
 import { BlockId } from '../../lib/novablock/extensions/BlockId'
 import { BlockLink } from '../../lib/novablock/extensions/BlockLink'
@@ -90,6 +91,32 @@ describe('block link helpers', () => {
       label: '目标块',
     })
     expect(parseBlockLinkHref('https://example.com')).toBeNull()
+  })
+
+  it('resolves moved or edited target blocks by stable block id and reports missing targets', () => {
+    const source = { noteId: 7, blockId: 'blk-target', label: '原来的文字' }
+    const notes = [
+      makeNote({
+        id: 7,
+        title: '目标笔记',
+        content: '<p data-block-id="blk-other">前面的块</p><h2 data-block-id="blk-target">已经改名并移动后的标题</h2>',
+      }),
+      makeNote({ id: 8, title: '别的笔记', content: '<p data-block-id="blk-target">同名但不是目标笔记</p>' }),
+    ]
+
+    expect(resolveBlockLink(notes, source)).toEqual(expect.objectContaining({
+      status: 'found',
+      blockId: 'blk-target',
+      label: '原来的文字',
+    }))
+    expect(resolveBlockLink(notes, { noteId: 7, blockId: 'blk-deleted' })).toEqual(expect.objectContaining({
+      status: 'missing-block',
+      blockId: 'blk-deleted',
+    }))
+    expect(resolveBlockLink(notes, { noteId: 99, blockId: 'blk-target' })).toEqual(expect.objectContaining({
+      status: 'missing-note',
+      noteId: 99,
+    }))
   })
 })
 

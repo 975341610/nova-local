@@ -15,6 +15,11 @@ export type BlockLinkRef = {
   label?: string
 }
 
+export type BlockLinkResolution =
+  | { status: 'found'; note: Note; blockId: string; label?: string }
+  | { status: 'missing-block'; note: Note; blockId: string; label?: string }
+  | { status: 'missing-note'; noteId: number; blockId: string; label?: string }
+
 export const PENDING_BLOCK_JUMP_KEY = 'nova.pendingBlockJump'
 
 export function buildBlockLinkHref(target: BlockLinkRef): string {
@@ -81,6 +86,52 @@ export function readPendingBlockJump(): BlockLinkRef | null {
 export function clearPendingBlockJump(): void {
   if (typeof sessionStorage === 'undefined') return
   sessionStorage.removeItem(PENDING_BLOCK_JUMP_KEY)
+}
+
+export function resolveBlockLink(notes: Note[], target: BlockLinkRef): BlockLinkResolution {
+  const note = notes.find(item => (
+    Number(item.id) === Number(target.noteId) &&
+    !item.deleted_at &&
+    !item.is_folder
+  ))
+  if (!note) {
+    return {
+      status: 'missing-note',
+      noteId: target.noteId,
+      blockId: target.blockId,
+      label: target.label,
+    }
+  }
+
+  if (noteContainsBlockId(note, target.blockId)) {
+    return {
+      status: 'found',
+      note,
+      blockId: target.blockId,
+      label: target.label,
+    }
+  }
+
+  return {
+    status: 'missing-block',
+    note,
+    blockId: target.blockId,
+    label: target.label,
+  }
+}
+
+export function noteContainsBlockId(note: Note, blockId: string): boolean {
+  const parser = typeof DOMParser !== 'undefined' ? new DOMParser() : null
+  const cleanBlockId = blockId.trim()
+  if (!parser || !cleanBlockId || !note.content) return false
+
+  const doc = parser.parseFromString(`<main>${note.content}</main>`, 'text/html')
+  const root = doc.body.querySelector('main')
+  if (!root) return false
+  return Array.from(root.querySelectorAll<HTMLElement>('[data-block-id], [id]')).some(element => (
+    element.getAttribute('data-block-id')?.trim() === cleanBlockId ||
+    element.getAttribute('id')?.trim() === cleanBlockId
+  ))
 }
 
 export function extractBlockLinkTargets(notes: Note[], limit = 500): BlockLinkTarget[] {

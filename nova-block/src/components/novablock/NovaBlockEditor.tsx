@@ -2954,34 +2954,68 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
   useEffect(() => {
     if (!editor || !note?.id) return;
+    let disposed = false;
+
+    const reportMissingBlock = (label?: string) => {
+      if (disposed) return;
+      onNotify?.(
+        label
+          ? `目标块已不存在：${label}。已打开目标笔记。`
+          : '目标块已不存在，已打开目标笔记。',
+        'info',
+      );
+    };
+
+    const attemptBlockJump = (blockId: string, label?: string, attempt = 0) => {
+      requestAnimationFrame(() => {
+        if (disposed) return;
+        if (scrollToBlockId(blockId)) {
+          clearPendingBlockJump();
+          return;
+        }
+        if (attempt < 8) {
+          window.setTimeout(() => attemptBlockJump(blockId, label, attempt + 1), 80);
+          return;
+        }
+        clearPendingBlockJump();
+        reportMissingBlock(label);
+      });
+    };
 
     const tryPendingJump = () => {
       const pending = readPendingBlockJump();
       if (!pending || Number(pending.noteId) !== Number(note.id)) return;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (scrollToBlockId(pending.blockId)) {
-            clearPendingBlockJump();
-          }
-        });
-      });
+      attemptBlockJump(pending.blockId, pending.label);
     };
 
     tryPendingJump();
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ noteId?: number; blockId?: string }>).detail;
+      const detail = (event as CustomEvent<{ noteId?: number; blockId?: string; label?: string; blockLabel?: string }>).detail;
       if (!detail || Number(detail.noteId) !== Number(note.id) || !detail.blockId) {
         return;
       }
-      requestAnimationFrame(() => {
-        if (scrollToBlockId(detail.blockId!)) {
-          clearPendingBlockJump();
-        }
-      });
+      attemptBlockJump(detail.blockId, detail.label || detail.blockLabel);
+    };
+    const failedHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ reason?: string; blockLabel?: string }>).detail;
+      if (detail?.reason === 'missing-note') {
+        clearPendingBlockJump();
+        onNotify?.(
+          detail.blockLabel
+            ? `目标笔记已不存在：${detail.blockLabel}`
+            : '目标笔记已不存在。',
+          'error',
+        );
+      }
     };
     window.addEventListener('nova:block-jump-requested', handler);
-    return () => window.removeEventListener('nova:block-jump-requested', handler);
-  }, [editor, note?.id, scrollToBlockId]);
+    window.addEventListener('nova:block-jump-failed', failedHandler);
+    return () => {
+      disposed = true;
+      window.removeEventListener('nova:block-jump-requested', handler);
+      window.removeEventListener('nova:block-jump-failed', failedHandler);
+    };
+  }, [editor, note?.id, onNotify, scrollToBlockId]);
 
   useEffect(() => {
     if (!isBlockLinkPickerOpen) return;

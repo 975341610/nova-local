@@ -81,6 +81,7 @@ import {
   type QingzhiSettings,
   type QingzhiTopbarActionId,
 } from './lib/qingzhiSettings'
+import { clearPendingBlockJump } from './lib/novablock/blockLinks'
 
 function MusicGlobalUI() {
   const { playlistPopoverAnchor, closePlaylist } = useMusicControls()
@@ -962,11 +963,29 @@ function App() {
     }
 
     const handleSelectNoteEvent = (e: Event) => {
-      const customEvent = e as CustomEvent<{ noteId?: number | string }>
+      const customEvent = e as CustomEvent<{ noteId?: number | string; blockId?: string; blockLabel?: string }>
       const noteId = customEvent.detail?.noteId
       if (noteId) {
+        const numericNoteId = Number(noteId)
+        const targetNote = useNoteStore.getState().notes.find(note => (
+          Number(note.id) === numericNoteId &&
+          !note.deleted_at &&
+          !note.is_folder
+        ))
+        if (!targetNote) {
+          clearPendingBlockJump()
+          window.dispatchEvent(new CustomEvent('nova:block-jump-failed', {
+            detail: {
+              reason: 'missing-note',
+              noteId: numericNoteId,
+              blockId: customEvent.detail?.blockId,
+              blockLabel: customEvent.detail?.blockLabel,
+            },
+          }))
+          return
+        }
         protectedCurrentNoteIdRef.current = null
-        setCurrentNoteId(Number(noteId))
+        setCurrentNoteId(numericNoteId)
         setActiveView('notes')
       }
     }
