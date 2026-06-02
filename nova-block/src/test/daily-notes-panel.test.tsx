@@ -87,4 +87,50 @@ describe('DailyNotesPanel calendar center interactions', () => {
     fireEvent.doubleClick(day)
     expect(onCreateDailyNote).toHaveBeenCalledWith('2026-06-03', expect.stringContaining('2026-06-03'))
   })
+
+  it('shows created and updated note activity for the selected day', () => {
+    render(
+      <DailyNotesPanel
+        isOpen
+        notes={[
+          makeNote({ properties: makePersistedProperties(buildJournalProperties('daily', '2026-06-02')) }),
+          makeNote({
+            id: 20,
+            title: 'Project Brief',
+            tags: [],
+            properties: [],
+            created_at: '2026-06-02T02:00:00Z',
+            updated_at: '2026-06-02T02:00:00Z',
+          }),
+          makeNote({
+            id: 21,
+            title: 'Reading Update',
+            tags: [],
+            properties: [],
+            created_at: '2026-06-01T02:00:00Z',
+            updated_at: '2026-06-02T04:00:00Z',
+          }),
+          makeNote({
+            id: 22,
+            title: 'Older Note',
+            tags: [],
+            properties: [],
+            created_at: '2026-05-31T02:00:00Z',
+            updated_at: '2026-05-31T04:00:00Z',
+          }),
+        ]}
+        onClose={() => {}}
+        onOpenNote={() => {}}
+        onCreateDailyNote={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByLabelText('Select 2026-06-02'))
+
+    expect(screen.getByText('Created notes')).toBeTruthy()
+    expect(screen.getByText('Project Brief')).toBeTruthy()
+    expect(screen.getByText('Updated notes')).toBeTruthy()
+    expect(screen.getByText('Reading Update')).toBeTruthy()
+    expect(screen.queryByText('Older Note')).toBeNull()
+  })
 })

@@ -15,6 +15,13 @@ interface DailyNotesPanelProps {
 
 const weekLabels = ['日', '一', '二', '三', '四', '五', '六']
 
+const timestampToDateKey = (value?: string | null) => {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return formatDailyTitle(date)
+}
+
 export function DailyNotesPanel({
   notes,
   isOpen,
@@ -110,6 +117,23 @@ export function DailyNotesPanel({
   const selectedDateKey = formatDailyTitle(selectedDate)
   const selectedDailyNote = dailyMap.get(selectedDateKey)
   const selectedDuplicateCount = duplicateDailyCounts.get(selectedDateKey) || 0
+  const selectedCreatedNotes = useMemo(
+    () =>
+      notes
+        .filter((note) => !note.is_folder && !getDailyDate(note))
+        .filter((note) => timestampToDateKey(note.created_at) === selectedDateKey)
+        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1)),
+    [notes, selectedDateKey],
+  )
+  const selectedUpdatedNotes = useMemo(
+    () =>
+      notes
+        .filter((note) => !note.is_folder && !getDailyDate(note))
+        .filter((note) => timestampToDateKey(note.updated_at) === selectedDateKey)
+        .filter((note) => timestampToDateKey(note.created_at) !== selectedDateKey)
+        .sort((a, b) => ((a.updated_at || '') < (b.updated_at || '') ? 1 : -1)),
+    [notes, selectedDateKey],
+  )
 
   return (
     <AnimatePresence>
@@ -365,6 +389,24 @@ export function DailyNotesPanel({
                 >
                   This month · {monthlyNotes.length}
                 </div>
+                <div style={{ marginBottom: 12 }}>
+                  <ActivityList
+                    title="Created notes"
+                    notes={selectedCreatedNotes}
+                    onOpenNote={(noteId) => {
+                      onOpenNote(noteId)
+                      onClose()
+                    }}
+                  />
+                  <ActivityList
+                    title="Updated notes"
+                    notes={selectedUpdatedNotes}
+                    onOpenNote={(noteId) => {
+                      onOpenNote(noteId)
+                      onClose()
+                    }}
+                  />
+                </div>
                 {monthlyNotes.length === 0 ? (
                   <div style={{ fontSize: 13, color: 'var(--nv-color-fg-subtle)', lineHeight: 1.6 }}>
                     Double-click a date to create a Daily Note.
@@ -409,6 +451,59 @@ export function DailyNotesPanel({
         </motion.div>
       )}
     </AnimatePresence>
+  )
+}
+
+function ActivityList({
+  title,
+  notes,
+  onOpenNote,
+}: {
+  title: string
+  notes: Note[]
+  onOpenNote: (noteId: number) => void
+}) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div
+        style={{
+          fontSize: 11,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          color: 'var(--nv-color-fg-subtle)',
+          marginBottom: 6,
+        }}
+      >
+        {title}
+      </div>
+      {notes.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--nv-color-fg-subtle)', lineHeight: 1.5 }}>No activity.</div>
+      ) : (
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+          {notes.slice(0, 5).map((note) => (
+            <li key={note.id} style={{ marginBottom: 4 }}>
+              <button
+                className="nv-transition"
+                onClick={() => onOpenNote(note.id)}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '5px 7px',
+                  border: '1px solid var(--nv-color-border)',
+                  background: 'color-mix(in srgb, var(--nv-color-bg) 78%, transparent)',
+                  borderRadius: 'var(--nv-radius-sm)',
+                  fontSize: 12,
+                  color: 'var(--nv-color-fg)',
+                  cursor: 'pointer',
+                }}
+              >
+                {note.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 
