@@ -85,7 +85,7 @@ describe('DailyNotesPanel calendar center interactions', () => {
     expect(onCreateDailyNote).not.toHaveBeenCalled()
 
     fireEvent.doubleClick(day)
-    expect(onCreateDailyNote).toHaveBeenCalledWith('2026-06-03', expect.stringContaining('2026-06-03'))
+    expect(onCreateDailyNote).toHaveBeenCalledWith('2026-06-03', expect.stringContaining('2026年6月3日'))
   })
 
   it('shows created and updated note activity for the selected day', () => {
@@ -127,9 +127,9 @@ describe('DailyNotesPanel calendar center interactions', () => {
 
     fireEvent.click(screen.getByLabelText('Select 2026-06-02'))
 
-    expect(screen.getByText('Created notes')).toBeTruthy()
+    expect(screen.getByText('已创建笔记')).toBeTruthy()
     expect(screen.getByText('Project Brief')).toBeTruthy()
-    expect(screen.getByText('Updated notes')).toBeTruthy()
+    expect(screen.getByText('已更新笔记')).toBeTruthy()
     expect(screen.getByText('Reading Update')).toBeTruthy()
     expect(screen.queryByText('Older Note')).toBeNull()
   })

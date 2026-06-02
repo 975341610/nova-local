@@ -121,7 +121,7 @@ export function DailyRecapPanel({ notes, isOpen, onClose, onOpenNote }: Props) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <Activity size={16} />
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>日记回顾 · Daily Recap</div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>日记回顾</div>
                   <div style={{ fontSize: 11, color: 'var(--nv-color-fg-subtle)' }}>
                     最近 {range} 天 · {filledDays} 天有记录 · {totalWords} 字
                     <span style={{ marginLeft: 8, display: 'inline-flex', alignItems: 'center', gap: 2 }}>

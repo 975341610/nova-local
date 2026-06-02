@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Copy, FilePlus2, Info, Loader2, MessageSquare, Paperclip, Plus, Send, Sparkles, TextCursorInput } from 'lucide-react';
 import { api } from '../../lib/api';
 import { aiMarkdownToHtmlWithFootnotes } from '../../lib/aiMarkdown';
+import { getDefaultNoteParentId } from '../../lib/notesHome';
 import type { Citation, ImportPreviewItem, ImportTemplateId, Note } from '../../lib/types';
 import { useNoteStore } from '../../store/useNoteStore';
 
@@ -405,6 +406,7 @@ const composeGeneratedImportHtml = (
 export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelProps) => {
   const notes = useNoteStore((state) => state.notes);
   const setNotes = useNoteStore((state) => state.setNotes);
+  const defaultNoteParentId = useMemo(() => getDefaultNoteParentId(notes), [notes]);
   const aiImportInputRef = useRef<HTMLInputElement>(null);
   const [isAiImporting, setIsAiImporting] = useState(false);
   const [aiImportFiles, setAiImportFiles] = useState<File[]>([]);
@@ -632,7 +634,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
         tags: ['AI Import'],
         properties: buildImportNoteProperties(generated.source_type, generated.metadata || {}),
         notebook_id: null,
-        parent_id: null,
+        parent_id: defaultNoteParentId,
         is_title_manually_edited: true,
         background_paper: 'none',
         sort_key: 'm',
@@ -887,7 +889,7 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
         tags: ['AI'],
         properties: buildAiAnswerProperties(effectiveAskScope, question, citations),
         notebook_id: null,
-        parent_id: null,
+        parent_id: defaultNoteParentId,
         is_title_manually_edited: true,
         background_paper: 'none',
         sort_key: 'm',

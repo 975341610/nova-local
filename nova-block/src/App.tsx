@@ -39,8 +39,9 @@ import { VaultExportDialog } from './components/panels/VaultExportDialog'
 import { MarginNotesPanel } from './components/panels/MarginNotesPanel'
 import { RichSummaryCardsPanel } from './components/panels/RichSummaryCardsPanel'
 import { TimelineView } from './components/timeline/TimelineView'
-import { buildDailyNoteContent, formatDailyTitle } from './lib/dailyNotes'
+import { buildDailyNoteHtml, formatDailyTitle } from './lib/dailyNotes'
 import { buildJournalProperties, parseDailyTitle as parseJournalDailyTitle } from './lib/journal'
+import { NOTES_HOME_TITLE, getDefaultNoteParentId, getNotesHomeFolder, getRootNotesNeedingHome } from './lib/notesHome'
 import { InspectorPanel } from './components/inspector/InspectorPanel'
 import { useNovaTheme, THEME_META, THEME_LIST } from './contexts/ThemeContext'
 import { buildCorpus, findBacklinks } from './lib/backlinks'
@@ -604,7 +605,7 @@ function App() {
   }, [isTopbarOverflowOpen, openTopbarRuntimePanel])
 
   const qingzhiTopbarActions = useMemo(() => [
-    { id: 'daily', label: '日历', hint: '打开 Daily Notes', Icon: CalendarIcon, run: () => setIsDailyOpen(true) },
+    { id: 'daily', label: '日历', hint: '打开日历与日记', Icon: CalendarIcon, run: () => setIsDailyOpen(true) },
     { id: 'command', label: '命令面板', hint: '打开命令面板', Icon: CommandIcon, run: () => setIsCommandPaletteOpen(true) },
     { id: 'reader', label: '阅读', hint: '进入阅读模式', Icon: BookOpenIcon, run: () => setIsReaderOpen(true) },
     { id: 'inspect', label: '检视', hint: '打开检视面板', Icon: PanelRightIcon, run: () => setIsInspectorOpen((open) => !open) },
@@ -818,6 +819,31 @@ function App() {
 
       localStorage.setItem(LEGACY_MIGRATION_FLAG, '1')
       loadedNotes = await api.listNotes(true)
+    }
+
+    let notesHomeFolder = getNotesHomeFolder(loadedNotes)
+    if (!notesHomeFolder) {
+      const createdHome = await api.createFolder({
+        title: NOTES_HOME_TITLE,
+        notebook_id: null,
+        parent_id: null,
+        tags: [],
+        type: 'note',
+      })
+      notesHomeFolder = mergeNote(undefined, createdHome)
+      loadedNotes = [...loadedNotes, notesHomeFolder]
+    }
+
+    const rootNotesNeedingHome = getRootNotesNeedingHome(loadedNotes, notesHomeFolder.id)
+    if (rootNotesNeedingHome.length > 0) {
+      const movedNotes = await Promise.all(
+        rootNotesNeedingHome.map((note) => api.updateNote(note.id, { parent_id: notesHomeFolder!.id })),
+      )
+      const movedById = new Map(movedNotes.map((note) => [note.id, note]))
+      loadedNotes = loadedNotes.map((note) => {
+        const moved = movedById.get(note.id)
+        return moved ? mergeNote(note, moved) : note
+      })
     }
 
     const prevNotes = useNoteStore.getState().notes
@@ -1232,7 +1258,8 @@ function App() {
     const isCanvas = type === 'canvas'
 
     try {
-      const nextParentId = parentId ? parseInt(parentId, 10) : null
+      const explicitParentId = parentId ? parseInt(parentId, 10) : null
+      const nextParentId = explicitParentId ?? (!isFolder ? getDefaultNoteParentId(useNoteStore.getState().notes) : null)
       const created = isFolder
         ? await api.createFolder({
             title: '无标题文件夹',
@@ -1292,7 +1319,7 @@ function App() {
         type: 'note',
         tags: ['daily'],
         notebook_id: null,
-        parent_id: null,
+        parent_id: getDefaultNoteParentId(useNoteStore.getState().notes),
         is_folder: false,
         is_title_manually_edited: true,
         background_paper: 'none',
@@ -1740,7 +1767,7 @@ function App() {
         setActiveView('notes')
         return
       }
-      const created = await handleCreateDailyNote(key, buildDailyNoteContent(new Date()))
+      const created = await handleCreateDailyNote(key, buildDailyNoteHtml(new Date()))
       if (created) {
         setCurrentNoteId(created.id)
         setActiveView('notes')
@@ -1766,7 +1793,7 @@ function App() {
       },
       {
         id: 'open-daily',
-        label: '打开 Daily Notes 日历',
+        label: '打开日历与日记',
         hint: '按日期浏览或创建每日笔记',
         keywords: ['daily', 'calendar', '日历', '每日'],
         icon: CalendarIcon,
@@ -1774,7 +1801,7 @@ function App() {
       },
       {
         id: 'today-daily',
-        label: '打开今天的 Daily Note',
+        label: '打开今天的日记',
         hint: '若不存在会自动创建',
         keywords: ['today', '今天', 'daily'],
         icon: CalendarIcon,
@@ -1853,8 +1880,8 @@ function App() {
       },
       {
         id: 'open-recap',
-        label: '周回顾 · Daily Recap',
-        hint: '最近 7 天 Daily Notes 摘要',
+        label: '周回顾',
+        hint: '最近 7 天日记摘要',
         keywords: ['recap', 'weekly', '回顾', '总结'],
         icon: ActivityIcon,
         run: () => setIsRecapOpen(true),
@@ -2660,7 +2687,7 @@ function NoteInspectorContent({
             <kbd className="nv-kbd">⌘⇧G</kbd> 图谱
           </li>
           <li>
-            <kbd className="nv-kbd">⌘⇧D</kbd> Daily Notes
+            <kbd className="nv-kbd">⌘⇧D</kbd> 日历与日记
           </li>
         </ul>
       </section>

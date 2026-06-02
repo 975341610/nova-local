@@ -304,7 +304,7 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ note, onUpdate, on
             value={manualTag}
             onChange={(e) => setManualTag(e.target.value)}
             onKeyDown={handleManualAddTag}
-            placeholder="Add tag..."
+            placeholder="添加标签..."
             className="w-20 transition-all bg-transparent text-[11px] text-reflect-text focus:outline-none placeholder:text-reflect-muted/30"
           />
         </div>
@@ -388,7 +388,7 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({ note, onUpdate, on
             onChange={(e) => handleUpdateLocation(e.target.value)}
             onFocus={() => setIsFocused(true)}
             onBlur={handleBlur}
-            placeholder="Add location..."
+            placeholder="添加地点..."
             className="w-full bg-transparent text-[11px] text-reflect-text font-medium focus:outline-none transition-all placeholder:text-reflect-muted/30"
           />
         </div>

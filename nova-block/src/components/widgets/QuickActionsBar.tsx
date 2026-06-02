@@ -109,7 +109,7 @@ export function QuickActionsBar({
       />
       <DockBtn
         actionId="daily"
-        label="Daily"
+        label="日记"
         hint="⌘⇧D"
         icon={<CalendarIcon size={15} strokeWidth={2} />}
         expanded={expanded}

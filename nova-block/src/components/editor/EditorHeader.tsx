@@ -112,11 +112,11 @@ export function EditorHeader(props: EditorHeaderProps) {
 
   const revisionStatusLabel =
     revisionSnapshotStatus?.status === 'failed'
-      ? 'REVISION FAILED'
+      ? '快照失败'
       : revisionSnapshotStatus?.status === 'saving'
-        ? 'REVISION SAVING'
+        ? '快照写入中'
         : revisionSnapshotStatus?.status === 'queued'
-          ? `REVISION QUEUED${revisionSnapshotStatus.queued ? ` ${revisionSnapshotStatus.queued}` : ''}`
+          ? `快照排队${revisionSnapshotStatus.queued ? ` ${revisionSnapshotStatus.queued}` : ''}`
           : null
   const revisionStatusTitle =
     revisionSnapshotStatus?.status === 'failed'
@@ -162,7 +162,7 @@ export function EditorHeader(props: EditorHeaderProps) {
               }`}
             />
             <span className="opacity-70 group-hover:opacity-100">
-              {savePhase === 'saving' ? 'SAVING' : savePhase === 'queued' ? 'QUEUED' : isDirty ? 'UNSAVED' : 'SYNCED'}
+              {savePhase === 'saving' ? '保存中' : savePhase === 'queued' ? '排队中' : isDirty ? '未保存' : '已同步'}
             </span>
             {revisionStatusLabel && (
               <span

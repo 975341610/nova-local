@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildDailyNoteContent } from '../lib/dailyNotes'
+import { buildDailyNoteContent, buildDailyNoteHtml } from '../lib/dailyNotes'
 
 describe('daily note template', () => {
   it('builds the upgraded default daily note sections', () => {
@@ -20,5 +20,15 @@ describe('daily note template', () => {
     expect(content).toContain('## 晚间回顾')
     expect(content).toContain('## AI 今日回顾')
     expect(content).toContain('等待生成，确认后写入。')
+  })
+
+  it('renders daily note content as editor html without duplicating the note title', () => {
+    const html = buildDailyNoteHtml(new Date(2026, 4, 31))
+
+    expect(html).not.toContain('# 2026-05-31')
+    expect(html).not.toContain('<h1')
+    expect(html).toContain('<h2')
+    expect(html).toContain('今日焦点')
+    expect(html).toContain('AI 今日回顾')
   })
 })

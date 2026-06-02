@@ -26,7 +26,7 @@ export const QINGZHI_SETTINGS_STORAGE_KEY = 'qz-settings-v1'
 export const QINGZHI_SETTINGS_EVENT = 'qingzhi-settings-change'
 
 export const QINGZHI_TOPBAR_ACTIONS: QingzhiTopbarActionMeta[] = [
-  { id: 'daily', label: '日历', hint: '打开 Daily Notes' },
+  { id: 'daily', label: '日历', hint: '打开日历与日记' },
   { id: 'command', label: '命令面板', hint: '打开命令面板' },
   { id: 'reader', label: '阅读', hint: '进入阅读模式' },
   { id: 'inspect', label: '检视', hint: '打开右侧检视面板' },

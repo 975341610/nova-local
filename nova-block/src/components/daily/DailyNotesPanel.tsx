@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import type { Note } from '../../lib/types'
-import { buildDailyNoteContent, formatDailyTitle } from '../../lib/dailyNotes'
+import { buildDailyNoteHtml, formatDailyTitle } from '../../lib/dailyNotes'
 import { findDailyNoteByDate, findDailyNotesByDate, getDailyDate } from '../../lib/journal'
 
 interface DailyNotesPanelProps {
@@ -91,7 +91,7 @@ export function DailyNotesPanel({
       onClose()
       return
     }
-    const created = await onCreateDailyNote(key, buildDailyNoteContent(date))
+    const created = await onCreateDailyNote(key, buildDailyNoteHtml(date))
     if (created) {
       onOpenNote(created.id)
       onClose()
@@ -173,7 +173,7 @@ export function DailyNotesPanel({
               }}
             >
               <CalendarIcon size={16} style={{ color: 'var(--nv-color-accent)' }} />
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Daily Notes</div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>日历与日记</div>
               <div style={{ flex: 1 }} />
               <button
                 className="nv-icon-btn"
@@ -272,7 +272,7 @@ export function DailyNotesPanel({
                             />
                             {duplicateCount > 1 && (
                               <span
-                                title={`该日期存在 ${duplicateCount} 篇 Daily Note`}
+                                title={`该日期存在 ${duplicateCount} 篇日记`}
                                 style={{
                                   minWidth: 12,
                                   height: 12,
@@ -311,7 +311,7 @@ export function DailyNotesPanel({
                     marginBottom: 8,
                   }}
                 >
-                  Selected day
+                  选中日期
                 </div>
 
                 <div
@@ -350,14 +350,14 @@ export function DailyNotesPanel({
                       </button>
                       {selectedDuplicateCount > 1 && (
                         <div style={{ marginTop: 6, fontSize: 12, color: 'var(--nv-color-gold, #c8a873)' }}>
-                          {selectedDuplicateCount} Daily Notes on this date
+                          该日期存在 {selectedDuplicateCount} 篇日记
                         </div>
                       )}
                     </>
                   ) : (
                     <>
                       <div style={{ fontSize: 13, color: 'var(--nv-color-fg-subtle)', lineHeight: 1.5 }}>
-                        No Daily Note yet.
+                        该日期还没有日记
                       </div>
                       <button
                         className="nv-transition"
@@ -372,7 +372,7 @@ export function DailyNotesPanel({
                           cursor: 'pointer',
                         }}
                       >
-                        Create
+                        创建日记
                       </button>
                     </>
                   )}
@@ -387,11 +387,11 @@ export function DailyNotesPanel({
                     marginBottom: 8,
                   }}
                 >
-                  This month · {monthlyNotes.length}
+                  本月日记 · {monthlyNotes.length}
                 </div>
                 <div style={{ marginBottom: 12 }}>
                   <ActivityList
-                    title="Created notes"
+                    title="已创建笔记"
                     notes={selectedCreatedNotes}
                     onOpenNote={(noteId) => {
                       onOpenNote(noteId)
@@ -399,7 +399,7 @@ export function DailyNotesPanel({
                     }}
                   />
                   <ActivityList
-                    title="Updated notes"
+                    title="已更新笔记"
                     notes={selectedUpdatedNotes}
                     onOpenNote={(noteId) => {
                       onOpenNote(noteId)
@@ -409,7 +409,7 @@ export function DailyNotesPanel({
                 </div>
                 {monthlyNotes.length === 0 ? (
                   <div style={{ fontSize: 13, color: 'var(--nv-color-fg-subtle)', lineHeight: 1.6 }}>
-                    Double-click a date to create a Daily Note.
+                    双击日期可创建当天日记。
                   </div>
                 ) : (
                   <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
@@ -477,7 +477,7 @@ function ActivityList({
         {title}
       </div>
       {notes.length === 0 ? (
-        <div style={{ fontSize: 12, color: 'var(--nv-color-fg-subtle)', lineHeight: 1.5 }}>No activity.</div>
+        <div style={{ fontSize: 12, color: 'var(--nv-color-fg-subtle)', lineHeight: 1.5 }}>暂无活动。</div>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {notes.slice(0, 5).map((note) => (

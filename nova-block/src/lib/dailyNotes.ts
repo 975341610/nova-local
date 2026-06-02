@@ -1,3 +1,4 @@
+import { aiMarkdownToHtml } from './aiMarkdown'
 import { findDailyNoteByDate, formatDailyTitle, parseDailyTitle as parseDailyTitleResult } from './journal'
 
 export { formatDailyTitle }
@@ -68,4 +69,11 @@ export function buildDailyNoteContent(date: Date, context: DailyTemplateContext 
     `等待生成，确认后写入。`,
     ``,
   ].join('\n')
+}
+
+export function buildDailyNoteHtml(date: Date, context: DailyTemplateContext = {}): string {
+  const markdownWithoutTitle = buildDailyNoteContent(date, context)
+    .replace(/^# .+?(?:\n+|$)/, '')
+    .trim()
+  return aiMarkdownToHtml(markdownWithoutTitle)
 }
