@@ -1,55 +1,71 @@
-/**
- * Daily Notes 兼容入口。
- *
- * 新的识别逻辑集中在 journal.ts；这里保留旧导出，避免一次性改动所有调用方。
- */
-import {
-  findDailyNoteByDate,
-  formatDailyTitle,
-  parseDailyTitle as parseDailyTitleResult,
-} from './journal'
+import { findDailyNoteByDate, formatDailyTitle, parseDailyTitle as parseDailyTitleResult } from './journal'
 
 export { formatDailyTitle }
 
-/**
- * 返回指定日期对应的 Daily Note 标题匹配模板列表。
- * 兼容 YYYY-MM-DD / YYYY/MM/DD 两种格式。
- */
+export interface DailyTemplateContext {
+  dueTasksToday?: string[]
+  unfinishedTasksYesterday?: string[]
+  createdNotesToday?: string[]
+  updatedNotesToday?: string[]
+}
+
 export function parseDailyTitle(title: string): Date | null {
   return parseDailyTitleResult(title)?.date || null
 }
 
-export function getDailyNoteForDate<T extends { title: string; properties?: any[]; is_folder?: boolean; updated_at?: string }>(
-  notes: T[],
-  date: Date,
-): T | null {
+export function getDailyNoteForDate<
+  T extends { title: string; properties?: any[]; is_folder?: boolean; updated_at?: string },
+>(notes: T[], date: Date): T | null {
   return findDailyNoteByDate(notes, formatDailyTitle(date))
 }
 
-/**
- * 初始化一份 Daily Note 的默认模板（Markdown 格式）。
- */
-export function buildDailyNoteContent(date: Date): string {
+const listLines = (items: string[] | undefined, prefix = '- ') => {
+  if (!items?.length) return ['- 暂无']
+  return items.map((item) => `${prefix}${item}`)
+}
+
+export function buildDailyNoteContent(date: Date, context: DailyTemplateContext = {}): string {
   const weekday = date.toLocaleDateString('zh-CN', { weekday: 'long' })
   const longDate = date.toLocaleDateString('zh-CN', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   })
+  const createdNotes = listLines(context.createdNotesToday, '- 新建：')
+  const updatedNotes = listLines(context.updatedNotesToday, '- 更新：')
+
   return [
-    `# ${formatDailyTitle(date)}`,
+    `# ${formatDailyTitle(date)} ${weekday}`,
     `> ${longDate} · ${weekday}`,
     ``,
-    `## 🌞 今日目标`,
+    `## 今日焦点`,
+    `- [ ] `,
+    ``,
+    `## 快速记录`,
     `- `,
     ``,
-    `## 📝 日志`,
+    `## 今日任务`,
+    ...listLines(context.dueTasksToday, '- [ ] '),
     ``,
+    `## 昨日未完成`,
+    ...listLines(context.unfinishedTasksYesterday, '- [ ] '),
     ``,
-    `## 🔗 关联笔记`,
+    `## 今天处理的笔记`,
+    ...createdNotes,
+    ...updatedNotes,
     ``,
+    `## 灵感与材料`,
+    `- `,
     ``,
-    `## ✨ 灵感 / 随想`,
+    `## 晚间回顾`,
+    `### 今天推进了什么？`,
+    ``,
+    `### 有什么卡住？`,
+    ``,
+    `### 明天第一件事？`,
+    ``,
+    `## AI 今日回顾`,
+    `等待生成，确认后写入。`,
     ``,
   ].join('\n')
 }
