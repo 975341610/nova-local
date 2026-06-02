@@ -403,6 +403,7 @@ try {
     Copy-Tree -StageName 'Stage electron' -Source (Join-Path $RepoRoot 'electron') -Destination (Join-Path $Stage 'electron') -ExcludeDirectory @('runtime', 'node_modules') -ExcludeFile @('*.bak*')
     Copy-ElectronProductionDeps
     Copy-Tree -StageName 'Stage frontend' -Source $freshDist -Destination (Join-Path $Stage 'frontend_dist')
+    Copy-Tree -StageName 'Stage build resources' -Source (Join-Path $RepoRoot 'build') -Destination (Join-Path $Stage 'build') -ExcludeFile @('*.bak*')
 
     foreach ($rootFile in @('start_backend.py', 'start_updater_cli.py', 'start_windows.bat')) {
         $src = Join-Path $RepoRoot $rootFile
@@ -424,6 +425,8 @@ try {
         'electron\node_modules\chokidar\package.json',
         'electron\node_modules\yaml\package.json',
         'frontend_dist\index.html',
+        'build\app-icon.ico',
+        'build\app-icon.png',
         'start_backend.py',
         'start_updater_cli.py',
         'start_windows.bat'
