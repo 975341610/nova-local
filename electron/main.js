@@ -56,6 +56,7 @@ try {
 // 解析 current 指向的真实 slot, 没有就回退到 APP_ROOT 本身 (理论上不会发生).
 const CURRENT_SLOT = resolveCurrentSlot(APP_ROOT) || APP_ROOT;
 const FRONTEND_INDEX = path.join(CURRENT_SLOT, 'frontend_dist', 'index.html');
+const APP_ICON = path.join(APP_ROOT, 'build', 'app-icon.ico');
 function resolveDataRoot({ appRoot = APP_ROOT, env = process.env } = {}) {
   if (env.NOVA_DATA_ROOT) {
     return path.resolve(env.NOVA_DATA_ROOT);
@@ -384,6 +385,7 @@ function createMainWindow() {
     minHeight: 720,
     backgroundColor: '#f5efe6',
     frame: false,
+    icon: APP_ICON,
     title: '清知',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

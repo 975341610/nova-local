@@ -1,0 +1,44 @@
+{
+  "name": "qingzhi-notes-release",
+  "private": true,
+  "version": "0.25.0",
+  "description": "QingZhi desktop release packaging",
+  "scripts": {
+    "prepare:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare_installer_app.ps1",
+    "package:win": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^36.2.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.qingzhi.notes",
+    "productName": "清知",
+    "asar": false,
+    "directories": {
+      "app": "dist/installer-app",
+      "output": "dist/installers",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*"
+    ],
+    "win": {
+      "icon": "build/app-icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "清知"
+    }
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "yaml": "^2.9.0"
+  }
+}
