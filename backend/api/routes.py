@@ -1769,11 +1769,9 @@ def restore_note_api(note_id: int, db: Session = Depends(get_db)) -> NoteRespons
 
 @router.delete("/notes/{note_id}/purge")
 def delete_note_purge_api(note_id: int, db: Session = Depends(get_db)) -> dict:
-    target = next((note for note in list_trashed_notes(db) if note.id == note_id), None)
     if not purge_note(db, note_id):
         raise HTTPException(status_code=404, detail="Note not found")
-    if target is None or not getattr(target, "is_folder", False):
-        _delete_vector_chunks_for_notes([note_id])
+    _delete_vector_chunks_for_notes([note_id])
     return {"status": "ok"}
 
 @router.delete("/trash/purge")
