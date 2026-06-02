@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { X, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import type { Note } from '../../lib/types'
-import {
-  formatDailyTitle,
-  buildDailyNoteContent,
-} from '../../lib/dailyNotes'
+import { buildDailyNoteContent, formatDailyTitle } from '../../lib/dailyNotes'
 import { findDailyNoteByDate, findDailyNotesByDate, getDailyDate } from '../../lib/journal'
 
 interface DailyNotesPanelProps {
@@ -16,14 +13,8 @@ interface DailyNotesPanelProps {
   onCreateDailyNote: (title: string, content: string) => Promise<Note | null>
 }
 
-/**
- * Daily Notes 面板
- * - 左侧日历热力图（显示哪些日期有笔记）
- * - 点击日期 → 跳转/新建对应 Daily Note
- * - 右侧显示当月已有 Daily Notes 列表
- *
- * Daily Note 识别规则：标题匹配 YYYY-MM-DD 或 YYYY/MM/DD。
- */
+const weekLabels = ['日', '一', '二', '三', '四', '五', '六']
+
 export function DailyNotesPanel({
   notes,
   isOpen,
@@ -33,6 +24,7 @@ export function DailyNotesPanel({
 }: DailyNotesPanelProps) {
   const today = new Date()
   const [cursor, setCursor] = useState<Date>(new Date(today.getFullYear(), today.getMonth(), 1))
+  const [selectedDate, setSelectedDate] = useState<Date>(today)
 
   useEffect(() => {
     if (!isOpen) return
@@ -49,14 +41,7 @@ export function DailyNotesPanel({
       const key = getDailyDate(note)
       if (!key) continue
       const current = map.get(key)
-      if (!current) {
-        map.set(key, note)
-      } else {
-        map.set(
-          key,
-          findDailyNoteByDate([current, note], key) || current,
-        )
-      }
+      map.set(key, current ? findDailyNoteByDate([current, note], key) || current : note)
     }
     return map
   }, [notes])
@@ -75,7 +60,7 @@ export function DailyNotesPanel({
     const year = cursor.getFullYear()
     const month = cursor.getMonth()
     const firstDay = new Date(year, month, 1)
-    const startWeekday = firstDay.getDay() // 0=Sun
+    const startWeekday = firstDay.getDay()
     const daysInMonth = new Date(year, month + 1, 0).getDate()
     const cells: Array<{ date: Date | null; key: string }> = []
     for (let i = 0; i < startWeekday; i++) {
@@ -85,14 +70,13 @@ export function DailyNotesPanel({
       const date = new Date(year, month, d)
       cells.push({ date, key: formatDailyTitle(date) })
     }
-    // pad to multiples of 7
     while (cells.length % 7 !== 0) {
       cells.push({ date: null, key: `end-${cells.length}` })
     }
     return cells
   }, [cursor])
 
-  const handleDayClick = async (date: Date) => {
+  const handleDayOpen = async (date: Date) => {
     const key = formatDailyTitle(date)
     const existing = dailyMap.get(key)
     if (existing) {
@@ -113,16 +97,19 @@ export function DailyNotesPanel({
   })
 
   const monthlyNotes = useMemo(() => {
-    const y = cursor.getFullYear()
-    const m = cursor.getMonth() + 1
-    const prefix = `${y}-${String(m).padStart(2, '0')}`
+    const year = cursor.getFullYear()
+    const month = cursor.getMonth() + 1
+    const prefix = `${year}-${String(month).padStart(2, '0')}`
     return Array.from(dailyMap.entries())
-      .filter(([k]) => k.startsWith(prefix))
+      .filter(([key]) => key.startsWith(prefix))
       .sort((a, b) => (a[0] < b[0] ? 1 : -1))
       .map(([, note]) => note)
   }, [cursor, dailyMap])
 
   const todayKey = formatDailyTitle(today)
+  const selectedDateKey = formatDailyTitle(selectedDate)
+  const selectedDailyNote = dailyMap.get(selectedDateKey)
+  const selectedDuplicateCount = duplicateDailyCounts.get(selectedDateKey) || 0
 
   return (
     <AnimatePresence>
@@ -133,9 +120,7 @@ export function DailyNotesPanel({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[92] flex items-center justify-center"
-          style={{
-            background: 'color-mix(in srgb, var(--nv-color-bg) 76%, transparent)',
-          }}
+          style={{ background: 'color-mix(in srgb, var(--nv-color-bg) 76%, transparent)' }}
           onClick={onClose}
         >
           <motion.div
@@ -146,7 +131,7 @@ export function DailyNotesPanel({
             transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
             className="nv-glass"
             style={{
-              width: 720,
+              width: 760,
               maxWidth: 'calc(100vw - 32px)',
               maxHeight: 'calc(100vh - 80px)',
               display: 'flex',
@@ -168,40 +153,37 @@ export function DailyNotesPanel({
               <div style={{ flex: 1 }} />
               <button
                 className="nv-icon-btn"
+                title="上个月"
                 onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
               >
                 <ChevronLeft size={14} />
               </button>
-              <div
-                style={{
-                  fontSize: 13,
-                  minWidth: 96,
-                  textAlign: 'center',
-                  color: 'var(--nv-color-fg)',
-                }}
-              >
+              <div style={{ fontSize: 13, minWidth: 96, textAlign: 'center', color: 'var(--nv-color-fg)' }}>
                 {monthLabel}
               </div>
               <button
                 className="nv-icon-btn"
+                title="下个月"
                 onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
               >
                 <ChevronRight size={14} />
               </button>
               <button
                 className="nv-icon-btn"
-                onClick={() => setCursor(new Date(today.getFullYear(), today.getMonth(), 1))}
                 title="回到本月"
+                onClick={() => {
+                  setCursor(new Date(today.getFullYear(), today.getMonth(), 1))
+                  setSelectedDate(today)
+                }}
               >
                 今
               </button>
-              <button className="nv-icon-btn" onClick={onClose}>
+              <button className="nv-icon-btn" title="关闭" onClick={onClose}>
                 <X size={14} />
               </button>
             </header>
 
-            <div style={{ display: 'flex', minHeight: 340 }}>
-              {/* Calendar */}
+            <div style={{ display: 'flex', minHeight: 360 }}>
               <div style={{ padding: 18, flex: 1 }}>
                 <div
                   style={{
@@ -213,31 +195,26 @@ export function DailyNotesPanel({
                     marginBottom: 6,
                   }}
                 >
-                  {['日', '一', '二', '三', '四', '五', '六'].map((d) => (
-                    <div key={d} style={{ textAlign: 'center', padding: '4px 0' }}>
-                      {d}
+                  {weekLabels.map((label) => (
+                    <div key={label} style={{ textAlign: 'center', padding: '4px 0' }}>
+                      {label}
                     </div>
                   ))}
                 </div>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(7, 1fr)',
-                    gap: 6,
-                  }}
-                >
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
                   {monthDays.map((cell) => {
-                    if (!cell.date) {
-                      return <div key={cell.key} />
-                    }
+                    if (!cell.date) return <div key={cell.key} />
                     const key = formatDailyTitle(cell.date)
                     const has = dailyMap.has(key)
                     const duplicateCount = duplicateDailyCounts.get(key) || 0
                     const isToday = key === todayKey
+                    const isSelected = key === selectedDateKey
                     return (
                       <button
                         key={cell.key}
-                        onClick={() => cell.date && handleDayClick(cell.date)}
+                        aria-label={`Select ${key}`}
+                        onClick={() => cell.date && setSelectedDate(cell.date)}
+                        onDoubleClick={() => cell.date && handleDayOpen(cell.date)}
                         className="nv-transition nv-focus-ring"
                         style={{
                           aspectRatio: '1 / 1',
@@ -245,16 +222,14 @@ export function DailyNotesPanel({
                           flexDirection: 'column',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          border: isToday
-                            ? `1.5px solid var(--nv-color-accent)`
-                            : `1px solid var(--nv-color-border)`,
+                          border: isSelected
+                            ? '2px solid var(--nv-color-gold, #c8a873)'
+                            : isToday
+                              ? '1.5px solid var(--nv-color-accent)'
+                              : '1px solid var(--nv-color-border)',
                           borderRadius: 'var(--nv-radius-md)',
-                          background: has
-                            ? 'var(--nv-color-accent-muted)'
-                            : 'transparent',
-                          color: has
-                            ? 'var(--nv-color-accent-fg)'
-                            : 'var(--nv-color-fg)',
+                          background: has ? 'var(--nv-color-accent-muted)' : 'transparent',
+                          color: has ? 'var(--nv-color-accent-fg)' : 'var(--nv-color-fg)',
                           fontSize: 13,
                           fontWeight: isToday ? 700 : 400,
                           cursor: 'pointer',
@@ -295,10 +270,9 @@ export function DailyNotesPanel({
                 </div>
               </div>
 
-              {/* Side list */}
-              <div
+              <aside
                 style={{
-                  width: 220,
+                  width: 240,
                   borderLeft: '1px solid var(--nv-color-border)',
                   padding: 14,
                   overflowY: 'auto',
@@ -313,25 +287,95 @@ export function DailyNotesPanel({
                     marginBottom: 8,
                   }}
                 >
-                  本月已有 · {monthlyNotes.length}
+                  Selected day
+                </div>
+
+                <div
+                  style={{
+                    border: '1px solid var(--nv-color-border)',
+                    borderRadius: 'var(--nv-radius-md)',
+                    padding: 10,
+                    marginBottom: 12,
+                    background: 'color-mix(in srgb, var(--nv-color-bg) 74%, transparent)',
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: 'var(--nv-color-fg-subtle)', marginBottom: 6 }}>
+                    {selectedDateKey}
+                  </div>
+                  {selectedDailyNote ? (
+                    <>
+                      <button
+                        className="nv-transition"
+                        onClick={() => {
+                          onOpenNote(selectedDailyNote.id)
+                          onClose()
+                        }}
+                        style={{
+                          width: '100%',
+                          border: 'none',
+                          background: 'transparent',
+                          color: 'var(--nv-color-fg)',
+                          cursor: 'pointer',
+                          fontSize: 14,
+                          fontWeight: 600,
+                          padding: 0,
+                          textAlign: 'left',
+                        }}
+                      >
+                        {selectedDailyNote.title}
+                      </button>
+                      {selectedDuplicateCount > 1 && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--nv-color-gold, #c8a873)' }}>
+                          {selectedDuplicateCount} Daily Notes on this date
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 13, color: 'var(--nv-color-fg-subtle)', lineHeight: 1.5 }}>
+                        No Daily Note yet.
+                      </div>
+                      <button
+                        className="nv-transition"
+                        onClick={() => handleDayOpen(selectedDate)}
+                        style={{
+                          marginTop: 8,
+                          padding: '6px 10px',
+                          borderRadius: 'var(--nv-radius-sm)',
+                          border: '1px solid var(--nv-color-border)',
+                          background: 'var(--nv-color-accent-muted)',
+                          color: 'var(--nv-color-accent-fg)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Create
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    fontSize: 11,
+                    letterSpacing: '0.14em',
+                    textTransform: 'uppercase',
+                    color: 'var(--nv-color-fg-subtle)',
+                    marginBottom: 8,
+                  }}
+                >
+                  This month · {monthlyNotes.length}
                 </div>
                 {monthlyNotes.length === 0 ? (
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: 'var(--nv-color-fg-subtle)',
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    点击任意日期创建当天的 Daily Note。
+                  <div style={{ fontSize: 13, color: 'var(--nv-color-fg-subtle)', lineHeight: 1.6 }}>
+                    Double-click a date to create a Daily Note.
                   </div>
                 ) : (
                   <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                    {monthlyNotes.map((n) => (
-                      <li key={n.id} style={{ marginBottom: 4 }}>
+                    {monthlyNotes.map((note) => (
+                      <li key={note.id} style={{ marginBottom: 4 }}>
                         <button
                           onClick={() => {
-                            onOpenNote(n.id)
+                            onOpenNote(note.id)
                             onClose()
                           }}
                           className="nv-transition"
@@ -353,13 +397,13 @@ export function DailyNotesPanel({
                             e.currentTarget.style.background = 'transparent'
                           }}
                         >
-                          {n.title}
+                          {note.title}
                         </button>
                       </li>
                     ))}
                   </ul>
                 )}
-              </div>
+              </aside>
             </div>
           </motion.div>
         </motion.div>
