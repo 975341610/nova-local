@@ -40,6 +40,7 @@ import { MarginNotesPanel } from './components/panels/MarginNotesPanel'
 import { RichSummaryCardsPanel } from './components/panels/RichSummaryCardsPanel'
 import { TimelineView } from './components/timeline/TimelineView'
 import { buildDailyNoteContent, formatDailyTitle } from './lib/dailyNotes'
+import { buildJournalProperties, parseDailyTitle as parseJournalDailyTitle } from './lib/journal'
 import { InspectorPanel } from './components/inspector/InspectorPanel'
 import { useNovaTheme, THEME_META, THEME_LIST } from './contexts/ThemeContext'
 import { buildCorpus, findBacklinks } from './lib/backlinks'
@@ -1283,6 +1284,7 @@ function App() {
 
   const handleCreateDailyNote = useCallback(async (title: string, content: string) => {
     try {
+      const dailyDate = parseJournalDailyTitle(title)?.dateKey || formatDailyTitle(new Date())
       const created = await api.createNote({
         title,
         icon: '📅',
@@ -1297,6 +1299,7 @@ function App() {
         sort_key: 'm',
         stickers: [],
         sticky_notes: [],
+        properties: buildJournalProperties('daily', dailyDate),
       })
       const nextNote = mergeNote(undefined, created)
       setNotes(prev => [...prev, nextNote])

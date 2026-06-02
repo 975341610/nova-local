@@ -6,6 +6,7 @@ import {
   formatDailyTitle,
   buildDailyNoteContent,
 } from '../../lib/dailyNotes'
+import { findDailyNoteByDate, findDailyNotesByDate, getDailyDate } from '../../lib/journal'
 
 interface DailyNotesPanelProps {
   notes: Note[]
@@ -44,13 +45,28 @@ export function DailyNotesPanel({
 
   const dailyMap = useMemo(() => {
     const map = new Map<string, Note>()
-    for (const note of notes) {
-      if (note.is_folder) continue
-      const match = /^(\d{4})[-/](\d{2})[-/](\d{2})/.exec(note.title ?? '')
-      if (match) {
-        const key = `${match[1]}-${match[2]}-${match[3]}`
+    for (const note of notes.filter((item) => !item.is_folder)) {
+      const key = getDailyDate(note)
+      if (!key) continue
+      const current = map.get(key)
+      if (!current) {
         map.set(key, note)
+      } else {
+        map.set(
+          key,
+          findDailyNoteByDate([current, note], key) || current,
+        )
       }
+    }
+    return map
+  }, [notes])
+
+  const duplicateDailyCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    const dateKeys = new Set(notes.map((note) => getDailyDate(note)).filter(Boolean) as string[])
+    for (const dateKey of dateKeys) {
+      const count = findDailyNotesByDate(notes, dateKey).length
+      if (count > 1) map.set(dateKey, count)
     }
     return map
   }, [notes])
@@ -216,6 +232,7 @@ export function DailyNotesPanel({
                     }
                     const key = formatDailyTitle(cell.date)
                     const has = dailyMap.has(key)
+                    const duplicateCount = duplicateDailyCounts.get(key) || 0
                     const isToday = key === todayKey
                     return (
                       <button
@@ -245,15 +262,32 @@ export function DailyNotesPanel({
                       >
                         <span>{cell.date.getDate()}</span>
                         {has && (
-                          <span
-                            style={{
-                              width: 4,
-                              height: 4,
-                              borderRadius: '50%',
-                              background: 'var(--nv-color-accent)',
-                              marginTop: 2,
-                            }}
-                          />
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
+                            <span
+                              style={{
+                                width: 4,
+                                height: 4,
+                                borderRadius: '50%',
+                                background: 'var(--nv-color-accent)',
+                              }}
+                            />
+                            {duplicateCount > 1 && (
+                              <span
+                                title={`该日期存在 ${duplicateCount} 篇 Daily Note`}
+                                style={{
+                                  minWidth: 12,
+                                  height: 12,
+                                  borderRadius: 999,
+                                  background: 'var(--nv-color-gold, #c8a873)',
+                                  color: 'white',
+                                  fontSize: 9,
+                                  lineHeight: '12px',
+                                }}
+                              >
+                                {duplicateCount}
+                              </span>
+                            )}
+                          </span>
                         )}
                       </button>
                     )

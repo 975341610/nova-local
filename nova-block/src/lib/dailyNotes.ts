@@ -1,35 +1,29 @@
 /**
- * Daily Notes 辅助函数
+ * Daily Notes 兼容入口。
+ *
+ * 新的识别逻辑集中在 journal.ts；这里保留旧导出，避免一次性改动所有调用方。
  */
+import {
+  findDailyNoteByDate,
+  formatDailyTitle,
+  parseDailyTitle as parseDailyTitleResult,
+} from './journal'
 
-export function formatDailyTitle(date: Date): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
+export { formatDailyTitle }
 
 /**
  * 返回指定日期对应的 Daily Note 标题匹配模板列表。
  * 兼容 YYYY-MM-DD / YYYY/MM/DD 两种格式。
  */
 export function parseDailyTitle(title: string): Date | null {
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})/.exec(title ?? '')
-  if (!m) return null
-  const year = Number(m[1])
-  const month = Number(m[2]) - 1
-  const day = Number(m[3])
-  const d = new Date(year, month, day)
-  return isNaN(d.getTime()) ? null : d
+  return parseDailyTitleResult(title)?.date || null
 }
 
-export function getDailyNoteForDate<T extends { title: string }>(
+export function getDailyNoteForDate<T extends { title: string; properties?: any[]; is_folder?: boolean; updated_at?: string }>(
   notes: T[],
   date: Date,
 ): T | null {
-  const key = formatDailyTitle(date)
-  const match = notes.find((n) => (n.title ?? '').startsWith(key))
-  return match ?? null
+  return findDailyNoteByDate(notes, formatDailyTitle(date))
 }
 
 /**
