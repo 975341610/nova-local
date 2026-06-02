@@ -14,9 +14,12 @@ export interface QingzhiTopbarActionMeta {
   hint: string
 }
 
+export type QingzhiWindowCloseBehavior = 'quit' | 'hide'
+
 export interface QingzhiSettings {
   topbarPins: QingzhiTopbarActionId[]
   mascotOpacity: number
+  windowCloseBehavior: QingzhiWindowCloseBehavior
   brandLogoSrc?: string
   avatarSrc?: string
   mascotSrc?: string
@@ -41,6 +44,7 @@ const ACTION_IDS = new Set<QingzhiTopbarActionId>(QINGZHI_TOPBAR_ACTIONS.map((ac
 export const DEFAULT_QINGZHI_SETTINGS: QingzhiSettings = {
   topbarPins: ['daily', 'command', 'reader', 'inspect'],
   mascotOpacity: 0.15,
+  windowCloseBehavior: 'quit',
   brandLogoSrc: '',
   avatarSrc: '',
   mascotSrc: '',
@@ -62,6 +66,10 @@ function normalizeTopbarPins(value: unknown): QingzhiTopbarActionId[] {
   return pins.length > 0 ? Array.from(new Set(pins)).slice(0, 4) : DEFAULT_QINGZHI_SETTINGS.topbarPins
 }
 
+function normalizeWindowCloseBehavior(value: unknown): QingzhiWindowCloseBehavior {
+  return value === 'hide' ? 'hide' : DEFAULT_QINGZHI_SETTINGS.windowCloseBehavior
+}
+
 export function readQingzhiSettings(): QingzhiSettings {
   if (typeof localStorage === 'undefined') return DEFAULT_QINGZHI_SETTINGS
 
@@ -72,6 +80,7 @@ export function readQingzhiSettings(): QingzhiSettings {
     return {
       topbarPins: normalizeTopbarPins(parsed.topbarPins),
       mascotOpacity: clampMascotOpacity(parsed.mascotOpacity),
+      windowCloseBehavior: normalizeWindowCloseBehavior(parsed.windowCloseBehavior),
       brandLogoSrc: normalizeAssetSrc(parsed.brandLogoSrc) || normalizeAssetSrc(localStorage.getItem('qz.logo.src')),
       avatarSrc: normalizeAssetSrc(parsed.avatarSrc) || normalizeAssetSrc(localStorage.getItem('qz.avatar.src')),
       mascotSrc: normalizeAssetSrc(parsed.mascotSrc) || normalizeAssetSrc(localStorage.getItem('qz.mascot.src')),
@@ -89,10 +98,11 @@ export function applyQingzhiSettings(settings: QingzhiSettings) {
   document.documentElement.style.setProperty('--qz-mascot-image', settings.mascotSrc ? `url("${settings.mascotSrc}")` : 'url("/assets/qingzhi/mascot/sidebar-standing.webp")')
 }
 
-export function saveQingzhiSettings(settings: QingzhiSettings): QingzhiSettings {
+export function saveQingzhiSettings(settings: Partial<QingzhiSettings>): QingzhiSettings {
   const normalized: QingzhiSettings = {
     topbarPins: normalizeTopbarPins(settings.topbarPins),
     mascotOpacity: clampMascotOpacity(settings.mascotOpacity),
+    windowCloseBehavior: normalizeWindowCloseBehavior(settings.windowCloseBehavior),
     brandLogoSrc: normalizeAssetSrc(settings.brandLogoSrc),
     avatarSrc: normalizeAssetSrc(settings.avatarSrc),
     mascotSrc: normalizeAssetSrc(settings.mascotSrc),
@@ -110,6 +120,11 @@ export function saveQingzhiSettings(settings: QingzhiSettings): QingzhiSettings 
   applyQingzhiSettings(normalized)
 
   if (typeof window !== 'undefined') {
+    void window.electron?.ipcInvoke?.('desktop:window-close-behavior:update', {
+      behavior: normalized.windowCloseBehavior,
+    }).catch((error: unknown) => {
+      console.warn('[qingzhi] sync window close behavior failed', error)
+    })
     window.dispatchEvent(new CustomEvent(QINGZHI_SETTINGS_EVENT, { detail: normalized }))
   }
 

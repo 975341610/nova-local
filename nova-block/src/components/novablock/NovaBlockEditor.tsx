@@ -873,6 +873,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const handleSaveRef = useRef<(content?: string, updates?: Partial<Note>) => Promise<void> | void>(() => undefined);
   const stickersRef = useRef<StickerData[]>([]);
   const stickyNotesRef = useRef<StickyNoteData[]>([]);
+  const stickyNotesSaveTimerRef = useRef<number | null>(null);
   const liveContentTimerRef = useRef<number | null>(null);
   const isProgrammaticContentUpdateRef = useRef(false);
 
@@ -938,14 +939,30 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     stickyNotesRef.current = stickyNotes;
   }, [stickyNotes]);
 
+  const scheduleStickyNotesSave = useCallback((delayMs = 250) => {
+    if (stickyNotesSaveTimerRef.current !== null) {
+      window.clearTimeout(stickyNotesSaveTimerRef.current);
+    }
+
+    stickyNotesSaveTimerRef.current = window.setTimeout(() => {
+      stickyNotesSaveTimerRef.current = null;
+      void handleSaveRef.current(undefined, {
+        stickers: stickersRef.current,
+        sticky_notes: stickyNotesRef.current,
+      });
+    }, delayMs);
+  }, []);
+
   const handleStickersChange = useCallback((newStickers: StickerData[]) => {
     stickersRef.current = newStickers;
     setStickers(newStickers);
     if (latestNoteRef.current) {
       latestNoteRef.current = { ...latestNoteRef.current, stickers: newStickers };
     }
-    setIsDirty((prev) => prev || true);
-  }, []);
+    isDirtyRef.current = true;
+    setIsDirty(true);
+    scheduleStickyNotesSave();
+  }, [scheduleStickyNotesSave]);
 
   const handleStickyNotesChange = useCallback((newNotes: StickyNoteData[]) => {
     stickyNotesRef.current = newNotes;
@@ -953,8 +970,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     if (latestNoteRef.current) {
       latestNoteRef.current = { ...latestNoteRef.current, sticky_notes: newNotes };
     }
-    setIsDirty((prev) => prev || true);
-  }, []);
+    isDirtyRef.current = true;
+    setIsDirty(true);
+    scheduleStickyNotesSave();
+  }, [scheduleStickyNotesSave]);
 
   // 鏍稿績 Tiptap 鎵╁睍閰嶇疆 (楂樻€ц兘 memo 妯″紡)
   const extensions = useMemo(() => [
@@ -1959,10 +1978,6 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         };
         const nextStickers = [...stickersRef.current, newSticker];
         handleStickersChange(nextStickers);
-        void handleSaveRef.current(undefined, {
-          stickers: nextStickers,
-          sticky_notes: stickyNotesRef.current,
-        });
       } else {
         const newSticky: StickyNoteData = {
           id: Math.random().toString(36).substring(7),
@@ -1974,10 +1989,6 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         };
         const nextStickyNotes = [...stickyNotesRef.current, newSticky];
         handleStickyNotesChange(nextStickyNotes);
-        void handleSaveRef.current(undefined, {
-          stickers: stickersRef.current,
-          sticky_notes: nextStickyNotes,
-        });
       }
     };
     window.addEventListener('add-sticky-note', handleAddSticker as EventListener);
@@ -2594,6 +2605,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       if (liveContentTimerRef.current) {
         window.clearTimeout(liveContentTimerRef.current);
         liveContentTimerRef.current = null;
+      }
+      if (stickyNotesSaveTimerRef.current !== null) {
+        window.clearTimeout(stickyNotesSaveTimerRef.current);
+        stickyNotesSaveTimerRef.current = null;
       }
     };
   }, []);

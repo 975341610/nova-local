@@ -49,4 +49,16 @@ describe('QingZhi settings model', () => {
     expect(document.documentElement.style.getPropertyValue('--qz-avatar-image')).toContain('data:image/png;base64,avatar')
     expect(document.documentElement.style.getPropertyValue('--qz-mascot-image')).toContain('data:image/png;base64,mascot')
   })
+
+  it('defaults the window close button to quitting and persists hide-to-background mode', () => {
+    expect(readQingzhiSettings().windowCloseBehavior).toBe('quit')
+
+    const saved = saveQingzhiSettings({
+      ...DEFAULT_QINGZHI_SETTINGS,
+      windowCloseBehavior: 'hide',
+    })
+
+    expect(saved.windowCloseBehavior).toBe('hide')
+    expect(readQingzhiSettings().windowCloseBehavior).toBe('hide')
+  })
 })

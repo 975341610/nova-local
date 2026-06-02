@@ -17,6 +17,7 @@ const ALLOWED_IPC_CHANNELS = new Set([
   'ai:update-ollama',
   'desktop:api-request',
   'desktop:window-control',
+  'desktop:window-close-behavior:update',
   'desktop:get-backend-base-url',
   // M4 Updater IPC surface (registered in electron/updaterBridge.js)
   'updater:get-current-version',

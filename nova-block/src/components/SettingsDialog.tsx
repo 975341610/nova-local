@@ -561,6 +561,35 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
             </div>
           </div>
 
+          <div className="qz-settings-candidate-zone" data-testid="qingzhi-window-close-behavior">
+            <div className="qz-settings-zone-title">窗口关闭行为</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {([
+                { value: 'quit', title: '关闭软件', description: '点击右上角 × 后保存并退出应用。' },
+                { value: 'hide', title: '隐藏到后台', description: '点击右上角 × 后只隐藏窗口，应用继续运行。' },
+              ] as const).map((option) => {
+                const selected = qingzhiSettings.windowCloseBehavior === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    data-testid={`qingzhi-window-close-${option.value}`}
+                    aria-pressed={selected}
+                    onClick={() => updateQingzhiSettings({ windowCloseBehavior: option.value })}
+                    className={`rounded-xl border px-3 py-2 text-left transition-all ${
+                      selected
+                        ? 'border-primary/50 bg-primary/10 text-primary'
+                        : 'border-border/40 bg-background/60 text-muted-foreground hover:text-foreground hover:bg-accent/20'
+                    }`}
+                  >
+                    <span className="block text-xs font-bold">{option.title}</span>
+                    <span className="mt-1 block text-[10px] leading-relaxed opacity-75">{option.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="qz-settings-candidate-zone">
             <div className="qz-settings-zone-title">清知品牌素材</div>
             <div className="qz-settings-candidate-grid">

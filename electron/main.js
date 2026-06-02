@@ -91,6 +91,7 @@ let backendProcess = null;
 let watcher = null;
 let allowWindowClose = false;
 let isAppQuitting = false;
+let windowCloseBehavior = 'quit';
 let backendRestartTimer = null;
 let backendRestartAttempts = 0;
 let backendLastError = null;
@@ -436,6 +437,11 @@ function createMainWindow() {
     }
 
     event.preventDefault();
+
+    if (!isAppQuitting && windowCloseBehavior === 'hide') {
+      mainWindow.hide();
+      return;
+    }
 
     let settled = false;
     const finalizeClose = () => {
@@ -1256,6 +1262,10 @@ function registerIpcHandlers() {
         return { ok: false, reason: 'unsupported-action' };
     }
   });
+  trustedIpcHandle('desktop:window-close-behavior:update', async (_event, payload = {}) => {
+    windowCloseBehavior = payload && payload.behavior === 'hide' ? 'hide' : 'quit';
+    return { ok: true, behavior: windowCloseBehavior };
+  });
   trustedIpcHandle('system:open-file', async (_event, payload) => openLocalFile(payload));
   trustedIpcHandle('system:open-url', async (_event, payload) => openExternalUrl(payload));
   trustedIpcHandle('system:switch-data-path', async (_event, payload) => switchDataPath(payload));
@@ -1447,7 +1457,10 @@ app.on('before-quit', () => {
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+  } else if (BrowserWindow.getAllWindows().length === 0) {
     createMainWindow();
   }
 });

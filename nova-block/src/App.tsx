@@ -585,6 +585,14 @@ function App() {
   }, [qingzhiSettings])
 
   useEffect(() => {
+    void window.electron?.ipcInvoke?.('desktop:window-close-behavior:update', {
+      behavior: qingzhiSettings.windowCloseBehavior,
+    }).catch((error: unknown) => {
+      console.warn('[qingzhi] window close behavior sync failed', error)
+    })
+  }, [qingzhiSettings.windowCloseBehavior])
+
+  useEffect(() => {
     const handleSettingsChange = (event: Event) => {
       setQingzhiSettings((event as CustomEvent<QingzhiSettings>).detail ?? readQingzhiSettings())
     }
