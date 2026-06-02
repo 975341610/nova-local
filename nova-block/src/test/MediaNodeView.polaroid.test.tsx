@@ -7,13 +7,15 @@
  * 现要求改为无相框样式,但**保留**圆角(rounded-xl)和悬停上移动效(hover:-translate-y-0.5)。
  * 音频节点不受影响(原本就走 "relative" 分支)。
  */
-import { describe, expect, it } from 'vitest'
-import { render } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render } from '@testing-library/react'
 import { MediaNodeView } from '../components/MediaNodeView'
 
 // 我们直接 mount MediaNodeView 来检查渲染产物的 className,
 // 不需要把它整套接入 Tiptap.
 import { createElement } from 'react'
+
+afterEach(() => cleanup())
 
 function makeProps(kind: 'image' | 'video' | 'audio' | 'file') {
   return {
@@ -79,5 +81,16 @@ describe('MediaNodeView · 无相框样式', () => {
     expect(getByText('点击预览')).toBeTruthy()
     expect(getByTitle('预览视图')).toBeTruthy()
     expect(getByTitle('全屏浏览')).toBeTruthy()
+  })
+
+  it('image toolbar opens a fullscreen viewer without drag handles', () => {
+    const { getByTestId, getByTitle } = render(createElement(MediaNodeView, makeProps('image')))
+
+    fireEvent.click(getByTitle('全屏观看'))
+
+    const viewer = getByTestId('media-image-fullscreen-viewer')
+    expect(viewer.querySelector('img[src="https://example.com/x.png"]')).toBeTruthy()
+    expect(viewer.querySelector('[data-drag-handle]')).toBeNull()
+    expect(getByTitle('退出全屏观看')).toBeTruthy()
   })
 })

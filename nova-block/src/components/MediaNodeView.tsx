@@ -1,7 +1,8 @@
 import type { NodeViewProps } from '@tiptap/react';
 import { NodeViewWrapper } from '@tiptap/react';
-import { GripVertical, Lock, LockOpen, Trash2 } from 'lucide-react';
+import { GripVertical, Lock, LockOpen, Maximize2, Trash2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { formatUrl } from '../lib/api';
 import { DocumentAttachmentView } from './document/DocumentAttachmentView';
 
@@ -18,10 +19,10 @@ export function MediaNodeView({ node, updateAttributes, deleteNode, selected, ki
   const [fileViewMode, setFileViewMode] = useState<'card' | 'preview'>(
     node.attrs.viewMode === 'preview' ? 'preview' : 'card',
   );
+  const [isImageFullscreen, setIsImageFullscreen] = useState(false);
+  const absoluteSrc = useMemo(() => formatUrl(src), [src]);
 
   const content = useMemo(() => {
-    const absoluteSrc = formatUrl(src);
-
     if (kind === 'image') {
       return <img src={absoluteSrc} alt="" className="h-auto w-full rounded-lg object-cover" draggable={false} />;
     }
@@ -75,7 +76,7 @@ export function MediaNodeView({ node, updateAttributes, deleteNode, selected, ki
         />
       </div>
     );
-  }, [deleteNode, fileViewMode, isInteractive, kind, node.attrs, src, updateAttributes]);
+  }, [absoluteSrc, deleteNode, fileViewMode, isInteractive, kind, node.attrs, src, updateAttributes]);
 
   const startResize = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -124,6 +125,20 @@ export function MediaNodeView({ node, updateAttributes, deleteNode, selected, ki
                   <LockOpen size={14} />
                 </button>
               )}
+              {kind === 'image' && (
+                <button
+                  className="border-l border-stone-200 p-1.5 transition-colors hover:bg-stone-100 hover:text-stone-800 dark:border-stone-700 dark:hover:bg-stone-700 dark:hover:text-stone-200"
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setIsImageFullscreen(true);
+                  }}
+                  title="全屏观看"
+                >
+                  <Maximize2 size={14} />
+                </button>
+              )}
               <button
                 className="border-l border-stone-200 p-1.5 transition-colors hover:bg-red-50 hover:text-red-500 dark:border-stone-700 dark:hover:bg-red-900/30"
                 type="button"
@@ -146,6 +161,37 @@ export function MediaNodeView({ node, updateAttributes, deleteNode, selected, ki
           </div>
         )}
       </div>
+      {kind === 'image' &&
+        isImageFullscreen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[2147483000] flex items-center justify-center bg-black/85 p-6 backdrop-blur-md"
+            contentEditable={false}
+            data-testid="media-image-fullscreen-viewer"
+            onClick={() => setIsImageFullscreen(false)}
+          >
+            <button
+              className="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/15 text-white shadow-lg backdrop-blur transition-colors hover:bg-white/25"
+              type="button"
+              title="退出全屏观看"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setIsImageFullscreen(false);
+              }}
+            >
+              <X size={20} />
+            </button>
+            <img
+              src={absoluteSrc}
+              alt=""
+              className="max-h-[92vh] max-w-[94vw] rounded-2xl object-contain shadow-2xl"
+              draggable={false}
+              onClick={(event) => event.stopPropagation()}
+            />
+          </div>,
+          document.body,
+        )}
     </NodeViewWrapper>
   );
 }
