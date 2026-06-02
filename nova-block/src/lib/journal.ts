@@ -41,6 +41,22 @@ const normalizeDateKey = (value: unknown): string | null => {
   return isValidYmd(year, month, day) ? toDateKey(year, month, day) : null
 }
 
+const normalizeWeekKey = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const match = /^(\d{4})-W(\d{2})$/.exec(value.trim())
+  if (!match) return null
+  const week = Number(match[2])
+  return week >= 1 && week <= 53 ? `${match[1]}-W${match[2]}` : null
+}
+
+const normalizeMonthKey = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const match = /^(\d{4})-(\d{2})$/.exec(value.trim())
+  if (!match) return null
+  const month = Number(match[2])
+  return month >= 1 && month <= 12 ? `${match[1]}-${match[2]}` : null
+}
+
 const findProperty = (note: Pick<NoteLike, 'properties'> | undefined, name: string) =>
   (note?.properties || []).find((property) => property.name === name)
 
@@ -90,6 +106,16 @@ export function isDailyNote(note: NoteLike): boolean {
   return getDailyDate(note) !== null
 }
 
+export function getWeeklyKey(note: NoteLike): string | null {
+  if (getJournalKind(note) !== 'weekly') return null
+  return normalizeWeekKey(findProperty(note, JOURNAL_WEEK)?.value)
+}
+
+export function getMonthlyKey(note: NoteLike): string | null {
+  if (getJournalKind(note) !== 'monthly') return null
+  return normalizeMonthKey(findProperty(note, JOURNAL_MONTH)?.value)
+}
+
 export function findDailyNotesByDate<T extends NoteLike>(notes: T[], dateKey: string): T[] {
   const normalized = normalizeDateKey(dateKey)
   if (!normalized) return []
@@ -113,4 +139,50 @@ export function findDuplicateDailyNotes<T extends NoteLike>(notes: T[]): Map<str
     if (group.length < 2) groups.delete(dateKey)
   }
   return groups
+}
+
+export function buildWeeklyNoteContent(weekKey: string): string {
+  const normalized = normalizeWeekKey(weekKey) || weekKey
+  return [
+    `# ${normalized} 周记`,
+    ``,
+    `## 本周推进`,
+    `- `,
+    ``,
+    `## 本周完成`,
+    `- `,
+    ``,
+    `## 本周卡点`,
+    `- `,
+    ``,
+    `## 下周计划`,
+    `- [ ] `,
+    ``,
+    `## AI 周回顾`,
+    `等待生成，确认后写入。`,
+    ``,
+  ].join('\n')
+}
+
+export function buildMonthlyNoteContent(monthKey: string): string {
+  const normalized = normalizeMonthKey(monthKey) || monthKey
+  return [
+    `# ${normalized} 月记`,
+    ``,
+    `## 本月回顾`,
+    `- `,
+    ``,
+    `## 关键成果`,
+    `- `,
+    ``,
+    `## 重要笔记`,
+    `- `,
+    ``,
+    `## 下月方向`,
+    `- [ ] `,
+    ``,
+    `## AI 月回顾`,
+    `等待生成，确认后写入。`,
+    ``,
+  ].join('\n')
 }

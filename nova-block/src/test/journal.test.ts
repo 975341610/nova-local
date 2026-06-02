@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildJournalProperties,
+  buildMonthlyNoteContent,
+  buildWeeklyNoteContent,
   findDailyNotesByDate,
   findDuplicateDailyNotes,
   formatDailyTitle,
   getDailyDate,
   isDailyNote,
+  getMonthlyKey,
+  getWeeklyKey,
   parseDailyTitle,
 } from '../lib/journal'
 
@@ -54,5 +58,23 @@ describe('journal service', () => {
     const duplicates = findDuplicateDailyNotes(notes)
     expect(duplicates.get('2026-06-01')?.map((item) => item.id)).toEqual([1, 2])
     expect(duplicates.has('2026-06-02')).toBe(false)
+  })
+
+  it('identifies weekly and monthly journal notes from metadata and builds templates', () => {
+    const weekly = note({
+      title: 'Renamed weekly note',
+      properties: buildJournalProperties('weekly', '2026-W23'),
+    })
+    const monthly = note({
+      title: 'Renamed monthly note',
+      properties: buildJournalProperties('monthly', '2026-06'),
+    })
+
+    expect(getWeeklyKey(weekly)).toBe('2026-W23')
+    expect(getMonthlyKey(monthly)).toBe('2026-06')
+    expect(buildWeeklyNoteContent('2026-W23')).toContain('# 2026-W23 周记')
+    expect(buildWeeklyNoteContent('2026-W23')).toContain('## 本周推进')
+    expect(buildMonthlyNoteContent('2026-06')).toContain('# 2026-06 月记')
+    expect(buildMonthlyNoteContent('2026-06')).toContain('## 本月回顾')
   })
 })
