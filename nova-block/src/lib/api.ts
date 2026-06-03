@@ -377,6 +377,12 @@ export const api = {
     invoke<{ status: string; message?: string }>('system:switch-data-path', '/system/switch-data-path', { method: 'POST', body: JSON.stringify({ data_path: dataPath }) }),
   importData: (sourcePath: string) =>
     invoke<{ status: string; message?: string; backup_path?: string }>('system:import-data', '/system/import-data', { method: 'POST', body: JSON.stringify({ source_path: sourcePath }) }),
+  listVaults: () =>
+    invoke<{ active_path: string; config_path?: string; vaults: Array<{ id: string; name: string; path: string; active: boolean; exists?: boolean }> }>('system:vaults:list', '/system/vaults'),
+  createVault: (payload: { name: string; path: string }) =>
+    invoke<{ id: string; name: string; path: string; active: boolean; exists?: boolean }>('system:vaults:create', '/system/vaults', { method: 'POST', body: JSON.stringify(payload) }),
+  switchVault: (id: string) =>
+    invoke<{ status: string; message?: string; restart_required?: boolean; active_path?: string }>('system:vaults:switch', `/system/vaults/${encodeURIComponent(id)}/switch`, { method: 'POST', body: JSON.stringify({ id }) }),
   updateSystem: (force = false) =>
     invoke<{ status: string; output?: string }>('system:update', '/system/update', { method: 'POST', body: JSON.stringify({ force }) }),
   restartSystem: () =>

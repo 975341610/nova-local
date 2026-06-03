@@ -53,3 +53,12 @@ test('main IPC handlers verify the renderer sender before privileged work', () =
   assert.doesNotMatch(mainSource, /ipcMain\.handle\('system:switch-data-path'/);
   assert.match(mainSource, /trustedIpcHandle\('desktop:api-request'/);
 });
+
+test('main process exposes dedicated Vault management IPC handlers', () => {
+  assert.match(mainSource, /function listVaults/);
+  assert.match(mainSource, /function createVault/);
+  assert.match(mainSource, /function switchVault/);
+  assert.match(mainSource, /trustedIpcHandle\('system:vaults:list'/);
+  assert.match(mainSource, /trustedIpcHandle\('system:vaults:create'/);
+  assert.match(mainSource, /trustedIpcHandle\('system:vaults:switch'/);
+});

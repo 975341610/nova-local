@@ -39,6 +39,26 @@ app.commandLine.appendSwitch('enable-use-zoom-for-dsf', 'true');
 const APP_ROOT = process.env.NOVA_APP_ROOT
   ? path.resolve(process.env.NOVA_APP_ROOT)
   : path.resolve(__dirname, '..');
+const IS_INSTALLER_PACKAGED_APP = app.isPackaged
+  && path.basename(APP_ROOT).toLowerCase() === 'app'
+  && path.basename(path.dirname(APP_ROOT)).toLowerCase() === 'resources';
+function resolveDesktopConfigRoot() {
+  if (process.env.NOVA_CONFIG_ROOT) {
+    return path.resolve(process.env.NOVA_CONFIG_ROOT);
+  }
+  if (IS_INSTALLER_PACKAGED_APP) {
+    try {
+      return app.getPath('userData');
+    } catch (error) {
+      console.warn(`[config] Failed to resolve userData path: ${error.message}`);
+    }
+  }
+  return APP_ROOT;
+}
+
+const DESKTOP_CONFIG_ROOT = resolveDesktopConfigRoot();
+const DATA_CONFIG_PATH = path.join(DESKTOP_CONFIG_ROOT, 'data_config.json');
+const VAULT_REGISTRY_PATH = path.join(DESKTOP_CONFIG_ROOT, 'vaults.json');
 
 // v0.23.0 · 版本化布局 bootstrap
 // ---------------------------------------------------------------
@@ -47,22 +67,23 @@ const APP_ROOT = process.env.NOVA_APP_ROOT
 // 首次从老布局启动时, 此调用会把裸文件搬进 versions/<现版本>/ 并建立 current 软链接.
 // 若已经是版本化布局 (或已有 current 链接), 此调用为 no-op.
 // data/ 永不被迁移或触碰.
-try {
-  bootstrapVersionedLayout(APP_ROOT);
-} catch (error) {
-  console.warn(`[updater] bootstrap skipped: ${error.message}`);
+if (!IS_INSTALLER_PACKAGED_APP) {
+  try {
+    bootstrapVersionedLayout(APP_ROOT);
+  } catch (error) {
+    console.warn(`[updater] bootstrap skipped: ${error.message}`);
+  }
 }
 
 // 解析 current 指向的真实 slot, 没有就回退到 APP_ROOT 本身 (理论上不会发生).
-const CURRENT_SLOT = resolveCurrentSlot(APP_ROOT) || APP_ROOT;
+const CURRENT_SLOT = IS_INSTALLER_PACKAGED_APP ? APP_ROOT : (resolveCurrentSlot(APP_ROOT) || APP_ROOT);
 const FRONTEND_INDEX = path.join(CURRENT_SLOT, 'frontend_dist', 'index.html');
 const APP_ICON = path.join(APP_ROOT, 'build', 'app-icon.ico');
-function resolveDataRoot({ appRoot = APP_ROOT, env = process.env } = {}) {
+function resolveDataRoot({ appRoot = APP_ROOT, env = process.env, configPath = DATA_CONFIG_PATH } = {}) {
   if (env.NOVA_DATA_ROOT) {
     return path.resolve(env.NOVA_DATA_ROOT);
   }
 
-  const configPath = path.join(appRoot, 'data_config.json');
   try {
     if (fs.existsSync(configPath)) {
       const raw = fs.readFileSync(configPath, 'utf8');
@@ -75,7 +96,7 @@ function resolveDataRoot({ appRoot = APP_ROOT, env = process.env } = {}) {
     console.warn(`[config] Failed to read data_config.json: ${error.message}`);
   }
 
-  return path.join(appRoot, 'data');
+  return path.join(IS_INSTALLER_PACKAGED_APP ? DESKTOP_CONFIG_ROOT : appRoot, 'data');
 }
 
 const DATA_ROOT = resolveDataRoot();
@@ -284,6 +305,7 @@ function startBackendProcess() {
     env: {
       ...process.env,
       NOVA_DESKTOP_TOKEN: DESKTOP_LOCAL_TOKEN,
+      NOVA_DATA_ROOT: DATA_ROOT,
       RUN_MODE: 'desktop_local',
       HOST: BACKEND_HOST,
       PORT: String(BACKEND_PORT),
@@ -637,6 +659,104 @@ function runUpdateOllama() {
     ));
 }
 
+function normalizeVaultEntry(entry, activePath) {
+  const vaultPath = typeof entry?.path === 'string' ? path.resolve(entry.path) : '';
+  if (!vaultPath) return null;
+  const name = typeof entry.name === 'string' && entry.name.trim()
+    ? entry.name.trim()
+    : path.basename(vaultPath) || '未命名 Vault';
+  const id = typeof entry.id === 'string' && entry.id.trim()
+    ? entry.id.trim()
+    : crypto.createHash('sha1').update(vaultPath.toLowerCase()).digest('hex').slice(0, 12);
+  return {
+    id,
+    name,
+    path: vaultPath,
+    active: path.resolve(activePath) === vaultPath,
+    exists: fs.existsSync(vaultPath),
+  };
+}
+
+function readVaultRegistry() {
+  try {
+    if (!fs.existsSync(VAULT_REGISTRY_PATH)) {
+      return [];
+    }
+    const raw = fs.readFileSync(VAULT_REGISTRY_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.vaults) ? parsed.vaults : [];
+  } catch (error) {
+    console.warn(`[vaults] failed to read registry: ${error.message}`);
+    return [];
+  }
+}
+
+function writeVaultRegistry(vaults) {
+  fs.mkdirSync(DESKTOP_CONFIG_ROOT, { recursive: true });
+  fs.writeFileSync(VAULT_REGISTRY_PATH, JSON.stringify({ vaults }, null, 2), 'utf8');
+}
+
+function ensureVaultDataDirs(dataPath) {
+  fs.mkdirSync(dataPath, { recursive: true });
+  for (const dirName of ['vault', path.join('vault', '_assets'), 'chroma_store', 'music', 'stickers', 'emoticons']) {
+    fs.mkdirSync(path.join(dataPath, dirName), { recursive: true });
+  }
+}
+
+function listVaults() {
+  const activePath = path.resolve(DATA_ROOT);
+  const activeEntry = {
+    id: crypto.createHash('sha1').update(activePath.toLowerCase()).digest('hex').slice(0, 12),
+    name: '当前 Vault',
+    path: activePath,
+  };
+  const byPath = new Map();
+  for (const raw of [activeEntry, ...readVaultRegistry()]) {
+    const entry = normalizeVaultEntry(raw, activePath);
+    if (entry) byPath.set(entry.path.toLowerCase(), entry);
+  }
+  const vaults = [...byPath.values()].sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  writeVaultRegistry(vaults.map(({ id, name, path: vaultPath }) => ({ id, name, path: vaultPath })));
+  return { active_path: activePath, config_path: DATA_CONFIG_PATH, vaults };
+}
+
+function createVault(payload) {
+  const input = ensurePlainObject(payload);
+  const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim() : '新 Vault';
+  const rawPath = typeof input.path === 'string' && input.path.trim() ? input.path.trim() : '';
+  if (!rawPath) {
+    throw new Error('path is required');
+  }
+  const vaultPath = path.resolve(rawPath);
+  ensureVaultDataDirs(vaultPath);
+  const activePath = path.resolve(DATA_ROOT);
+  const entry = normalizeVaultEntry({ name, path: vaultPath }, activePath);
+  const registry = readVaultRegistry()
+    .map(item => normalizeVaultEntry(item, activePath))
+    .filter(Boolean)
+    .filter(item => item.path.toLowerCase() !== vaultPath.toLowerCase());
+  registry.push(entry);
+  writeVaultRegistry(registry.map(({ id, name: vaultName, path: itemPath }) => ({ id, name: vaultName, path: itemPath })));
+  return entry;
+}
+
+function switchVault(payload) {
+  const input = ensurePlainObject(payload);
+  const targetId = typeof input.id === 'string' ? input.id.trim() : '';
+  if (!targetId) {
+    throw new Error('id is required');
+  }
+  const registry = listVaults().vaults;
+  const target = registry.find(item => item.id === targetId);
+  if (!target) {
+    throw new Error('Vault not found');
+  }
+  ensureVaultDataDirs(target.path);
+  fs.mkdirSync(DESKTOP_CONFIG_ROOT, { recursive: true });
+  fs.writeFileSync(DATA_CONFIG_PATH, JSON.stringify({ data_path: target.path }, null, 4), 'utf8');
+  return { status: 'ok', message: '已切换 Vault，重启后生效', restart_required: true, active_path: target.path };
+}
+
 function switchDataPath(payload) {
   const input = ensurePlainObject(payload);
   if (typeof input.data_path !== 'string' || !input.data_path.trim()) {
@@ -662,7 +782,8 @@ function switchDataPath(payload) {
     }
   }
 
-  fs.writeFileSync(path.join(APP_ROOT, 'data_config.json'), JSON.stringify({ data_path: newPath }, null, 4), 'utf8');
+  fs.mkdirSync(DESKTOP_CONFIG_ROOT, { recursive: true });
+  fs.writeFileSync(DATA_CONFIG_PATH, JSON.stringify({ data_path: newPath }, null, 4), 'utf8');
   return { status: 'ok', message: 'Data path switched. Restart the app to apply it.' };
 }
 
@@ -1272,6 +1393,9 @@ function registerIpcHandlers() {
   trustedIpcHandle('system:open-url', async (_event, payload) => openExternalUrl(payload));
   trustedIpcHandle('system:switch-data-path', async (_event, payload) => switchDataPath(payload));
   trustedIpcHandle('system:import-data', async (_event, payload) => importData(payload));
+  trustedIpcHandle('system:vaults:list', async () => listVaults());
+  trustedIpcHandle('system:vaults:create', async (_event, payload) => createVault(payload));
+  trustedIpcHandle('system:vaults:switch', async (_event, payload) => switchVault(payload));
   trustedIpcHandle('system:update', async (_event, payload) => updateSystem(payload));
   trustedIpcHandle('system:restart', async () => restartSystem());
   trustedIpcHandle('ai:update-ollama', async () => runUpdateOllama());

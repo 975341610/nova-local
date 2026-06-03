@@ -16,3 +16,9 @@ test('main process supports hide-to-background close behavior', () => {
 test('preload allows renderer to update close button behavior', () => {
   assert.match(preloadSource, /desktop:window-close-behavior:update/);
 });
+
+test('preload allows dedicated Vault management IPC channels', () => {
+  assert.match(preloadSource, /system:vaults:list/);
+  assert.match(preloadSource, /system:vaults:create/);
+  assert.match(preloadSource, /system:vaults:switch/);
+});

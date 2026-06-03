@@ -20,6 +20,14 @@ interface SettingsDialogProps {
   onClose: () => void;
 }
 
+type VaultEntry = {
+  id: string;
+  name: string;
+  path: string;
+  active: boolean;
+  exists?: boolean;
+};
+
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
   const { isAiEnabled, setIsAiEnabled, aiMode, setAiMode, contextLength, setContextLength, refreshAiStatus } = useAI();
   const [hwStatus, setHwStatus] = useState<{ compatible: boolean; details: string } | null>(null);
@@ -52,6 +60,12 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
   const [vaultHealth, setVaultHealth] = useState<VaultHealthReport | null>(null);
   const [vaultHealthLoading, setVaultHealthLoading] = useState(false);
   const [vaultHealthError, setVaultHealthError] = useState<string | null>(null);
+  const [vaults, setVaults] = useState<VaultEntry[]>([]);
+  const [vaultConfigPath, setVaultConfigPath] = useState('');
+  const [vaultsLoading, setVaultsLoading] = useState(false);
+  const [vaultNotice, setVaultNotice] = useState<{ success: boolean; message: string } | null>(null);
+  const [newVaultName, setNewVaultName] = useState('我的 Vault');
+  const [newVaultPath, setNewVaultPath] = useState('');
 
   // v0.22.0 · 全量导出
   const [exporting, setExporting] = useState(false);
@@ -151,10 +165,65 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       setThemeImportSuccess(false);
       setModelConfigNotice(null);
       setIsSpellcheckEnabled(isSpellcheckFeatureEnabled());
+      void loadVaults();
       void loadVaultHealth();
       void loadRevisionSettings();
     }
   }, [isOpen, refreshAiStatus]);
+
+  const loadVaults = async () => {
+    setVaultsLoading(true);
+    try {
+      const result = await api.listVaults();
+      setVaults(result.vaults || []);
+      setVaultConfigPath(result.config_path || result.active_path || '');
+    } catch (err: any) {
+      console.error('Failed to load Vault registry:', err);
+      setVaultNotice({ success: false, message: err?.message || '加载 Vault 列表失败' });
+    } finally {
+      setVaultsLoading(false);
+    }
+  };
+
+  const handleCreateVault = async () => {
+    const name = newVaultName.trim();
+    const path = newVaultPath.trim();
+    setVaultNotice(null);
+    if (!path) {
+      setVaultNotice({ success: false, message: '请填写新 Vault 的本地路径' });
+      return;
+    }
+    setVaultsLoading(true);
+    try {
+      const created = await api.createVault({ name: name || '我的 Vault', path });
+      setNewVaultName('我的 Vault');
+      setNewVaultPath('');
+      setVaultNotice({ success: true, message: `已创建 Vault：${created.name}` });
+      await loadVaults();
+    } catch (err: any) {
+      setVaultNotice({ success: false, message: err?.message || '创建 Vault 失败' });
+    } finally {
+      setVaultsLoading(false);
+    }
+  };
+
+  const handleSwitchVault = async (vault: VaultEntry) => {
+    if (vault.active) return;
+    setVaultNotice(null);
+    setVaultsLoading(true);
+    try {
+      const result = await api.switchVault(vault.id);
+      setVaultNotice({
+        success: true,
+        message: result.message || `已切换到 ${vault.name}，重启清知后生效`,
+      });
+      await loadVaults();
+    } catch (err: any) {
+      setVaultNotice({ success: false, message: err?.message || '切换 Vault 失败' });
+    } finally {
+      setVaultsLoading(false);
+    }
+  };
 
   const loadVaultHealth = async () => {
     setVaultHealthLoading(true);
@@ -792,7 +861,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                 }`}
               >
                 <Database size={14} />
-                Vault 体检
+                Vault 管理
               </button>
               <button
                 onClick={() => setActiveTab('updater')}
@@ -1199,6 +1268,118 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                 renderQingzhiSettings()
               ) : activeTab === 'vault' ? (
                 <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="rounded-2xl border border-border/30 bg-accent/5 p-4 space-y-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                          <Database className="w-4 h-4 text-primary" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold">Vault 空间管理</h3>
+                          <p className="text-[10px] text-muted-foreground">
+                            新建、登记、切换多个本地知识库。切换后需要重启清知以加载新的数据目录。
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={loadVaults}
+                        disabled={vaultsLoading}
+                        className="px-3 py-2 rounded-xl bg-accent/20 hover:bg-accent/40 text-xs font-bold flex items-center gap-2 disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${vaultsLoading ? 'animate-spin' : ''}`} />
+                        刷新
+                      </button>
+                    </div>
+
+                    {vaultNotice && (
+                      <div className={`p-3 rounded-xl border text-xs ${
+                        vaultNotice.success
+                          ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700'
+                          : 'border-rose-500/20 bg-rose-500/10 text-rose-600'
+                      }`}>
+                        {vaultNotice.message}
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      {vaults.length === 0 && !vaultsLoading ? (
+                        <div className="p-4 rounded-xl bg-background/50 border border-border/20 text-xs text-muted-foreground">
+                          暂无 Vault 记录，当前数据目录会在刷新后自动登记。
+                        </div>
+                      ) : (
+                        vaults.map((vault) => (
+                          <div
+                            key={vault.id}
+                            className="flex items-center gap-3 p-3 rounded-xl bg-background/60 border border-border/25"
+                          >
+                            <div className={`w-2 h-2 rounded-full ${vault.active ? 'bg-emerald-500' : vault.exists === false ? 'bg-rose-400' : 'bg-muted-foreground/30'}`} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-bold truncate">{vault.name}</span>
+                                {vault.active && (
+                                  <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold">
+                                    当前
+                                  </span>
+                                )}
+                                {vault.exists === false && (
+                                  <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 text-[10px] font-bold">
+                                    路径不存在
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-muted-foreground break-all mt-1">{vault.path}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleSwitchVault(vault)}
+                              disabled={vault.active || vaultsLoading || vault.exists === false}
+                              className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold disabled:opacity-45 disabled:cursor-not-allowed hover:opacity-90"
+                            >
+                              {vault.active ? '使用中' : '切换'}
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-[0.75fr_1.5fr_auto] gap-2 items-end">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-muted-foreground">Vault 名称</label>
+                        <input
+                          value={newVaultName}
+                          onChange={(event) => setNewVaultName(event.target.value)}
+                          placeholder="例如：工作知识库"
+                          className="w-full px-3 py-2 rounded-xl bg-background border border-border/40 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-muted-foreground">本地路径</label>
+                        <input
+                          value={newVaultPath}
+                          onChange={(event) => setNewVaultPath(event.target.value)}
+                          placeholder="例如：D:\\QingZhi\\WorkVault"
+                          className="w-full px-3 py-2 rounded-xl bg-background border border-border/40 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleCreateVault}
+                        disabled={vaultsLoading}
+                        className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold flex items-center gap-2 disabled:opacity-50 hover:opacity-90"
+                      >
+                        {vaultsLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                        新建
+                      </button>
+                    </div>
+
+                    {vaultConfigPath && (
+                      <p className="text-[10px] text-muted-foreground/70 break-all">
+                        Vault 注册表：{vaultConfigPath}
+                      </p>
+                    )}
+                  </div>
+
                   {/* v0.22.0 · 一键导出全部数据 */}
                   <div className="rounded-2xl border border-border/30 bg-accent/5 p-4 space-y-3">
                     <div className="flex items-center gap-3">

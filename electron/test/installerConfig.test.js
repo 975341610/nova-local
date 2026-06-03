@@ -23,4 +23,17 @@ test('Windows installer config builds a branded NSIS exe', () => {
   assert.equal(packageJson.build.win.icon, 'build/app-icon.ico');
   assert.equal(packageJson.build.nsis.oneClick, false);
   assert.equal(packageJson.build.nsis.allowToChangeInstallationDirectory, true);
+  assert.equal(packageJson.build.nsis.shortcutName, '清知');
+});
+
+test('packaged app skips source-tree bootstrap so electron main remains in place', () => {
+  assert.match(mainSource, /const IS_INSTALLER_PACKAGED_APP = /);
+  assert.match(mainSource, /if \(!IS_INSTALLER_PACKAGED_APP\) \{/);
+  assert.match(mainSource, /IS_INSTALLER_PACKAGED_APP\s*\?\s*APP_ROOT\s*:\s*\(resolveCurrentSlot\(APP_ROOT\) \|\| APP_ROOT\)/);
+});
+
+test('installer staging keeps electron main as the package entrypoint', () => {
+  const prepareScript = fs.readFileSync(path.join(repoRoot, 'scripts', 'prepare_installer_app.ps1'), 'utf8');
+  assert.match(prepareScript, /Copy-CleanDirectory -Source \(Join-Path \$RepoRoot 'electron'\)/);
+  assert.match(prepareScript, /main = 'electron\/main\.js'/);
 });
