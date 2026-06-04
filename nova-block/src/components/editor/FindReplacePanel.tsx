@@ -65,7 +65,6 @@ export function FindReplacePanel({ open, onClose, editor }: FindReplacePanelProp
       setFindQuery(editor.view, '', options)
     }
     // 仅在 open 切换时执行,options 变化由上面的 effect 处理
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editor])
 
   const pluginState = editor ? findReplacePluginKey.getState(editor.view.state) : null

@@ -13,6 +13,10 @@ const { apiMock } = vi.hoisted(() => ({
     getModelConfig: vi.fn(),
     updateModelConfig: vi.fn(),
     getVaultHealth: vi.fn(),
+    listVaults: vi.fn(),
+    createVault: vi.fn(),
+    switchVault: vi.fn(),
+    exportAllData: vi.fn(),
     getRevisionSettings: vi.fn(),
     updateRevisionSettings: vi.fn(),
   },
@@ -54,6 +58,10 @@ describe('SettingsDialog AI config', () => {
     apiMock.updateOllama.mockReset()
     apiMock.importDictionary.mockReset()
     apiMock.getVaultHealth.mockReset()
+    apiMock.listVaults.mockReset()
+    apiMock.createVault.mockReset()
+    apiMock.switchVault.mockReset()
+    apiMock.exportAllData.mockReset()
     apiMock.getRevisionSettings.mockReset()
     apiMock.updateRevisionSettings.mockReset()
     setIsAiEnabledMock.mockReset()
@@ -61,6 +69,8 @@ describe('SettingsDialog AI config', () => {
     apiMock.getAIPluginStatus.mockResolvedValue({ enabled: true, ai_mode: 'remote', num_ctx: 8192 })
     apiMock.updateAIPluginConfig.mockResolvedValue({ enabled: true, ai_mode: 'remote', num_ctx: 8192 })
     apiMock.getVaultHealth.mockResolvedValue({ summary: { total_issues: 0 }, issues: [] })
+    apiMock.listVaults.mockResolvedValue({ vaults: [], config_path: '' })
+    apiMock.exportAllData.mockResolvedValue(new Blob([]))
     apiMock.getRevisionSettings.mockResolvedValue({ debounce_seconds: 120, max_keep: 30 })
   })
 
@@ -104,7 +114,6 @@ describe('SettingsDialog AI config', () => {
       })
     })
   })
-})
 
   it('switches AI engine mode from settings', async () => {
     apiMock.getModelConfig.mockResolvedValue({
@@ -126,4 +135,4 @@ describe('SettingsDialog AI config', () => {
       expect(setAiModeMock).toHaveBeenCalledWith('local')
     })
   })
-
+})
