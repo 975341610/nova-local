@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Copy, FilePlus2, Info, Loader2, MessageSquare, Paperclip, Plus, Send, Sparkles, TextCursorInput } from 'lucide-react';
 import { api } from '../../lib/api';
 import { aiMarkdownToHtmlWithFootnotes } from '../../lib/aiMarkdown';
+import {
+  CURRENT_NOTE_AI_ACTIONS,
+  buildCurrentNoteAiPayload,
+  type CurrentNoteAiActionId,
+} from '../../lib/currentNoteAiActions';
 import { getDefaultNoteParentId } from '../../lib/notesHome';
 import type { Citation, ImportPreviewItem, ImportTemplateId, Note } from '../../lib/types';
 import { useNoteStore } from '../../store/useNoteStore';
@@ -22,7 +27,7 @@ type ImportChatMessage = {
 
 type ComposerMode = 'ask' | 'source';
 type WorkbenchMode = 'import' | 'ask' | 'write';
-type WriteActionId = 'summarize' | 'outline' | 'tasks';
+type WriteActionId = CurrentNoteAiActionId;
 type AskScope = 'import' | 'note' | 'vault';
 
 type UploadedFileRef = {
@@ -32,31 +37,7 @@ type UploadedFileRef = {
   type?: string;
 };
 
-const AI_WRITE_ACTIONS: Array<{
-  id: WriteActionId;
-  label: string;
-  action: string;
-  prompt: string;
-}> = [
-  {
-    id: 'summarize',
-    label: '总结当前笔记',
-    action: 'summarize',
-    prompt: '请总结当前笔记，输出适合直接写回笔记的结构化摘要。',
-  },
-  {
-    id: 'outline',
-    label: '生成大纲',
-    action: 'outline',
-    prompt: '请基于当前笔记生成层次清晰的大纲。',
-  },
-  {
-    id: 'tasks',
-    label: '提取行动项',
-    action: 'ask',
-    prompt: '请从当前笔记中提取可执行行动项，按动作、背景、优先级整理。',
-  },
-];
+const AI_WRITE_ACTIONS = CURRENT_NOTE_AI_ACTIONS;
 
 const SUGGESTED_ASK_PROMPTS = [
   '总结核心要点',
@@ -68,16 +49,6 @@ const compactPromptLabel = (prompt: string) => {
   if (prompt.includes('行动')) return '行动项';
   if (prompt.includes('复习')) return '复习题';
   return '总结要点';
-};
-
-const htmlToPlainText = (html: string) => {
-  if (!html) return '';
-  if (typeof document === 'undefined') {
-    return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  }
-  const element = document.createElement('div');
-  element.innerHTML = html;
-  return (element.textContent || '').replace(/\s+/g, ' ').trim();
 };
 
 const cleanAiPanelText = (value?: string) => {
@@ -810,10 +781,13 @@ export const AIImportPanel = ({ selectedNoteId, onSelectNoteId }: AIImportPanelP
       const latestNote = selectedNoteForImport.content === undefined
         ? await api.getNote(Number(selectedNoteForImport.id))
         : selectedNoteForImport;
-      const context = htmlToPlainText(latestNote.content || '');
+      const payload = buildCurrentNoteAiPayload(writeAction, {
+        title: latestNote.title,
+        content: latestNote.content || '',
+      });
       let nextResult = '';
       await api.streamInlineAI(
-        { action: writeAction.action, prompt: writeAction.prompt, context },
+        payload,
         (chunk) => {
           nextResult += chunk;
           setAiWriteResult(nextResult);

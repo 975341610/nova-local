@@ -66,6 +66,7 @@ describe('SidebarTree AI import generate entry', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ai-workbench-mode-write' }))
     expect(await screen.findByTestId('ai-write-panel')).toBeTruthy()
     expect(screen.getByText('总结当前笔记')).toBeTruthy()
+    expect(screen.getByText('标签建议')).toBeTruthy()
   })
 
   it('previews files, lets the user choose a template, generates one AI note, and selects it', async () => {
