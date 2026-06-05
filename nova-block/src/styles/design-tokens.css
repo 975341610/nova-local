@@ -133,6 +133,17 @@
   --nv-reader-fg: hsl(24 14% 16%);
   --nv-reader-measure: 72ch;
   --nv-reader-leading: 1.85;
+
+  /* ---------- Floating Layer / z-index ---------- */
+  --qz-z-editor-underlay: 1;
+  --qz-z-editor-content: 10;
+  --qz-z-document-preview: 12;
+  --qz-z-editor-affordance: 20;
+  --qz-z-editor-toolbar: 80;
+  --qz-z-side-panel: 90;
+  --qz-z-popover: 120;
+  --qz-z-modal: 1000;
+  --qz-z-system-dialog: 10020;
 }
 
 html[data-theme="dark"],

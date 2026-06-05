@@ -14,6 +14,7 @@ const ALLOWED_IPC_CHANNELS = new Set([
   'system:import-data',
   'system:vaults:list',
   'system:vaults:create',
+  'system:vaults:pick-folder',
   'system:vaults:switch',
   'system:update',
   'system:restart',

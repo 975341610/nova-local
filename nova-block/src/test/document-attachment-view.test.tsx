@@ -26,6 +26,7 @@ describe('DocumentAttachmentView', () => {
 
     expect(source).not.toContain('data-qz-document-pdf-host')
     expect(source).toContain('data-qz-document-pdf-layer')
+    expect(source).toContain('--qz-z-document-preview')
   })
 
   it('loads pdf preview once and renders the iframe instead of staying in loading state', async () => {

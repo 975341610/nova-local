@@ -44,9 +44,9 @@ def test_connectivity_check_caches_result_for_same_base_url(monkeypatch):
 async def _test_connectivity_check_caches_result_for_same_base_url(monkeypatch):
     calls = {"dns": 0, "tcp": 0}
 
-    def fake_getaddrinfo(host, port):
+    def fake_getaddrinfo(host, port, *args, **kwargs):
         calls["dns"] += 1
-        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", port))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", port))]
 
     class FakeSocket:
         def __enter__(self):
@@ -90,6 +90,53 @@ async def _test_connectivity_check_caches_failure_for_same_base_url(monkeypatch)
     assert first == second
     assert "Error:" in first
     assert calls == {"dns": 1}
+
+
+def test_connectivity_check_rejects_loopback_base_url(monkeypatch):
+    asyncio.run(_test_connectivity_check_rejects_loopback_base_url(monkeypatch))
+
+
+async def _test_connectivity_check_rejects_loopback_base_url(monkeypatch):
+    calls = {"dns": 0}
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        calls["dns"] += 1
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    client = AIClient()
+
+    result = await client._check_connectivity("http://127.0.0.1:11434/v1")
+
+    assert "Error:" in result
+    assert "private" in result.lower()
+    assert calls == {"dns": 0}
+
+
+def test_connectivity_check_rejects_domains_that_resolve_to_private_ips(monkeypatch):
+    asyncio.run(_test_connectivity_check_rejects_domains_that_resolve_to_private_ips(monkeypatch))
+
+
+async def _test_connectivity_check_rejects_domains_that_resolve_to_private_ips(monkeypatch):
+    calls = {"dns": 0, "tcp": 0}
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        calls["dns"] += 1
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.5", port))]
+
+    def fake_create_connection(address, timeout):
+        calls["tcp"] += 1
+        raise AssertionError("private addresses must be rejected before TCP connection")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(socket, "create_connection", fake_create_connection)
+    client = AIClient()
+
+    result = await client._check_connectivity("https://api.example.com/v1")
+
+    assert "Error:" in result
+    assert "private" in result.lower()
+    assert calls == {"dns": 1, "tcp": 0}
 
 def test_error_translation_401():
     asyncio.run(_test_error_translation_401())

@@ -740,6 +740,17 @@ function createVault(payload) {
   return entry;
 }
 
+async function pickVaultFolder() {
+  const result = await dialog.showOpenDialog(mainWindow || undefined, {
+    title: '选择 Vault 文件夹',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (result.canceled || !result.filePaths?.[0]) {
+    return null;
+  }
+  return { path: path.resolve(result.filePaths[0]) };
+}
+
 function switchVault(payload) {
   const input = ensurePlainObject(payload);
   const targetId = typeof input.id === 'string' ? input.id.trim() : '';
@@ -1395,6 +1406,7 @@ function registerIpcHandlers() {
   trustedIpcHandle('system:import-data', async (_event, payload) => importData(payload));
   trustedIpcHandle('system:vaults:list', async () => listVaults());
   trustedIpcHandle('system:vaults:create', async (_event, payload) => createVault(payload));
+  trustedIpcHandle('system:vaults:pick-folder', async () => pickVaultFolder());
   trustedIpcHandle('system:vaults:switch', async (_event, payload) => switchVault(payload));
   trustedIpcHandle('system:update', async (_event, payload) => updateSystem(payload));
   trustedIpcHandle('system:restart', async () => restartSystem());

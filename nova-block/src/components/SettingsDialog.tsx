@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Settings, BookOpen, Upload, Database, RefreshCw, Zap, Palette, Download, FileJson, Save, Package, CalendarDays, Command, PanelRight, Share2, MessageSquare, Clock, Plus, GripVertical } from 'lucide-react';
+import { X, Cpu, ToggleLeft, ToggleRight, CheckCircle2, AlertCircle, Loader2, Settings, BookOpen, Upload, Database, RefreshCw, Zap, Palette, Download, FileJson, Save, Package, CalendarDays, Command, PanelRight, Share2, MessageSquare, Clock, Plus, GripVertical, FolderOpen } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAI } from '../contexts/AIContext';
 import { getThemeConfig, saveThemeConfig, exportThemeConfig, validateThemeConfig, applyThemeConfig } from '../lib/themeUtils';
@@ -204,6 +204,18 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       setVaultNotice({ success: false, message: err?.message || '创建 Vault 失败' });
     } finally {
       setVaultsLoading(false);
+    }
+  };
+
+  const handlePickVaultFolder = async () => {
+    setVaultNotice(null);
+    try {
+      const result = await api.pickVaultFolder();
+      if (result?.path) {
+        setNewVaultPath(result.path);
+      }
+    } catch (err: any) {
+      setVaultNotice({ success: false, message: err?.message || '选择 Vault 文件夹失败' });
     }
   };
 
@@ -1355,12 +1367,24 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                       </div>
                       <div className="space-y-1">
                         <label className="text-[11px] font-bold text-muted-foreground">本地路径</label>
-                        <input
-                          value={newVaultPath}
-                          onChange={(event) => setNewVaultPath(event.target.value)}
-                          placeholder="例如：D:\\QingZhi\\WorkVault"
-                          className="w-full px-3 py-2 rounded-xl bg-background border border-border/40 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                        />
+                        <div className="flex gap-2">
+                          <input
+                            value={newVaultPath}
+                            onChange={(event) => setNewVaultPath(event.target.value)}
+                            placeholder="例如：D:\\QingZhi\\WorkVault"
+                            className="min-w-0 flex-1 px-3 py-2 rounded-xl bg-background border border-border/40 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          />
+                          <button
+                            type="button"
+                            onClick={handlePickVaultFolder}
+                            disabled={vaultsLoading}
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border/40 bg-background text-muted-foreground transition hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+                            title="选择文件夹"
+                            aria-label="选择 Vault 文件夹"
+                          >
+                            <FolderOpen className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                       <button
                         type="button"

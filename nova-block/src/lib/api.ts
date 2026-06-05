@@ -381,6 +381,8 @@ export const api = {
     invoke<{ active_path: string; config_path?: string; vaults: Array<{ id: string; name: string; path: string; active: boolean; exists?: boolean }> }>('system:vaults:list', '/system/vaults'),
   createVault: (payload: { name: string; path: string }) =>
     invoke<{ id: string; name: string; path: string; active: boolean; exists?: boolean }>('system:vaults:create', '/system/vaults', { method: 'POST', body: JSON.stringify(payload) }),
+  pickVaultFolder: () =>
+    invoke<{ path: string } | null>('system:vaults:pick-folder', '/system/vaults/pick-folder'),
   switchVault: (id: string) =>
     invoke<{ status: string; message?: string; restart_required?: boolean; active_path?: string }>('system:vaults:switch', `/system/vaults/${encodeURIComponent(id)}/switch`, { method: 'POST', body: JSON.stringify({ id }) }),
   updateSystem: (force = false) =>

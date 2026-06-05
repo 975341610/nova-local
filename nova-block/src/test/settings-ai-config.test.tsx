@@ -15,6 +15,7 @@ const { apiMock } = vi.hoisted(() => ({
     getVaultHealth: vi.fn(),
     listVaults: vi.fn(),
     createVault: vi.fn(),
+    pickVaultFolder: vi.fn(),
     switchVault: vi.fn(),
     exportAllData: vi.fn(),
     getRevisionSettings: vi.fn(),
@@ -60,6 +61,7 @@ describe('SettingsDialog AI config', () => {
     apiMock.getVaultHealth.mockReset()
     apiMock.listVaults.mockReset()
     apiMock.createVault.mockReset()
+    apiMock.pickVaultFolder.mockReset()
     apiMock.switchVault.mockReset()
     apiMock.exportAllData.mockReset()
     apiMock.getRevisionSettings.mockReset()

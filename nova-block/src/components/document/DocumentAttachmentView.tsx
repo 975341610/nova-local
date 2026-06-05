@@ -18,6 +18,11 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api, formatUrl } from '../../lib/api';
+import {
+  DEFAULT_DOCUMENT_PREVIEW_SESSION_CACHE_LIMIT,
+  getDocumentPreviewCacheKey,
+  getOrCreateFifoMapEntry,
+} from '../../lib/documentPreviewSession';
 import { formatFileSize } from '../../lib/mediaUtils';
 
 type DocumentPreview = {
@@ -42,7 +47,6 @@ type DocumentAttachmentViewProps = {
   onDelete: () => void;
 };
 
-const MAX_DOCUMENT_PREVIEW_SESSION_CACHE = 8;
 const MAX_DOCUMENT_PDF_FRAME_CACHE = 8;
 const DOCUMENT_PDF_IFRAME_CLASS = 'qz-document-pdf-iframe h-full min-h-[420px] w-full rounded-xl bg-white';
 
@@ -74,24 +78,13 @@ const documentPdfFrameTargets = new Map<string, DocumentPdfFrameTarget>();
 let documentPdfFrameRaf = 0;
 let documentPdfFrameHeartbeat = 0;
 
-const getDocumentPreviewCacheKey = (src: string, name = '', type = '') => `${src}::${name}::${type}`;
-
-const evictDocumentPreviewCache = () => {
-  while (documentPreviewSessionCache.size > MAX_DOCUMENT_PREVIEW_SESSION_CACHE) {
-    const oldestKey = documentPreviewSessionCache.keys().next().value as string | undefined;
-    if (!oldestKey) break;
-    documentPreviewSessionCache.delete(oldestKey);
-  }
-};
-
 const getOrCreateDocumentPreviewCacheEntry = (key: string) => {
-  let entry = documentPreviewSessionCache.get(key);
-  if (!entry) {
-    entry = { viewMode: 'card', preview: null };
-    documentPreviewSessionCache.set(key, entry);
-    evictDocumentPreviewCache();
-  }
-  return entry;
+  return getOrCreateFifoMapEntry(
+    documentPreviewSessionCache,
+    key,
+    (): DocumentPreviewCacheEntry => ({ viewMode: 'card', preview: null }),
+    DEFAULT_DOCUMENT_PREVIEW_SESSION_CACHE_LIMIT,
+  );
 };
 
 export const __resetDocumentPreviewSessionCacheForTests = () => {
@@ -122,7 +115,7 @@ const getDocumentPdfLayer = () => {
     layer.style.position = 'fixed';
     layer.style.inset = '0';
     layer.style.pointerEvents = 'none';
-    layer.style.zIndex = '12';
+    layer.style.zIndex = 'var(--qz-z-document-preview, 12)';
     document.body.appendChild(layer);
   }
   return layer;

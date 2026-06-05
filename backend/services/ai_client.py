@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+import ipaddress
 import os
 import socket
 import time
@@ -28,6 +29,32 @@ def get_ai_logger():
         fh.setFormatter(formatter)
         logger.addHandler(fh)
     return logger
+
+
+def _allows_private_ai_base_url() -> bool:
+    return os.getenv("ALLOW_PRIVATE_AI_BASE_URL", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_ip_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.ip_address(value)
+    except ValueError:
+        return None
+
+
+def _is_restricted_ai_target_ip(value: str) -> bool:
+    ip = _parse_ip_address(value)
+    if ip is None:
+        return False
+    return not ip.is_global
+
+
+def _private_ai_target_error(host: str, ip: str | None = None) -> str:
+    target = f"{host} ({ip})" if ip and ip != host else host
+    return (
+        f"Error: Private or local AI API base URL is blocked: {target}. "
+        "Use a public HTTPS endpoint, or set ALLOW_PRIVATE_AI_BASE_URL=true only for trusted local development."
+    )
 
 
 class AIClient:
@@ -109,6 +136,9 @@ class AIClient:
         if not host:
             return remember("Error: Invalid Hostname. Please check your AI API base URL setting.")
 
+        if not _allows_private_ai_base_url() and _is_restricted_ai_target_ip(host):
+            return remember(_private_ai_target_error(host))
+
         # Detect Anthropic Endpoint
         if "api.anthropic.com" in host or "/v1/messages" in url:
             return (
@@ -124,6 +154,11 @@ class AIClient:
             )
             ips = {info[4][0] for info in resolved}
             self.logger.info(f"DNS resolved {host} to: {list(ips)}")
+
+            if not _allows_private_ai_base_url():
+                blocked_ip = next((ip for ip in ips if _is_restricted_ai_target_ip(ip)), None)
+                if blocked_ip:
+                    return remember(_private_ai_target_error(host, blocked_ip))
 
             # 2. TCP Connect Check
             # Windows error 10061 (Connection Refused) or 10060 (Timeout)

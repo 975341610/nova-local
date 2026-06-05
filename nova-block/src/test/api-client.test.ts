@@ -184,16 +184,19 @@ describe('api browser fallback', () => {
       .mockResolvedValueOnce({ active_path: 'D:/QingZhi/Main', vaults: [] })
       .mockResolvedValueOnce({ id: 'new-vault', name: '新 Vault', path: 'D:/QingZhi/New', active: false })
       .mockResolvedValueOnce({ status: 'ok', message: '已切换 Vault，重启后生效' })
+      .mockResolvedValueOnce({ path: 'D:/QingZhi/Picked' })
     ;(window as typeof window & { electron?: { ipcInvoke: typeof ipcInvoke } }).electron = { ipcInvoke }
     const fetchMock = vi.spyOn(globalThis, 'fetch')
 
     await api.listVaults()
     await api.createVault({ name: '新 Vault', path: 'D:/QingZhi/New' })
     await api.switchVault('new-vault')
+    await api.pickVaultFolder()
 
     expect(ipcInvoke).toHaveBeenCalledWith('system:vaults:list', {})
     expect(ipcInvoke).toHaveBeenCalledWith('system:vaults:create', { name: '新 Vault', path: 'D:/QingZhi/New' })
     expect(ipcInvoke).toHaveBeenCalledWith('system:vaults:switch', { id: 'new-vault' })
+    expect(ipcInvoke).toHaveBeenCalledWith('system:vaults:pick-folder', {})
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

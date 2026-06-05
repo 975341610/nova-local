@@ -57,8 +57,10 @@ test('main IPC handlers verify the renderer sender before privileged work', () =
 test('main process exposes dedicated Vault management IPC handlers', () => {
   assert.match(mainSource, /function listVaults/);
   assert.match(mainSource, /function createVault/);
+  assert.match(mainSource, /async function pickVaultFolder/);
   assert.match(mainSource, /function switchVault/);
   assert.match(mainSource, /trustedIpcHandle\('system:vaults:list'/);
   assert.match(mainSource, /trustedIpcHandle\('system:vaults:create'/);
+  assert.match(mainSource, /trustedIpcHandle\('system:vaults:pick-folder'/);
   assert.match(mainSource, /trustedIpcHandle\('system:vaults:switch'/);
 });
