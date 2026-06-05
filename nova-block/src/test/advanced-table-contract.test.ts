@@ -64,6 +64,10 @@ describe('QingZhi advanced table', () => {
       path.resolve(sourceRoot, 'styles/qingzhi-refine-v34.css'),
       'utf8',
     )
+    const tableEdgeSource = fs.readFileSync(
+      path.resolve(sourceRoot, 'lib/advancedTableEdges.ts'),
+      'utf8',
+    )
 
     expect(editorSource).toContain('advancedTableEdgeIntent')
     expect(editorSource).toContain('handleAdvancedTableMouseMove')
@@ -82,8 +86,9 @@ describe('QingZhi advanced table', () => {
     expect(editorSource).not.toContain('advancedTableSelectedEdge')
     expect(editorSource).not.toContain('qz-table-edge-selected-highlight')
     expect(editorSource).not.toContain('setAdvancedTableSelectedEdge')
-    expect(editorSource).toContain("column: {")
-    expect(editorSource).toContain("row: {")
+    expect(editorSource).toContain('buildAdvancedTableEdgeIntent')
+    expect(tableEdgeSource).toContain("column: {")
+    expect(tableEdgeSource).toContain("row: {")
     expect(editorSource).toContain('advancedTableEdgeIntent[kind]')
     expect(editorSource).toContain("(['column', 'row'] as const).map")
     expect(editorSource).toContain('insertAdvancedTableEdgeAtPoint(kind, dot.commandPoint.x, dot.commandPoint.y)')
@@ -93,7 +98,7 @@ describe('QingZhi advanced table', () => {
     expect(editorSource).not.toContain('clearCurrentTableCell')
     expect(editorSource).toContain('selectAdvancedTableEdge(kind,')
     expect(editorSource).toContain('qz-table-edge-dot')
-    expect(editorSource).toContain('dots:')
+    expect(tableEdgeSource).toContain('dots:')
     expect(editorSource).toContain('edge.dots.map')
     expect(editorSource).toContain('hoveredInsertTarget')
     expect(editorSource).not.toContain('hoveredInsertKind')

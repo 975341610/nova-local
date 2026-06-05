@@ -72,6 +72,11 @@ import {
   shouldApplySavedDraftToCurrentNote,
   upsertQueuedSavePayload,
 } from '../../lib/editorDraftSync';
+import {
+  buildAdvancedTableEdgeIntent,
+  type AdvancedTableEdgeIntent,
+  type AdvancedTableRect,
+} from '../../lib/advancedTableEdges';
 import { stripLeadingDuplicateTitleBlockFromHtml } from '../../lib/noteContentTitle';
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
@@ -125,6 +130,13 @@ function escapeCssIdentifier(value: string): string {
   }
   return value.replace(/["\\]/g, '\\$&');
 }
+
+const toAdvancedTableRect = (rect: DOMRect | ClientRect): AdvancedTableRect => ({
+  left: rect.left,
+  top: rect.top,
+  width: rect.width,
+  height: rect.height,
+});
 
 const NOVA_BLOCK_SLASH_ITEMS = [
   {
@@ -665,25 +677,6 @@ interface NovaBlockEditorProps {
   isTypewriterOn?: boolean;
   onToggleTypewriter?: () => void;
 }
-
-type AdvancedTableEdgeDot = {
-  key: string;
-  left: number;
-  top: number;
-  commandPoint: { x: number; y: number };
-  line: { left: number; top: number; width: number; height: number };
-};
-
-type AdvancedTableEdgeControl = {
-  kind: 'row' | 'column';
-  select: { left: number; top: number; width: number; height: number };
-  dots: AdvancedTableEdgeDot[];
-};
-
-type AdvancedTableEdgeIntent = null | {
-  row: AdvancedTableEdgeControl;
-  column: AdvancedTableEdgeControl;
-};
 
 type RevisionSnapshotStatus = {
   noteId: number;
@@ -1703,49 +1696,16 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       return;
     }
     const headerCells = Array.from(rows[0].cells);
-
-    // Persistent dots cover every row (left edge) and every column (top edge)
-    // simultaneously, regardless of which cell the cursor is currently over.
-    const columnDots: AdvancedTableEdgeDot[] = headerCells.map((headerCell, index) => {
-      const r = headerCell.getBoundingClientRect();
-      const safeY = r.top + Math.min(20, Math.max(8, r.height / 2));
-      return {
-        key: `col-${index}`,
-        left: r.right - 17,
-        top: tableRect.top - 40,
-        commandPoint: { x: r.left + r.width / 2, y: safeY },
-        line: { left: r.right - 1, top: tableRect.top, width: 2, height: tableRect.height },
-      };
+    const rowRects = rows
+      .map((rowEl) => rowEl.cells[0]?.getBoundingClientRect())
+      .filter((rect): rect is DOMRect => Boolean(rect))
+      .map(toAdvancedTableRect);
+    const edgeIntent = buildAdvancedTableEdgeIntent({
+      tableRect: toAdvancedTableRect(tableRect),
+      columnRects: headerCells.map((headerCell) => toAdvancedTableRect(headerCell.getBoundingClientRect())),
+      rowRects,
     });
-
-    const rowDots: AdvancedTableEdgeDot[] = rows.map((rowEl, index) => {
-      const firstCell = rowEl.cells[0];
-      if (!firstCell) {
-        return null;
-      }
-      const r = firstCell.getBoundingClientRect();
-      const safeX = r.left + Math.min(20, Math.max(8, r.width / 2));
-      return {
-        key: `row-${index}`,
-        left: tableRect.left - 40,
-        top: r.bottom - 17,
-        commandPoint: { x: safeX, y: r.top + r.height / 2 },
-        line: { left: tableRect.left, top: r.bottom - 1, width: tableRect.width, height: 2 },
-      };
-    }).filter((dot): dot is AdvancedTableEdgeDot => dot !== null);
-
-    setAdvancedTableEdgeIntent({
-      column: {
-        kind: 'column',
-        select: { left: tableRect.left, top: tableRect.top - 28, width: tableRect.width, height: 28 },
-        dots: columnDots,
-      },
-      row: {
-        kind: 'row',
-        select: { left: tableRect.left - 28, top: tableRect.top, width: 28, height: tableRect.height },
-        dots: rowDots,
-      },
-    });
+    setAdvancedTableEdgeIntent(edgeIntent);
   }, [editor, isAdvancedTableColumnResizeHandleHit]);
 
   const handleAdvancedTableSurfaceMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
