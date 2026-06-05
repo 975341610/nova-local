@@ -27,7 +27,7 @@ describe('DocumentAttachmentView', () => {
 
     expect(source).not.toContain('data-qz-document-pdf-host')
     expect(portalSource).toContain('data-qz-document-pdf-layer')
-    expect(portalSource).toContain('--qz-z-document-preview')
+    expect(portalSource).toContain("getFloatingLayerCssVar('documentPreview')")
   })
 
   it('loads pdf preview once and renders the iframe instead of staying in loading state', async () => {

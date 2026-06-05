@@ -1,3 +1,5 @@
+import { getFloatingLayerCssVar } from './floatingLayers'
+
 export const DOCUMENT_PDF_IFRAME_CLASS = 'qz-document-pdf-iframe h-full min-h-[420px] w-full rounded-xl bg-white'
 
 export type DocumentPdfFrameCacheEntry = {
@@ -21,7 +23,7 @@ export function getDocumentPdfLayer(ownerDocument: Document = document) {
     layer.style.position = 'fixed'
     layer.style.inset = '0'
     layer.style.pointerEvents = 'none'
-    layer.style.zIndex = 'var(--qz-z-document-preview, 12)'
+    layer.style.zIndex = getFloatingLayerCssVar('documentPreview')
     ownerDocument.body.appendChild(layer)
   }
   return layer
