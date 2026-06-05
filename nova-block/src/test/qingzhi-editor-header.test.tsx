@@ -112,4 +112,23 @@ describe('QingZhi EditorHeader toolbar', () => {
     fireEvent.click(screen.getByTestId('qingzhi-editor-action-find-replace'))
     expect(onToggleFindReplace).toHaveBeenCalledTimes(1)
   })
+
+  it('shows a compact save health panel with revision failure details', () => {
+    render(
+      <EditorHeader
+        {...baseProps}
+        revisionSnapshotStatus={{
+          status: 'failed',
+          detail: 'FOREIGN KEY constraint failed',
+        }}
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId('qingzhi-save-health-trigger'))
+
+    expect(screen.getByTestId('qingzhi-save-health-panel')).toBeTruthy()
+    expect(screen.getByText('保存健康')).toBeTruthy()
+    expect(screen.getByText('版本快照：快照失败')).toBeTruthy()
+    expect(screen.getByText(/打开版本历史/)).toBeTruthy()
+  })
 })

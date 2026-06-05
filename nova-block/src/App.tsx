@@ -47,6 +47,8 @@ import { useNovaTheme, THEME_META, THEME_LIST } from './contexts/ThemeContext'
 import { buildCorpus, findBacklinks } from './lib/backlinks'
 import { chooseCurrentNoteIdAfterRefresh } from './lib/currentNoteRefresh'
 import { suggestTags, suggestTitle } from './lib/autoTag'
+import { collectAttachmentInventory, summarizeAttachmentInventory } from './lib/attachmentInventory'
+import { formatFileSize } from './lib/mediaUtils'
 import {
   BookOpen as BookOpenIcon,
   Share2 as Share2Icon,
@@ -2458,6 +2460,13 @@ function NoteInspectorContent({
     return txt ? txt.length : 0
   }, [note?.content])
 
+  const attachments = useMemo(() => {
+    if (!note?.content) return []
+    return collectAttachmentInventory(note.content)
+  }, [note?.content])
+
+  const attachmentSummary = useMemo(() => summarizeAttachmentInventory(attachments), [attachments])
+
   const updatedStr = note?.updated_at ? new Date(note.updated_at).toLocaleString() : '—'
   const createdStr = (note as any)?.created_at
     ? new Date((note as any).created_at).toLocaleString()
@@ -2556,6 +2565,68 @@ function NoteInspectorContent({
             <InspectorRow icon={<BookmarkIcon size={13} />} label="字数">
               {wordCount}
             </InspectorRow>
+          </div>
+        </section>
+      )}
+
+      {note && !note.is_folder && (
+        <section data-testid="note-attachment-inventory">
+          <InspectorSectionTitle>附件管理</InspectorSectionTitle>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 8,
+              }}
+            >
+              <div className="nv-card" style={{ padding: '10px 12px' }}>
+                <div style={{ fontSize: 11, color: 'var(--nv-color-fg-subtle)', marginBottom: 4 }}>附件数</div>
+                <div style={{ fontSize: 20, fontWeight: 800 }}>{attachmentSummary.total}</div>
+              </div>
+              <div className="nv-card" style={{ padding: '10px 12px' }}>
+                <div style={{ fontSize: 11, color: 'var(--nv-color-fg-subtle)', marginBottom: 4 }}>总体积</div>
+                <div style={{ fontSize: 20, fontWeight: 800 }}>{formatFileSize(attachmentSummary.totalBytes)}</div>
+              </div>
+            </div>
+            {attachments.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--nv-color-fg-subtle)' }}>当前笔记暂无附件。</div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {Object.entries(attachmentSummary.byKind)
+                    .filter(([, count]) => count > 0)
+                    .map(([kind, count]) => (
+                      <span key={kind} className="nv-chip" style={{ fontSize: 11 }}>
+                        {kind === 'document' ? '文档' : kind === 'image' ? '图片' : kind === 'video' ? '视频' : kind === 'audio' ? '音频' : '文件'} {count}
+                      </span>
+                    ))}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {attachments.slice(0, 5).map((item) => (
+                    <div
+                      key={`${item.kind}-${item.src}-${item.name}`}
+                      className="nv-card"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        padding: '8px 10px',
+                      }}
+                      title={item.src}
+                    >
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>
+                        {item.name}
+                      </span>
+                      <span style={{ color: 'var(--nv-color-fg-subtle)', fontSize: 11 }}>
+                        {item.size ? formatFileSize(item.size) : '未知'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </section>
       )}

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 
 import { confirmCompat } from '../../lib/confirmCompat'
+import { deriveSaveHealthStatus, type RevisionSnapshotStatus } from '../../lib/saveHealth'
 import type { BackgroundPaperType } from '../../lib/types'
 
 type Breadcrumb = {
@@ -27,13 +28,6 @@ type Breadcrumb = {
   title: string
   icon: string
 }
-
-type RevisionSnapshotStatus = {
-  status: 'queued' | 'saving' | 'saved' | 'failed'
-  detail?: string
-  queued?: number
-  updatedAt?: string
-} | null
 
 type EditorHeaderProps = {
   icon: string
@@ -110,23 +104,22 @@ export function EditorHeader(props: EditorHeaderProps) {
     onOpenHistory,
   } = props
 
-  const revisionStatusLabel =
-    revisionSnapshotStatus?.status === 'failed'
-      ? '快照失败'
-      : revisionSnapshotStatus?.status === 'saving'
-        ? '快照写入中'
-        : revisionSnapshotStatus?.status === 'queued'
-          ? `快照排队${revisionSnapshotStatus.queued ? ` ${revisionSnapshotStatus.queued}` : ''}`
-          : null
-  const revisionStatusTitle =
-    revisionSnapshotStatus?.status === 'failed'
-      ? `版本快照失败：${revisionSnapshotStatus.detail || '等待后台重试'}`
-      : revisionSnapshotStatus?.status === 'saving'
-        ? '版本快照正在后台写入'
-        : revisionSnapshotStatus?.status === 'queued'
-          ? '版本快照已进入后台队列，内容保存不受影响'
-          : undefined
+  const saveHealth = deriveSaveHealthStatus({
+    savePhase,
+    isDirty,
+    lastSavedAt: props.lastSavedAt,
+    revisionSnapshotStatus,
+  })
+  const saveHealthDotClass =
+    saveHealth.severity === 'error'
+      ? 'bg-rose-500 animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.75)]'
+      : saveHealth.severity === 'busy' || saveHealth.severity === 'warning'
+        ? 'bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.8)]'
+        : saveHealth.severity === 'pending'
+          ? 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]'
+          : 'bg-emerald-400'
 
+  const [isSaveHealthOpen, setIsSaveHealthOpen] = useState(false)
   const [isBackgroundMenuOpen, setIsBackgroundMenuOpen] = useState(false)
   const backgroundMenuRef = useRef<HTMLDivElement>(null)
 
@@ -150,33 +143,53 @@ export function EditorHeader(props: EditorHeaderProps) {
     <div className="flex flex-col bg-transparent px-0 pt-0 pb-0 antialiased">
       <div data-testid="qingzhi-editorbar" className="qz-editorbar sticky top-0 z-[120] isolate mb-4 flex items-center justify-between border-b border-border/40 bg-background/80 pt-3 pb-3 backdrop-blur-xl transition-colors">
         <div data-testid="qingzhi-editor-status" className="qz-editor-status relative z-[130] flex min-w-0 items-center gap-4">
-          <div className="flex cursor-default items-center gap-2 rounded-lg p-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground transition-all hover:bg-accent/50">
+          <button
+            type="button"
+            data-testid="qingzhi-save-health-trigger"
+            onClick={() => setIsSaveHealthOpen((open) => !open)}
+            title={saveHealth.saveTitle}
+            className="group relative flex cursor-pointer items-center gap-2 rounded-lg p-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground transition-all hover:bg-accent/50"
+          >
             <span className="text-[11px] font-semibold tracking-[0.18em] text-[var(--nv-color-accent-fg)]">清知编辑</span>
             <div
-              className={`qz-editor-save-indicator relative z-[140] h-2 w-2 rounded-full ${
-                savePhase === 'saving'
-                  ? 'bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.8)]'
-                  : isDirty
-                    ? 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.8)]'
-                    : 'bg-emerald-400'
-              }`}
+              className={`qz-editor-save-indicator relative z-[140] h-2 w-2 rounded-full ${saveHealthDotClass}`}
             />
             <span className="opacity-70 group-hover:opacity-100">
-              {savePhase === 'saving' ? '保存中' : savePhase === 'queued' ? '排队中' : isDirty ? '未保存' : '已同步'}
+              {saveHealth.saveLabel}
             </span>
-            {revisionStatusLabel && (
+            {saveHealth.revisionLabel && (
               <span
                 className={`ml-1 rounded-full px-1.5 py-0.5 text-[9px] tracking-[0.12em] ${
-                  revisionSnapshotStatus?.status === 'failed'
+                  saveHealth.severity === 'error'
                     ? 'bg-rose-500/10 text-rose-500'
                     : 'bg-amber-500/10 text-amber-600'
                 }`}
-                title={revisionStatusTitle}
+                title={saveHealth.revisionTitle}
               >
-                {revisionStatusLabel}
+                {saveHealth.revisionLabel}
               </span>
             )}
-          </div>
+            {isSaveHealthOpen && (
+              <div
+                data-testid="qingzhi-save-health-panel"
+                className="absolute top-full left-0 z-[220] mt-2 w-[280px] rounded-xl border border-border/50 bg-background/95 p-3 text-left text-[12px] font-normal normal-case tracking-normal text-foreground shadow-xl backdrop-blur-xl"
+              >
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="font-semibold text-[var(--nv-color-accent-fg)]">保存健康</span>
+                  <span className="rounded-full bg-accent/50 px-2 py-0.5 text-[10px] text-muted-foreground">
+                    {saveHealth.saveLabel}
+                  </span>
+                </div>
+                <div className="space-y-1.5 text-muted-foreground">
+                  <p>{saveHealth.summary}</p>
+                  {saveHealth.revisionLabel && (
+                    <p title={saveHealth.revisionTitle}>版本快照：{saveHealth.revisionLabel}</p>
+                  )}
+                  <p className="text-[11px] leading-relaxed text-muted-foreground/90">{saveHealth.recommendation}</p>
+                </div>
+              </div>
+            )}
+          </button>
 
           {breadcrumbs && breadcrumbs.length > 0 && (
             <div className="flex items-center gap-1.5 opacity-60 transition-opacity hover:opacity-100">

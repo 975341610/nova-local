@@ -141,10 +141,10 @@ describe('autosave regressions', () => {
     expect(refineCss).toContain('.qz-editor-toolbar-row {\n  position: sticky !important;')
     expect(refineCss).toContain('z-index: 910 !important;')
     expect(refineCss).toContain('.qz-custom-block-handle {\n')
-    expect(refineCss).toContain('z-index: 25 !important;')
-    expect(refineCss).toContain('.qz-table-edge-controls {\n  position: fixed !important;\n  inset: 0 !important;\n  z-index: 20 !important;')
-    expect(refineCss).toContain('.qz-table-edge-button {\n  z-index: 21 !important;')
-    expect(refineCss).toContain('.qz-table-edge-select-zone {\n  z-index: 20 !important;')
+    expect(refineCss).toContain('z-index: var(--qz-z-block-handle, 25) !important;')
+    expect(refineCss).toContain('.qz-table-edge-controls {\n  position: fixed !important;\n  inset: 0 !important;\n  z-index: var(--qz-z-table-edge, 20) !important;')
+    expect(refineCss).toContain('.qz-table-edge-button {\n  z-index: calc(var(--qz-z-table-edge, 20) + 1) !important;')
+    expect(refineCss).toContain('.qz-table-edge-select-zone {\n  z-index: var(--qz-z-table-edge, 20) !important;')
   })
 
   it('keeps version history list queries metadata-only so opening history stays fast', () => {

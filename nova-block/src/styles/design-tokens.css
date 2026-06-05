@@ -138,10 +138,14 @@
   --qz-z-editor-underlay: 1;
   --qz-z-editor-content: 10;
   --qz-z-document-preview: 12;
+  --qz-z-table-edge: 20;
   --qz-z-editor-affordance: 20;
+  --qz-z-block-handle: 25;
   --qz-z-editor-toolbar: 80;
   --qz-z-side-panel: 90;
   --qz-z-popover: 120;
+  --qz-z-editor-toprail: 900;
+  --qz-z-app-topbar: 1000;
   --qz-z-modal: 1000;
   --qz-z-system-dialog: 10020;
 }
