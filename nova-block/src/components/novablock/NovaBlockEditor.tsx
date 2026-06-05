@@ -79,6 +79,12 @@ import {
   type AdvancedTableEdgeIntent,
   type AdvancedTableRect,
 } from '../../lib/advancedTableEdges';
+import {
+  forEachAdvancedTableCellInSelection,
+  getAdvancedTableCellSelectionSize,
+  getAdvancedTableSelectionScope,
+  isAdvancedTableCellSelection,
+} from '../../lib/advancedTableSelection';
 import { stripLeadingDuplicateTitleBlockFromHtml } from '../../lib/noteContentTitle';
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
@@ -1386,29 +1392,6 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     closeAIInline();
   }, [editor, aiInlineRange, aiInlinePreview, closeAIInline]);
 
-  const isAdvancedTableCellSelection = useCallback((selection: any) => (
-    selection instanceof CellSelection ||
-    (selection && '$anchorCell' in selection && '$headCell' in selection)
-  ), []);
-
-  const getAdvancedTableSelectionScope = useCallback((selection: any): 'cell' | 'row' | 'column' | null => {
-    if (!isAdvancedTableCellSelection(selection)) return null;
-    if (typeof selection.isRowSelection === 'function' && selection.isRowSelection()) return 'row';
-    if (typeof selection.isColSelection === 'function' && selection.isColSelection()) return 'column';
-    return 'cell';
-  }, [isAdvancedTableCellSelection]);
-
-  const advancedTableCellSelectionSize = useCallback((selection: any): number => {
-    if (!isAdvancedTableCellSelection(selection)) return 0;
-    let count = 0;
-    try {
-      selection.forEachCell(() => { count += 1; });
-    } catch {
-      count = 0;
-    }
-    return count;
-  }, [isAdvancedTableCellSelection]);
-
   const shouldShowAdvancedTableToolbar = useCallback((nextEditor: Editor) => {
     if (!nextEditor.isActive('table')) return false;
     const scope = getAdvancedTableSelectionScope(nextEditor.state.selection);
@@ -1416,11 +1399,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     if (scope === 'row' || scope === 'column') return true;
     // Bug fix #1: any multi-cell drag selection (>=2 cells) should also pop the toolbar,
     // not only full-row / full-column selections.
-    if (scope === 'cell' && advancedTableCellSelectionSize(nextEditor.state.selection) >= 2) {
+    if (scope === 'cell' && getAdvancedTableCellSelectionSize(nextEditor.state.selection) >= 2) {
       return true;
     }
     return false;
-  }, [getAdvancedTableSelectionScope, showAdvancedTableToolbar, advancedTableCellSelectionSize]);
+  }, [showAdvancedTableToolbar]);
 
   const insertAdvancedTableWithSize = useCallback((rows: number, cols: number) => {
     if (!editor || editor.isDestroyed) return;
@@ -1559,7 +1542,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     setAdvancedTableSelectionScope(null);
     setAdvancedTablePopover(null);
     setAdvancedTableEdgeIntent(null);
-  }, [editor, isAdvancedTableCellSelection]);
+  }, [editor]);
 
   const handleAdvancedTableMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
@@ -1606,50 +1589,19 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     enterAdvancedTableCellAtPoint(editor.view, event.clientX, event.clientY);
   }, [editor, enterAdvancedTableCellAtPoint, isAdvancedTableColumnResizeHandleHit]);
 
-  // Walks every cell touched by the current selection. For CellSelection (multi-cell
-  // marquee), this enumerates every covered cell; for ordinary TextSelection, it
-  // emits the single ancestor cell at $from. Used so that "clear cell" / "set
-  // background color" buttons act on the entire marquee, not just the anchor cell.
-  const forEachCellInSelection = useCallback((
-    state: any,
-    fn: (node: any, pos: number) => void,
-  ) => {
-    const { selection } = state;
-    if (selection instanceof CellSelection) {
-      const cells: Array<{ node: any; pos: number }> = [];
-      selection.forEachCell((node: any, pos: number) => {
-        cells.push({ node, pos });
-      });
-      // Process in reverse doc order so earlier replacements don't shift later positions.
-      cells.sort((a, b) => b.pos - a.pos);
-      cells.forEach(({ node, pos }) => fn(node, pos));
-      return cells.length;
-    }
-    const { $from } = selection;
-    for (let depth = $from.depth; depth > 0; depth -= 1) {
-      const nodeName = $from.node(depth).type.name;
-      if (nodeName === 'tableCell' || nodeName === 'tableHeader') {
-        const pos = $from.before(depth);
-        fn($from.node(depth), pos);
-        return 1;
-      }
-    }
-    return 0;
-  }, []);
-
   const clearAdvancedTableSelectedCells = useCallback(() => {
     if (!editor || editor.isDestroyed) return;
     const { state, view } = editor;
     const paragraph = state.schema.nodes.paragraph?.create();
     if (!paragraph) return;
     const tr = state.tr;
-    const count = forEachCellInSelection(state, (node, pos) => {
+    const count = forEachAdvancedTableCellInSelection(state, (node, pos) => {
       tr.replaceWith(pos + 1, pos + node.nodeSize - 1, paragraph);
     });
     if (count === 0) return;
     view.dispatch(tr.scrollIntoView());
     view.focus();
-  }, [editor, forEachCellInSelection]);
+  }, [editor]);
 
   // setCellAttribute already supports CellSelection in prosemirror-tables, but in
   // practice the popover button click path can collapse the CellSelection back to
@@ -1660,13 +1612,13 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     if (!editor || editor.isDestroyed) return;
     const { state, view } = editor;
     const tr = state.tr;
-    const count = forEachCellInSelection(state, (node, pos) => {
+    const count = forEachAdvancedTableCellInSelection(state, (node, pos) => {
       tr.setNodeMarkup(pos, undefined, { ...node.attrs, backgroundColor: value });
     });
     if (count === 0) return;
     view.dispatch(tr.scrollIntoView());
     view.focus();
-  }, [editor, forEachCellInSelection]);
+  }, [editor]);
 
   const handleAdvancedTableMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
@@ -1788,7 +1740,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       setAdvancedTableSelectionScope(scope);
       if (scope === 'row' || scope === 'column') {
         setShowAdvancedTableToolbar(true);
-      } else if (scope === 'cell' && advancedTableCellSelectionSize(nextEditor.state.selection) >= 2) {
+      } else if (scope === 'cell' && getAdvancedTableCellSelectionSize(nextEditor.state.selection) >= 2) {
         // Bug fix #1: drag-selection across multiple cells should reveal the toolbar.
         setShowAdvancedTableToolbar(true);
       }
@@ -1797,7 +1749,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     return () => {
       editor.off('selectionUpdate', handleSelectionUpdate);
     };
-  }, [editor, getAdvancedTableSelectionScope, advancedTableCellSelectionSize]);
+  }, [editor]);
 
   // Round-3 fix #4: edge controls are positioned in viewport space (position: fixed).
   // When the editor surface or any ancestor scrolls without a mousemove event, the

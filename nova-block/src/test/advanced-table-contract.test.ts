@@ -68,6 +68,10 @@ describe('QingZhi advanced table', () => {
       path.resolve(sourceRoot, 'lib/advancedTableEdges.ts'),
       'utf8',
     )
+    const tableSelectionSource = fs.readFileSync(
+      path.resolve(sourceRoot, 'lib/advancedTableSelection.ts'),
+      'utf8',
+    )
 
     expect(editorSource).toContain('advancedTableEdgeIntent')
     expect(editorSource).toContain('handleAdvancedTableMouseMove')
@@ -92,7 +96,10 @@ describe('QingZhi advanced table', () => {
     expect(editorSource).toContain('advancedTableEdgeIntent[kind]')
     expect(editorSource).toContain("(['column', 'row'] as const).map")
     expect(editorSource).toContain('insertAdvancedTableEdgeAtPoint(kind, dot.commandPoint.x, dot.commandPoint.y)')
-    expect(editorSource).toContain('forEachCellInSelection')
+    expect(editorSource).toContain('forEachAdvancedTableCellInSelection')
+    expect(tableSelectionSource).toContain('forEachAdvancedTableCellInSelection')
+    expect(tableSelectionSource).toContain('getAdvancedTableSelectionScope')
+    expect(tableSelectionSource).toContain('getAdvancedTableCellSelectionSize')
     expect(editorSource).toContain('clearAdvancedTableSelectedCells')
     expect(editorSource).toContain('applyAdvancedTableCellBackground')
     expect(editorSource).not.toContain('clearCurrentTableCell')
