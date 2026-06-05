@@ -12,6 +12,7 @@ import {
   getDragHandleReferenceRect,
   getDragHandleTargetPosFromElement,
   getDragHandleTargetPosFromPoint,
+  isPointerInsideDragHandleBridge,
   repositionDragHandleAtNode,
   shouldKeepDragHandlePositionOnNodeLoss,
 } from '../../components/novablock/dragHandlePositioning'
@@ -750,6 +751,36 @@ describe('dragHandlePositioning', () => {
         nextPos: -1,
         bridgeLocked: false,
         menuOpen: false,
+      }),
+    ).toBe(false)
+  })
+
+  it('detects when the pointer is inside the QingZhi drag-handle bridge', () => {
+    const referenceRect = new DOMRect(120, 100, 260, 40)
+    const handleRect = getQingZhiBlockHandleRect(referenceRect)
+
+    expect(handleRect).not.toBeNull()
+    expect(
+      isPointerInsideDragHandleBridge({
+        point: { x: 92, y: 108 },
+        referenceRect,
+        handleRect,
+      }),
+    ).toBe(true)
+
+    expect(
+      isPointerInsideDragHandleBridge({
+        point: { x: 40, y: 108 },
+        referenceRect,
+        handleRect,
+      }),
+    ).toBe(false)
+
+    expect(
+      isPointerInsideDragHandleBridge({
+        point: { x: 92, y: 180 },
+        referenceRect,
+        handleRect,
       }),
     ).toBe(false)
   })

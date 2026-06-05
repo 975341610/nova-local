@@ -80,6 +80,35 @@ export function shouldKeepDragHandlePositionOnNodeLoss({
   return nextPos < 0 && (bridgeLocked || menuOpen)
 }
 
+export function isPointerInsideDragHandleBridge({
+  point,
+  handleRect,
+  referenceRect,
+  handlePadding = 8,
+  contentPadding = 12,
+  verticalPadding = 10,
+}: {
+  point: PointLike
+  handleRect: QingZhiBlockHandleRect | null
+  referenceRect: DOMRect | null
+  handlePadding?: number
+  contentPadding?: number
+  verticalPadding?: number
+}): boolean {
+  if (!handleRect || !referenceRect) {
+    return false
+  }
+
+  const inVerticalBand =
+    point.y >= Math.min(referenceRect.top, handleRect.top) - verticalPadding &&
+    point.y <= Math.max(referenceRect.bottom, handleRect.bottom) + verticalPadding
+  const inHorizontalBridge =
+    point.x >= handleRect.left - handlePadding &&
+    point.x <= referenceRect.left + contentPadding
+
+  return inVerticalBand && inHorizontalBridge
+}
+
 export function makeDragHandleElementInteractive(dragHandleElement: HTMLElement | null): void {
   if (!dragHandleElement) {
     return

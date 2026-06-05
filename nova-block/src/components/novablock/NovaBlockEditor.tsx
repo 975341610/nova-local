@@ -104,6 +104,7 @@ import {
   getDragHandleReferenceRect,
   getDragHandleTargetPosFromElement,
   getDragHandleTargetPosFromPoint,
+  isPointerInsideDragHandleBridge,
   shouldKeepDragHandlePositionOnNodeLoss,
 } from './dragHandlePositioning';
 import { useNoteStore } from '../../store/useNoteStore';
@@ -3380,11 +3381,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       return;
     }
 
-    const x = event.clientX;
-    const y = event.clientY;
-    const inVerticalBand = y >= Math.min(referenceRect.top, handleRect.top) - 10 && y <= Math.max(referenceRect.bottom, handleRect.bottom) + 10;
-    const inHandleBridge = x >= handleRect.left - 8 && x <= referenceRect.left + 12;
-    setDragHandleBridgeLocked(inVerticalBand && inHandleBridge);
+    setDragHandleBridgeLocked(isPointerInsideDragHandleBridge({
+      point: { x: event.clientX, y: event.clientY },
+      handleRect,
+      referenceRect,
+    }));
   }, [editor, isBlockMenuOpen, setDragHandleBridgeLocked, updateDragHandleTargetFromPointer]);
 
   const handleWritingSurfaceMouseLeave = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
