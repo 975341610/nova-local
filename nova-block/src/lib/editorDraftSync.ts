@@ -83,6 +83,36 @@ export function upsertQueuedSavePayload<T extends QueuedSavePayload>(
   queue.push(nextPayload)
 }
 
+export function resolveQueuedSaveDrainIfIdle<T>(
+  isSaving: boolean,
+  queue: T[],
+  drainResolvers: Array<() => void>,
+) {
+  if (isSaving || queue.length > 0) {
+    return false
+  }
+
+  const resolvers = drainResolvers.splice(0)
+  for (const resolve of resolvers) {
+    resolve()
+  }
+  return true
+}
+
+export function waitForQueuedSaveDrain<T>(
+  isSaving: boolean,
+  queue: T[],
+  drainResolvers: Array<() => void>,
+) {
+  if (!isSaving && queue.length === 0) {
+    return Promise.resolve()
+  }
+
+  return new Promise<void>((resolve) => {
+    drainResolvers.push(resolve)
+  })
+}
+
 export function isSavedPayloadCurrentCleanDraft(
   currentDraft: DraftLike,
   savedDraft: DraftLike,

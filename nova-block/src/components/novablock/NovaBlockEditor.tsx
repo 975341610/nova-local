@@ -69,8 +69,10 @@ import {
   buildEditorSavePayload,
   buildPendingSwitchSavePayload,
   isSavedPayloadCurrentCleanDraft,
+  resolveQueuedSaveDrainIfIdle,
   shouldApplySavedDraftToCurrentNote,
   upsertQueuedSavePayload,
+  waitForQueuedSaveDrain,
 } from '../../lib/editorDraftSync';
 import {
   buildAdvancedTableEdgeIntent,
@@ -2390,21 +2392,10 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
 
     const dequeuePayload = () => queuedPayloadRef.current.shift() ?? null;
     const resolveSaveDrain = () => {
-      if (isSavingRef.current || queuedPayloadRef.current.length > 0) {
-        return;
-      }
-      const resolvers = saveDrainResolversRef.current.splice(0);
-      for (const resolve of resolvers) {
-        resolve();
-      }
+      resolveQueuedSaveDrainIfIdle(isSavingRef.current, queuedPayloadRef.current, saveDrainResolversRef.current);
     };
     const waitForSaveDrain = () => {
-      if (!isSavingRef.current && queuedPayloadRef.current.length === 0) {
-        return Promise.resolve();
-      }
-      return new Promise<void>((resolve) => {
-        saveDrainResolversRef.current.push(resolve);
-      });
+      return waitForQueuedSaveDrain(isSavingRef.current, queuedPayloadRef.current, saveDrainResolversRef.current);
     };
 
     const runSave = async (nextPayload: any): Promise<void> => {
