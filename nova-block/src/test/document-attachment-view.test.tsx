@@ -23,10 +23,11 @@ afterEach(() => {
 describe('DocumentAttachmentView', () => {
   it('keeps inline pdf previews in a stable portal layer so the native viewer is not remounted', () => {
     const source = readFileSync(resolve(__dirname, '../components/document/DocumentAttachmentView.tsx'), 'utf8')
+    const portalSource = readFileSync(resolve(__dirname, '../lib/documentPdfPortal.ts'), 'utf8')
 
     expect(source).not.toContain('data-qz-document-pdf-host')
-    expect(source).toContain('data-qz-document-pdf-layer')
-    expect(source).toContain('--qz-z-document-preview')
+    expect(portalSource).toContain('data-qz-document-pdf-layer')
+    expect(portalSource).toContain('--qz-z-document-preview')
   })
 
   it('loads pdf preview once and renders the iframe instead of staying in loading state', async () => {

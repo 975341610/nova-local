@@ -23,6 +23,14 @@ import {
   getDocumentPreviewCacheKey,
   getOrCreateFifoMapEntry,
 } from '../../lib/documentPreviewSession';
+import {
+  DOCUMENT_PDF_IFRAME_CLASS,
+  configureDocumentPdfFrameEntry,
+  createDocumentPdfFrameEntry,
+  getDocumentPdfLayer,
+  placeDocumentPdfFrame,
+  type DocumentPdfFrameCacheEntry,
+} from '../../lib/documentPdfPortal';
 import { formatFileSize } from '../../lib/mediaUtils';
 
 type DocumentPreview = {
@@ -48,7 +56,6 @@ type DocumentAttachmentViewProps = {
 };
 
 const MAX_DOCUMENT_PDF_FRAME_CACHE = 8;
-const DOCUMENT_PDF_IFRAME_CLASS = 'qz-document-pdf-iframe h-full min-h-[420px] w-full rounded-xl bg-white';
 
 type DocumentPreviewCacheEntry = {
   viewMode: DocumentViewMode;
@@ -57,14 +64,6 @@ type DocumentPreviewCacheEntry = {
 };
 
 const documentPreviewSessionCache = new Map<string, DocumentPreviewCacheEntry>();
-
-type DocumentPdfFrameCacheEntry = {
-  iframe: HTMLIFrameElement;
-  wrapper: HTMLDivElement;
-  src: string;
-  attached: boolean;
-  lastPlacement?: string;
-};
 
 const documentPdfFrameCache = new Map<string, DocumentPdfFrameCacheEntry>();
 
@@ -107,20 +106,6 @@ const previewableByName = (name = '', type = '') => {
 const toolbarButton =
   'inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#467466] transition hover:bg-[#e7eee8] hover:text-[#2f6f62]';
 
-const getDocumentPdfLayer = () => {
-  let layer = document.querySelector('[data-qz-document-pdf-layer]') as HTMLDivElement | null;
-  if (!layer) {
-    layer = document.createElement('div');
-    layer.dataset.qzDocumentPdfLayer = 'true';
-    layer.style.position = 'fixed';
-    layer.style.inset = '0';
-    layer.style.pointerEvents = 'none';
-    layer.style.zIndex = 'var(--qz-z-document-preview, 12)';
-    document.body.appendChild(layer);
-  }
-  return layer;
-};
-
 const evictDocumentPdfFrameCache = () => {
   while (documentPdfFrameCache.size > MAX_DOCUMENT_PDF_FRAME_CACHE) {
     const hidden = Array.from(documentPdfFrameCache.entries()).find(([, entry]) => {
@@ -135,22 +120,7 @@ const evictDocumentPdfFrameCache = () => {
 const getOrCreateDocumentPdfFrame = (key: string, src: string, title: string) => {
   let entry = documentPdfFrameCache.get(key);
   if (!entry) {
-    const wrapper = document.createElement('div');
-    wrapper.dataset.qzDocumentPdfWrapper = 'true';
-    wrapper.style.position = 'fixed';
-    wrapper.style.left = '0';
-    wrapper.style.top = '0';
-    wrapper.style.overflow = 'hidden';
-    wrapper.style.borderRadius = '12px';
-    wrapper.style.background = '#fff';
-    wrapper.style.pointerEvents = 'auto';
-    wrapper.style.visibility = 'hidden';
-    wrapper.style.transform = 'translate3d(-10000px, -10000px, 0)';
-    wrapper.style.willChange = 'transform, width, height';
-    const iframe = document.createElement('iframe');
-    entry = { iframe, wrapper, src, attached: false };
-    entry.iframe.src = src;
-    entry.wrapper.appendChild(entry.iframe);
+    entry = createDocumentPdfFrameEntry(src);
     getDocumentPdfLayer().appendChild(entry.wrapper);
   } else {
     documentPdfFrameCache.delete(key);
@@ -160,47 +130,10 @@ const getOrCreateDocumentPdfFrame = (key: string, src: string, title: string) =>
     }
   }
 
-  entry.iframe.title = title;
-  entry.iframe.className = DOCUMENT_PDF_IFRAME_CLASS;
-  entry.iframe.style.border = '0';
-  entry.iframe.style.display = 'block';
-  entry.iframe.style.margin = '0';
+  configureDocumentPdfFrameEntry(entry, title);
   documentPdfFrameCache.set(key, entry);
   evictDocumentPdfFrameCache();
   return entry;
-};
-
-const isRectVisible = (rect: DOMRect) => {
-  const viewportWidth = window.visualViewport?.width || window.innerWidth || document.documentElement.clientWidth || 0;
-  const viewportHeight = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0;
-  return rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.bottom > 0 && rect.left < viewportWidth && rect.top < viewportHeight;
-};
-
-const placeDocumentPdfFrame = (entry: DocumentPdfFrameCacheEntry, host: HTMLElement, hidden: boolean) => {
-  if (!host.isConnected) {
-    entry.wrapper.style.visibility = 'hidden';
-    entry.wrapper.style.pointerEvents = 'none';
-    return;
-  }
-  const rect = host.getBoundingClientRect();
-  const shouldHide = hidden || !isRectVisible(rect);
-  const left = Math.round(rect.left * 100) / 100;
-  const top = Math.round(rect.top * 100) / 100;
-  const width = Math.max(0, Math.round(rect.width * 100) / 100);
-  const height = Math.max(0, Math.round(rect.height * 100) / 100);
-  const visibility = shouldHide ? 'hidden' : 'visible';
-  const pointerEvents = shouldHide ? 'none' : 'auto';
-  const placement = `${left}|${top}|${width}|${height}|${visibility}|${pointerEvents}`;
-  if (entry.lastPlacement !== placement) {
-    entry.lastPlacement = placement;
-    entry.wrapper.style.transform = `translate3d(${left}px, ${top}px, 0)`;
-    entry.wrapper.style.width = `${width}px`;
-    entry.wrapper.style.height = `${height}px`;
-    entry.wrapper.style.visibility = visibility;
-    entry.wrapper.style.pointerEvents = pointerEvents;
-  }
-  entry.iframe.style.width = '100%';
-  entry.iframe.style.height = '100%';
 };
 
 const syncDocumentPdfFrames = () => {
@@ -512,7 +445,7 @@ export function DocumentAttachmentView({
             key="document-pdf-frame"
             title={name}
             src={`${absoluteSrc}${hash}`}
-            className="qz-document-pdf-iframe h-full min-h-[420px] w-full rounded-xl bg-white"
+            className={DOCUMENT_PDF_IFRAME_CLASS}
             style={{ border: 0, display: 'block', margin: 0, ...frameStyle }}
           />
         </div>
