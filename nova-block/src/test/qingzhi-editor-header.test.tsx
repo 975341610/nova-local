@@ -127,7 +127,7 @@ describe('QingZhi EditorHeader toolbar', () => {
     fireEvent.click(screen.getByTestId('qingzhi-save-health-trigger'))
 
     expect(screen.getByTestId('qingzhi-save-health-panel')).toBeTruthy()
-    expect(screen.getByText('保存健康')).toBeTruthy()
+    expect(screen.getByText('保存健康中心')).toBeTruthy()
     expect(screen.getByText('版本快照：快照失败')).toBeTruthy()
     expect(screen.getByText(/打开版本历史/)).toBeTruthy()
   })

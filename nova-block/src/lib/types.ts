@@ -104,6 +104,11 @@ export type VaultHealthReport = {
     total_issues: number;
     missing_attachments?: number;
     orphan_attachments?: number;
+    total_attachments?: number;
+    referenced_attachments?: number;
+    total_attachment_bytes?: number;
+    referenced_attachment_bytes?: number;
+    orphan_attachment_bytes?: number;
     mojibake_notes?: number;
     encoding_errors?: number;
     unsafe_references?: number;

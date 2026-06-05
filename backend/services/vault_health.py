@@ -77,6 +77,14 @@ def scan_vault_health(vault_root: str | Path) -> dict:
     root = Path(vault_root)
     issues: list[dict] = []
     referenced_assets: set[str] = set()
+    asset_sizes: dict[str, int] = {}
+
+    for asset_path in _iter_assets(root):
+        relative_asset = _rel(asset_path, root)
+        try:
+            asset_sizes[relative_asset] = asset_path.stat().st_size
+        except OSError:
+            asset_sizes[relative_asset] = 0
 
     for note_path in _iter_notes(root):
         try:
@@ -128,18 +136,24 @@ def scan_vault_health(vault_root: str | Path) -> dict:
                     "message": "Attachment reference points to a missing file.",
                 })
 
-    for asset_path in _iter_assets(root):
-        relative_asset = _rel(asset_path, root)
-        if relative_asset not in referenced_assets:
-            issues.append({
-                "type": "orphan_attachment",
-                "severity": "info",
-                "asset_path": relative_asset,
-                "message": "Attachment exists in _assets but is not referenced by any note.",
-            })
+    existing_referenced_assets = referenced_assets.intersection(asset_sizes.keys())
+    orphan_assets = set(asset_sizes.keys()).difference(existing_referenced_assets)
+
+    for relative_asset in sorted(orphan_assets):
+        issues.append({
+            "type": "orphan_attachment",
+            "severity": "info",
+            "asset_path": relative_asset,
+            "message": "Attachment exists in _assets but is not referenced by any note.",
+        })
 
     summary = {
         "total_issues": len(issues),
+        "total_attachments": len(asset_sizes),
+        "referenced_attachments": len(existing_referenced_assets),
+        "total_attachment_bytes": sum(asset_sizes.values()),
+        "referenced_attachment_bytes": sum(asset_sizes[path] for path in existing_referenced_assets),
+        "orphan_attachment_bytes": sum(asset_sizes[path] for path in orphan_assets),
         "missing_attachments": sum(1 for issue in issues if issue["type"] == "missing_attachment"),
         "orphan_attachments": sum(1 for issue in issues if issue["type"] == "orphan_attachment"),
         "mojibake_notes": sum(1 for issue in issues if issue["type"] == "mojibake_text"),

@@ -175,7 +175,7 @@ export function EditorHeader(props: EditorHeaderProps) {
                 className="absolute top-full left-0 z-[220] mt-2 w-[280px] rounded-xl border border-border/50 bg-background/95 p-3 text-left text-[12px] font-normal normal-case tracking-normal text-foreground shadow-xl backdrop-blur-xl"
               >
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="font-semibold text-[var(--nv-color-accent-fg)]">保存健康</span>
+                  <span className="font-semibold text-[var(--nv-color-accent-fg)]">保存健康中心</span>
                   <span className="rounded-full bg-accent/50 px-2 py-0.5 text-[10px] text-muted-foreground">
                     {saveHealth.saveLabel}
                   </span>

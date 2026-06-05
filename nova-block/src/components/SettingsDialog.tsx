@@ -7,6 +7,7 @@ import { getThemeConfig, saveThemeConfig, exportThemeConfig, validateThemeConfig
 import type { AIEngineMode, ThemeConfig, VaultHealthReport } from '../lib/types';
 import { isSpellcheckFeatureEnabled, saveSpellcheckFeatureEnabled } from '../lib/spellcheckSettings';
 import { UpdaterPanel } from './UpdaterPanel';
+import { formatFileSize } from '../lib/mediaUtils';
 import {
   QINGZHI_TOPBAR_ACTIONS,
   readQingzhiSettings,
@@ -1519,7 +1520,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                         <Database className="w-4 h-4 text-primary" />
                       </div>
                       <div>
-                        <h3 className="text-sm font-bold">Vault 本地仓库体检</h3>
+                        <h3 className="text-sm font-bold">Vault 本地仓库体检 / 附件管理中心</h3>
                         <p className="text-[10px] text-muted-foreground">扫描缺失附件、孤儿附件、乱码风险和不安全引用</p>
                       </div>
                     </div>
@@ -1551,6 +1552,33 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
                     <div className="p-4 rounded-2xl bg-accent/10 border border-border/20">
                       <div className="text-2xl font-black">{vaultHealth?.summary.orphan_attachments ?? 0}</div>
                       <div className="text-[10px] text-muted-foreground mt-1">孤儿附件</div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-border/30 bg-accent/5 p-4 space-y-3">
+                    <div>
+                      <h3 className="text-sm font-bold">附件管理中心</h3>
+                      <p className="text-[10px] text-muted-foreground">
+                        统计当前 Vault 中的附件规模，辅助清理孤儿附件和定位缺失引用。
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-4 gap-3">
+                      <div className="p-3 rounded-2xl bg-background/60 border border-border/20">
+                        <div className="text-xl font-black">{vaultHealth?.summary.total_attachments ?? 0}</div>
+                        <div className="text-[10px] text-muted-foreground mt-1">附件总数</div>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-background/60 border border-border/20">
+                        <div className="text-xl font-black">{vaultHealth?.summary.referenced_attachments ?? 0}</div>
+                        <div className="text-[10px] text-muted-foreground mt-1">已引用</div>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-background/60 border border-border/20">
+                        <div className="text-xl font-black">{formatFileSize(vaultHealth?.summary.total_attachment_bytes ?? 0)}</div>
+                        <div className="text-[10px] text-muted-foreground mt-1">附件占用</div>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-background/60 border border-border/20">
+                        <div className="text-xl font-black">{formatFileSize(vaultHealth?.summary.orphan_attachment_bytes ?? 0)}</div>
+                        <div className="text-[10px] text-muted-foreground mt-1">孤儿占用</div>
+                      </div>
                     </div>
                   </div>
 

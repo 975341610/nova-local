@@ -36,4 +36,22 @@ describe('QingZhi settings panel contract', () => {
       expect(settingsDialog, `${marker} should be present`).toContain(marker)
     }
   })
+
+  it('keeps the Vault attachment management summary visible', () => {
+    const requiredMarkers = [
+      '附件管理中心',
+      '附件总数',
+      '已引用',
+      '附件占用',
+      '孤儿占用',
+      'total_attachments',
+      'referenced_attachments',
+      'total_attachment_bytes',
+      'orphan_attachment_bytes',
+    ]
+
+    for (const marker of requiredMarkers) {
+      expect(settingsDialog, `${marker} should be present`).toContain(marker)
+    }
+  })
 })
