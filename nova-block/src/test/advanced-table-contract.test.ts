@@ -11,14 +11,18 @@ describe('QingZhi advanced table', () => {
       path.resolve(sourceRoot, 'components/novablock/NovaBlockEditor.tsx'),
       'utf8',
     )
+    const overlaySource = fs.readFileSync(
+      path.resolve(sourceRoot, 'components/novablock/components/AdvancedTableOverlays.tsx'),
+      'utf8',
+    )
 
     expect(editorSource).toContain("label: '高级表格'")
-    expect(editorSource).toContain('qz-advanced-table-toolbar')
-    expect(editorSource).toContain('mergeCells')
-    expect(editorSource).toContain('splitCell')
-    expect(editorSource).toContain('toggleHeaderRow')
-    expect(editorSource).toContain('toggleHeaderColumn')
-    expect(editorSource).toContain('setCellAttribute')
+    expect(overlaySource).toContain('qz-advanced-table-toolbar')
+    expect(overlaySource).toContain('mergeCells')
+    expect(overlaySource).toContain('splitCell')
+    expect(overlaySource).toContain('toggleHeaderRow')
+    expect(overlaySource).toContain('toggleHeaderColumn')
+    expect(overlaySource).toContain('setCellAttribute')
   })
 
   it('opens advanced table tools only from explicit table interactions', () => {
@@ -72,6 +76,10 @@ describe('QingZhi advanced table', () => {
       path.resolve(sourceRoot, 'lib/advancedTableSelection.ts'),
       'utf8',
     )
+    const overlaySource = fs.readFileSync(
+      path.resolve(sourceRoot, 'components/novablock/components/AdvancedTableOverlays.tsx'),
+      'utf8',
+    )
 
     expect(editorSource).toContain('advancedTableEdgeIntent')
     expect(editorSource).toContain('handleAdvancedTableMouseMove')
@@ -80,22 +88,22 @@ describe('QingZhi advanced table', () => {
     expect(editorSource).toContain('CellSelection.rowSelection')
     expect(editorSource).toContain('CellSelection.colSelection')
     expect(editorSource).toContain('advancedTableSelectionScope')
-    expect(editorSource).toContain('deleteRow')
-    expect(editorSource).toContain('deleteColumn')
-    expect(editorSource).toContain('qz-advanced-table-delete-row')
-    expect(editorSource).toContain('qz-advanced-table-delete-column')
+    expect(overlaySource).toContain('deleteRow')
+    expect(overlaySource).toContain('deleteColumn')
+    expect(overlaySource).toContain('qz-advanced-table-delete-row')
+    expect(overlaySource).toContain('qz-advanced-table-delete-column')
     expect(editorSource).toContain('qz-table-edge-controls')
-    expect(editorSource).toContain('qz-table-edge-select-zone')
-    expect(editorSource).toContain('qz-table-edge-add-button')
+    expect(overlaySource).toContain('qz-table-edge-select-zone')
+    expect(overlaySource).toContain('qz-table-edge-add-button')
     expect(editorSource).not.toContain('advancedTableSelectedEdge')
     expect(editorSource).not.toContain('qz-table-edge-selected-highlight')
     expect(editorSource).not.toContain('setAdvancedTableSelectedEdge')
     expect(editorSource).toContain('buildAdvancedTableEdgeIntent')
     expect(tableEdgeSource).toContain("column: {")
     expect(tableEdgeSource).toContain("row: {")
-    expect(editorSource).toContain('advancedTableEdgeIntent[kind]')
-    expect(editorSource).toContain("(['column', 'row'] as const).map")
-    expect(editorSource).toContain('insertAdvancedTableEdgeAtPoint(kind, dot.commandPoint.x, dot.commandPoint.y)')
+    expect(overlaySource).toContain('edgeIntent[kind]')
+    expect(overlaySource).toContain("(['column', 'row'] as const).map")
+    expect(overlaySource).toContain('insertEdgeAtPoint(kind, dot.commandPoint.x, dot.commandPoint.y)')
     expect(editorSource).toContain('forEachAdvancedTableCellInSelection')
     expect(tableSelectionSource).toContain('forEachAdvancedTableCellInSelection')
     expect(tableSelectionSource).toContain('getAdvancedTableSelectionScope')
@@ -103,10 +111,10 @@ describe('QingZhi advanced table', () => {
     expect(editorSource).toContain('clearAdvancedTableSelectedCells')
     expect(editorSource).toContain('applyAdvancedTableCellBackground')
     expect(editorSource).not.toContain('clearCurrentTableCell')
-    expect(editorSource).toContain('selectAdvancedTableEdge(kind,')
-    expect(editorSource).toContain('qz-table-edge-dot')
+    expect(overlaySource).toContain('selectEdge(kind,')
+    expect(overlaySource).toContain('qz-table-edge-dot')
     expect(tableEdgeSource).toContain('dots:')
-    expect(editorSource).toContain('edge.dots.map')
+    expect(overlaySource).toContain('edge.dots.map')
     expect(editorSource).toContain('hoveredInsertTarget')
     expect(editorSource).not.toContain('hoveredInsertKind')
     expect(editorSource).not.toContain('activeKind')
@@ -118,7 +126,7 @@ describe('QingZhi advanced table', () => {
     expect(styleSource).toContain('.qz-table-edge-select-zone.is-column::after')
     expect(styleSource).toContain('.qz-table-edge-select-zone.is-row::after')
     expect(styleSource).toContain('.qz-table-edge-button::after')
-    expect(editorSource).toContain('data-qz-label')
+    expect(overlaySource).toContain('data-qz-label')
     expect(styleSource).toContain('content: attr(data-qz-label)')
     expect(styleSource).toContain('--qz-table-tooltip-delay: 3s')
     expect(styleSource).toContain('var(--qz-table-tooltip-delay)')
@@ -130,12 +138,16 @@ describe('QingZhi advanced table', () => {
     expect(styleSource).toContain('rgba(128, 168, 156')
     expect(styleSource).not.toContain('.qz-table-edge-button:hover::after')
     expect(styleSource).not.toContain('qz-table-edge-select-segment')
-    expect(editorSource).not.toContain('qz-table-edge-select-segment')
+    expect(overlaySource).not.toContain('qz-table-edge-select-segment')
   })
 
   it('keeps toolbar focused on formatting, clearing cells, and hover color choices', () => {
     const editorSource = fs.readFileSync(
       path.resolve(sourceRoot, 'components/novablock/NovaBlockEditor.tsx'),
+      'utf8',
+    )
+    const overlaySource = fs.readFileSync(
+      path.resolve(sourceRoot, 'components/novablock/components/AdvancedTableOverlays.tsx'),
       'utf8',
     )
     const styleSource = fs.readFileSync(
@@ -145,12 +157,12 @@ describe('QingZhi advanced table', () => {
 
     expect(editorSource).toContain('clearAdvancedTableSelectedCells')
     expect(editorSource).toContain('advancedTablePopover')
-    expect(editorSource).toContain('qz-advanced-table-clear-cell')
-    expect(editorSource).toContain('qz-advanced-table-text-popover')
-    expect(editorSource).toContain('qz-advanced-table-color-menu')
-    expect(editorSource).toContain('is-open')
-    expect(editorSource).toContain('--qz-table-swatch')
-    expect(editorSource).not.toContain('qz-advanced-table-toolbar flex overflow-hidden')
+    expect(overlaySource).toContain('qz-advanced-table-clear-cell')
+    expect(overlaySource).toContain('qz-advanced-table-text-popover')
+    expect(overlaySource).toContain('qz-advanced-table-color-menu')
+    expect(overlaySource).toContain('is-open')
+    expect(overlaySource).toContain('--qz-table-swatch')
+    expect(overlaySource).not.toContain('qz-advanced-table-toolbar flex overflow-hidden')
     expect(styleSource).toContain('overflow: visible !important')
     expect(styleSource).toContain('.qz-advanced-table-color-popover.is-open .qz-advanced-table-color-menu')
     expect(styleSource).toContain('.qz-advanced-table-text-popover.is-open .qz-advanced-table-text-menu')
@@ -186,10 +198,14 @@ describe('QingZhi advanced table', () => {
       path.resolve(sourceRoot, 'components/novablock/NovaBlockEditor.tsx'),
       'utf8',
     )
+    const overlaySource = fs.readFileSync(
+      path.resolve(sourceRoot, 'components/novablock/components/AdvancedTableOverlays.tsx'),
+      'utf8',
+    )
 
     expect(editorSource).toContain('open-advanced-table-size-picker')
     expect(editorSource).toContain('advancedTableSize')
-    expect(editorSource).toContain('qz-table-size-picker')
+    expect(overlaySource).toContain('qz-table-size-picker')
     expect(editorSource).toContain('insertAdvancedTableWithSize')
   })
 
