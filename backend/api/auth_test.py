@@ -2,6 +2,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from backend.main import (
+    DEFAULT_BACKEND_HOST,
     DESKTOP_ONLY_API_PATHS,
     PROTECTED_API_PATHS,
     app,
@@ -115,6 +116,10 @@ def test_server_mode_requires_access_token():
     finally:
         settings.run_mode = original_mode
         settings.access_token = original_token
+
+
+def test_backend_cli_default_host_is_loopback_only():
+    assert DEFAULT_BACKEND_HOST == "127.0.0.1"
 
 
 def test_privileged_api_paths_are_explicitly_classified():

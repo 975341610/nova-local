@@ -742,6 +742,26 @@ function isPathInsideRoot(rootPath, targetPath) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+async function isRealPathInsideRoot(rootPath, targetPath) {
+  const resolvedRoot = path.resolve(rootPath);
+  const resolvedTarget = path.resolve(targetPath);
+  if (!isPathInsideRoot(resolvedRoot, resolvedTarget)) {
+    return false;
+  }
+  try {
+    const [realRoot, realTarget] = await Promise.all([
+      fs.realpath(resolvedRoot),
+      fs.realpath(resolvedTarget),
+    ]);
+    return isPathInsideRoot(realRoot, realTarget);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 function createFsBridge(options) {
   const vaultRoot = options.vaultRoot;
   const trashRoot = path.join(vaultRoot, TRASH_DIR_NAME);
@@ -1355,10 +1375,7 @@ function createFsBridge(options) {
     }
 
     const resolvedPath = path.resolve(notePath);
-    if (!isPathInsideRoot(vaultRoot, resolvedPath)) {
-      return null;
-    }
-    if (!(await pathExists(resolvedPath))) {
+    if (!(await isRealPathInsideRoot(vaultRoot, resolvedPath))) {
       return null;
     }
 

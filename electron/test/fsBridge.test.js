@@ -350,6 +350,40 @@ test('fsBridge can target a note directly by file_path without scanning by id', 
   assert.match(firstRaw, /First/);
 });
 
+test('fsBridge rejects note paths whose realpath escapes the vault root', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
+  const bridge = createFsBridge({ vaultRoot: tempRoot });
+
+  await bridge.ensureStructure();
+  const created = await bridge.createNote({
+    title: 'Realpath Guard',
+    content: '<p>Inside</p>',
+    type: 'note',
+  });
+  const outsidePath = path.join(os.tmpdir(), 'nova-outside-note.md');
+  await fs.writeFile(outsidePath, '<p>Outside</p>', 'utf8');
+
+  const originalRealpath = fs.realpath;
+  fs.realpath = async (targetPath) => {
+    const resolved = path.resolve(targetPath);
+    if (resolved === path.resolve(tempRoot)) {
+      return path.resolve(tempRoot);
+    }
+    if (resolved === path.resolve(created.file_path)) {
+      return path.resolve(outsidePath);
+    }
+    return originalRealpath(targetPath);
+  };
+
+  try {
+    const notes = await bridge.getNotesByPaths([created.file_path]);
+    assert.deepEqual(notes, []);
+  } finally {
+    fs.realpath = originalRealpath;
+    await fs.unlink(outsidePath).catch(() => {});
+  }
+});
+
 test('fsBridge getNote uses cached note path after notes have been listed', async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nova-electron-'));
   const bridge = createFsBridge({ vaultRoot: tempRoot });

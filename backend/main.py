@@ -36,6 +36,7 @@ from backend.sample_data import seed_database, seed_files
 
 
 settings = get_settings()
+DEFAULT_BACKEND_HOST = "127.0.0.1"
 
 
 @asynccontextmanager
@@ -352,7 +353,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--host", type=str, default="0.0.0.0")
+    parser.add_argument("--host", type=str, default=DEFAULT_BACKEND_HOST)
     args = parser.parse_args()
     
     # 获取环境变量（由 Electron 传入的覆盖优先）

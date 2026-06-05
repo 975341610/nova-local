@@ -524,6 +524,17 @@ function isPathInsideRoot(root, targetPath) {
   return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function isRealPathInsideRoot(root, targetPath) {
+  if (!isPathInsideRoot(root, targetPath)) {
+    return false;
+  }
+  try {
+    return isPathInsideRoot(fs.realpathSync(root), fs.realpathSync(targetPath));
+  } catch {
+    return false;
+  }
+}
+
 function isTrustedRendererUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== 'string') {
     return false;
@@ -611,7 +622,7 @@ function resolveOpenFilePath(rawPath) {
     path.join(DATA_ROOT, 'music'),
   ];
 
-  if (!allowedRoots.some((root) => isPathInsideRoot(root, targetPath))) {
+  if (!allowedRoots.some((root) => isRealPathInsideRoot(root, targetPath))) {
     throw new Error('File path is outside allowed roots');
   }
   if (!fs.existsSync(targetPath)) {

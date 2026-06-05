@@ -192,6 +192,20 @@ describe('desktop runtime guards', () => {
     expect(mainSource).toContain("trustedIpcHandle('desktop:get-backend-base-url'")
   })
 
+  it('checks real filesystem paths before opening local files from IPC', () => {
+    const mainPath = path.resolve(__dirname, '../../../electron/main.js')
+    const mainSource = fs.readFileSync(mainPath, 'utf8')
+    const resolveStart = mainSource.indexOf('function resolveOpenFilePath')
+    const resolveEnd = mainSource.indexOf('async function openLocalFile', resolveStart)
+    const resolveBody = mainSource.slice(resolveStart, resolveEnd)
+
+    expect(mainSource).toContain('function isRealPathInsideRoot')
+    expect(mainSource).toContain('fs.realpathSync(root)')
+    expect(mainSource).toContain('fs.realpathSync(targetPath)')
+    expect(resolveBody).toContain('isRealPathInsideRoot(root, targetPath)')
+    expect(resolveBody).not.toContain('isPathInsideRoot(root, targetPath)')
+  })
+
   it('refreshes vault watcher changes incrementally before falling back to full reloads', () => {
     const appPath = path.resolve(__dirname, '../App.tsx')
     const preloadPath = path.resolve(__dirname, '../../../electron/preload.js')
