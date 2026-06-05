@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:chunks": "node scripts/run-vitest-chunks.mjs",
+    "test:critical": "vitest run src/test/autosave-regressions.test.ts src/test/document-attachment-view.test.tsx src/test/novablock/drag-handle-positioning.test.ts src/test/api-client.test.ts src/test/advanced-table-contract.test.ts src/test/pdf-preview-contract.test.ts src/test/block-link-contract.test.ts src/test/web-embed-node.test.ts src/test/tiptap-file-node-roundtrip.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
