@@ -65,7 +65,13 @@ import { PropertyPanel } from '../editor/PropertyPanel';
 import { RevisionHistoryDrawer } from '../editor/RevisionHistoryDrawer';
 import { getSuggestionConfig } from '../notion/SlashMenuConfig';
 import { getNoteLinkSuggestionConfig } from './extensions/NoteLinkConfig';
-import { buildPendingSwitchSavePayload, shouldApplySavedDraftToCurrentNote } from '../../lib/editorDraftSync';
+import {
+  buildEditorSavePayload,
+  buildPendingSwitchSavePayload,
+  isSavedPayloadCurrentCleanDraft,
+  shouldApplySavedDraftToCurrentNote,
+  upsertQueuedSavePayload,
+} from '../../lib/editorDraftSync';
 import { stripLeadingDuplicateTitleBlockFromHtml } from '../../lib/noteContentTitle';
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
@@ -2415,16 +2421,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     
     // 鍚堝苟鏈€鏂扮殑缂栬緫鍣ㄥ唴瀹瑰拰浼犲叆鐨勫閲忔洿鏂?(濡傚ぉ姘斻€佸績鎯?
     const html = content !== undefined ? content : editor?.getHTML() || '';
-    const payloadToSave = { ...currentNote, ...updates, content: html };
+    const payloadToSave = buildEditorSavePayload(currentNote, html, updates);
+    if (!payloadToSave) return;
 
     const queuePayload = (nextPayload: any) => {
-      const noteId = nextPayload?.id;
-      const existingIndex = queuedPayloadRef.current.findIndex((queued) => queued?.id === noteId);
-      if (existingIndex >= 0) {
-        queuedPayloadRef.current[existingIndex] = nextPayload;
-        return;
-      }
-      queuedPayloadRef.current.push(nextPayload);
+      upsertQueuedSavePayload(queuedPayloadRef.current, nextPayload);
     };
 
     const dequeuePayload = () => queuedPayloadRef.current.shift() ?? null;
@@ -2456,9 +2457,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
           latestNoteRef.current = mergedSavedNote;
         }
         const editorHtml = editor?.getHTML();
-        const savedCurrentDraft =
-          shouldApplySavedDraftToCurrentNote(latestNoteRef.current, mergedSavedNote)
-          && (editorHtml === nextPayload?.content || editorHtml === mergedSavedNote?.content);
+        const savedCurrentDraft = isSavedPayloadCurrentCleanDraft(
+          latestNoteRef.current,
+          mergedSavedNote,
+          editorHtml,
+          nextPayload?.content,
+        );
         if (savedCurrentDraft) {
           isDirtyRef.current = false;
           setIsDirty(false);

@@ -3,6 +3,7 @@ import type { Note } from './types'
 type PersistedDraft = Note | null | undefined
 type DraftLike = Partial<Note> | null | undefined
 type NoteIdentifier = number | string | null | undefined
+type QueuedSavePayload = Partial<Note> & { id?: number | string }
 
 type PendingSwitchSaveArgs = {
   currentDraft: DraftLike
@@ -50,6 +51,46 @@ export function shouldApplySavedDraftToCurrentNote(
   }
 
   return false
+}
+
+export function buildEditorSavePayload<T extends DraftLike>(
+  currentDraft: T,
+  html: string,
+  updates?: Partial<Note>,
+) {
+  if (!currentDraft) {
+    return null
+  }
+
+  return {
+    ...currentDraft,
+    ...updates,
+    content: html,
+  }
+}
+
+export function upsertQueuedSavePayload<T extends QueuedSavePayload>(
+  queue: T[],
+  nextPayload: T,
+) {
+  const noteId = nextPayload?.id
+  const existingIndex = queue.findIndex((queued) => queued?.id === noteId)
+  if (existingIndex >= 0) {
+    queue[existingIndex] = nextPayload
+    return
+  }
+
+  queue.push(nextPayload)
+}
+
+export function isSavedPayloadCurrentCleanDraft(
+  currentDraft: DraftLike,
+  savedDraft: DraftLike,
+  editorHtml: string | undefined,
+  savedContent: string | undefined,
+) {
+  return shouldApplySavedDraftToCurrentNote(currentDraft, savedDraft)
+    && (editorHtml === savedContent || editorHtml === savedDraft?.content)
 }
 
 export function buildPendingSwitchSavePayload({
