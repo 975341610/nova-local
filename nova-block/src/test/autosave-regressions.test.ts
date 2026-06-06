@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 const projectRoot = resolve(__dirname, '..')
 const editorPath = resolve(projectRoot, 'components/novablock/NovaBlockEditor.tsx')
+const saveLifecycleHookPath = resolve(projectRoot, 'components/novablock/hooks/useEditorSaveLifecycle.ts')
 const revisionSnapshotHookPath = resolve(projectRoot, 'components/novablock/hooks/useRevisionSnapshotStatus.ts')
 const mainPath = resolve(projectRoot, '../../electron/main.js')
 const preloadPath = resolve(projectRoot, '../../electron/preload.js')
@@ -34,11 +35,12 @@ describe('autosave regressions', () => {
 
   it('flushes the live editor HTML through a shared draft helper before visibility, switch, and close saves', () => {
     const editorSource = readFileSync(editorPath, 'utf8')
+    const saveLifecycleSource = readFileSync(saveLifecycleHookPath, 'utf8')
 
     expect(editorSource).toContain('const flushCurrentEditorDraft = useCallback((expectedNoteId?: number | string | null) => {')
     expect(editorSource).toContain('const nextContent = editor?.getHTML() ?? currentDraft.content ?? \'\';')
-    expect(editorSource).toContain('const draftSnapshot = flushCurrentEditorDraft();')
-    expect(editorSource).toContain('void handleSave(draftSnapshot.content, draftSnapshot.note);')
+    expect(saveLifecycleSource).toContain('const draftSnapshot = flushCurrentEditorDraft();')
+    expect(saveLifecycleSource).toContain('void handleSave(draftSnapshot.content, draftSnapshot.note);')
   })
 
   it('flushes the previous note through the shared save path before switching editors', () => {
@@ -90,8 +92,9 @@ describe('autosave regressions', () => {
 
   it('does not rely on async React dirty state when closing immediately after typing', () => {
     const editorSource = readFileSync(editorPath, 'utf8')
+    const saveLifecycleSource = readFileSync(saveLifecycleHookPath, 'utf8')
     const onUpdateBody = sliceBetween(editorSource, 'onUpdate: ({ editor }) => {', 'onCreate: ({ editor }) => {')
-    const closeFlushBody = sliceBetween(editorSource, 'const unsubscribeBeforeClose = window.electron?.onBeforeAppClose?.(async () => {', 'window.electron?.finishBeforeAppClose?.();')
+    const closeFlushBody = sliceBetween(saveLifecycleSource, 'const unsubscribeBeforeClose = window.electron?.onBeforeAppClose?.(async () => {', 'window.electron?.finishBeforeAppClose?.();')
 
     expect(editorSource).toContain('const isDirtyRef = useRef(false);')
     expect(onUpdateBody).toContain('isDirtyRef.current = true;')

@@ -131,6 +131,7 @@ import {
 } from '../../lib/novablock/blockLinks';
 import { BlockId } from '../../lib/novablock/extensions/BlockId';
 import { BlockLink } from '../../lib/novablock/extensions/BlockLink';
+import { useEditorSaveLifecycle } from './hooks/useEditorSaveLifecycle';
 import { useRevisionSnapshotStatus } from './hooks/useRevisionSnapshotStatus';
 import {
   ADVANCED_TABLE_CELL_COLORS,
@@ -1940,61 +1941,15 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     };
   }, []);
 
-  useEffect(() => {
-    const flushPendingSave = () => {
-      const draftSnapshot = flushCurrentEditorDraft();
-      if (!draftSnapshot) {
-        return;
-      }
-
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-
-      if (isDirtyRef.current || isSavingRef.current || queuedPayloadRef.current.length > 0) {
-        void handleSave(draftSnapshot.content, draftSnapshot.note);
-      }
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        flushPendingSave();
-      }
-    };
-
-    window.addEventListener('beforeunload', flushPendingSave);
-    window.addEventListener('pagehide', flushPendingSave);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    const unsubscribeBeforeClose = window.electron?.onBeforeAppClose?.(async () => {
-      try {
-        const draftSnapshot = flushCurrentEditorDraft();
-        if (draftSnapshot) {
-          await new Promise<void>((resolve) => {
-            const timeoutId = window.setTimeout(resolve, 4600);
-            Promise.resolve(handleSave(draftSnapshot.content, draftSnapshot.note))
-              .catch((error) => {
-                console.error('Failed to flush note before app close:', error);
-              })
-              .finally(() => {
-                window.clearTimeout(timeoutId);
-                resolve();
-              });
-          });
-        }
-      } finally {
-        window.electron?.finishBeforeAppClose?.();
-      }
-    });
-
-    return () => {
-      window.removeEventListener('beforeunload', flushPendingSave);
-      window.removeEventListener('pagehide', flushPendingSave);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      unsubscribeBeforeClose?.();
-    };
-  }, [flushCurrentEditorDraft, handleSave, isDirty]);
+  useEditorSaveLifecycle({
+    flushCurrentEditorDraft,
+    handleSave,
+    timerRef,
+    isDirty,
+    isDirtyRef,
+    isSavingRef,
+    queuedPayloadRef,
+  });
 
   const [blockMenuPos, setBlockMenuPos] = useState({ top: 0, left: 0 });
   const [blockMenuAnchorRect, setBlockMenuAnchorRect] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
