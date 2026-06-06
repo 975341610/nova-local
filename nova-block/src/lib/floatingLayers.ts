@@ -11,6 +11,7 @@ export const QINGZHI_FLOATING_LAYERS = {
   editorToprail: 900,
   appTopbar: 1000,
   modal: 1000,
+  fullscreen: 1100,
   systemDialog: 10020,
 } as const
 
@@ -29,6 +30,7 @@ export const QINGZHI_FLOATING_LAYER_CSS_VARS: Record<QingzhiFloatingLayer, strin
   editorToprail: '--qz-z-editor-toprail',
   appTopbar: '--qz-z-app-topbar',
   modal: '--qz-z-modal',
+  fullscreen: '--qz-z-fullscreen',
   systemDialog: '--qz-z-system-dialog',
 }
 

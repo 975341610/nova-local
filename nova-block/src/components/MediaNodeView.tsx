@@ -4,6 +4,7 @@ import { GripVertical, Lock, LockOpen, Maximize2, Trash2, X } from 'lucide-react
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { formatUrl } from '../lib/api';
+import { getFloatingLayerCssVar } from '../lib/floatingLayers';
 import { DocumentAttachmentView } from './document/DocumentAttachmentView';
 
 type MediaKind = 'image' | 'video' | 'audio' | 'embed' | 'file';
@@ -165,10 +166,11 @@ export function MediaNodeView({ node, updateAttributes, deleteNode, selected, ki
         isImageFullscreen &&
         createPortal(
           <div
-            className="fixed inset-0 z-[2147483000] flex items-center justify-center bg-black/85 p-6 backdrop-blur-md"
+            className="fixed inset-0 flex items-center justify-center bg-black/85 p-6 backdrop-blur-md"
             contentEditable={false}
             data-testid="media-image-fullscreen-viewer"
             onClick={() => setIsImageFullscreen(false)}
+            style={{ zIndex: getFloatingLayerCssVar('fullscreen') }}
           >
             <button
               className="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/15 text-white shadow-lg backdrop-blur transition-colors hover:bg-white/25"

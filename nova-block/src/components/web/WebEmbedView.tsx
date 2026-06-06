@@ -4,6 +4,7 @@ import { ExternalLink, Eye, Maximize2, PanelTop, RefreshCw, Rows3, X } from 'luc
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../lib/api';
+import { getFloatingLayerCssVar } from '../../lib/floatingLayers';
 import { defaultWebEmbedTitle, isIframeBlockedWebEmbedUrl, normalizeWebEmbedUrl } from '../../lib/webEmbed';
 
 type WebEmbedViewMode = 'card' | 'preview';
@@ -141,7 +142,11 @@ export function WebEmbedView({ node, updateAttributes, selected }: NodeViewProps
   };
 
   const floatingPreview = floating ? createPortal(
-    <div className="fixed inset-0 z-[2147482500] flex items-center justify-center bg-black/20 p-8" contentEditable={false}>
+    <div
+      className="fixed inset-0 flex items-center justify-center bg-black/20 p-8"
+      contentEditable={false}
+      style={{ zIndex: getFloatingLayerCssVar('fullscreen') }}
+    >
       <div className="flex h-[78vh] w-[min(1120px,86vw)] flex-col overflow-hidden rounded-2xl border border-[#d8c9b5] bg-[#fffdfa] shadow-2xl">
         <div className="flex h-12 items-center justify-between border-b border-[#e7dfd3] px-4">
           <div className="min-w-0">

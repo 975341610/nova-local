@@ -31,6 +31,7 @@ import {
   placeDocumentPdfFrame,
   type DocumentPdfFrameCacheEntry,
 } from '../../lib/documentPdfPortal';
+import { getFloatingLayerCssVar } from '../../lib/floatingLayers';
 import { formatFileSize } from '../../lib/mediaUtils';
 
 type DocumentPreview = {
@@ -469,9 +470,10 @@ export function DocumentAttachmentView({
 
     return createPortal(
       <div
-        className="fixed inset-0 z-[2147483000] flex bg-[#f6f3ef] text-[#2b2b2b]"
+        className="fixed inset-0 flex bg-[#f6f3ef] text-[#2b2b2b]"
         contentEditable={false}
         data-testid="document-fullscreen-viewer"
+        style={{ zIndex: getFloatingLayerCssVar('fullscreen') }}
       >
         {showPages && (
           <aside className="w-56 shrink-0 border-r border-[#ded6ca] bg-[#fbfaf7]/95 p-4">

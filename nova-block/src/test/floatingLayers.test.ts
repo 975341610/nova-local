@@ -23,6 +23,11 @@ describe('QingZhi floating layer contract', () => {
     expect(isLayerAbove('systemDialog', 'modal')).toBe(true)
   })
 
+  it('keeps fullscreen previews above app chrome but below system dialogs', () => {
+    expect(isLayerAbove('fullscreen', 'appTopbar')).toBe(true)
+    expect(isLayerAbove('systemDialog', 'fullscreen')).toBe(true)
+  })
+
   it('keeps TypeScript layer values aligned with CSS design tokens', () => {
     const css = readFileSync(resolve(__dirname, '../styles/design-tokens.css'), 'utf8')
 
@@ -31,5 +36,16 @@ describe('QingZhi floating layer contract', () => {
       expect(css).toContain(`${cssVar}: ${value};`)
       expect(getFloatingLayerCssVar(layer as keyof typeof QINGZHI_FLOATING_LAYERS)).toBe(`var(${cssVar}, ${value})`)
     })
+  })
+
+  it('uses the fullscreen layer for document, image, and web fullscreen previews', () => {
+    const documentSource = readFileSync(resolve(__dirname, '../components/document/DocumentAttachmentView.tsx'), 'utf8')
+    const mediaSource = readFileSync(resolve(__dirname, '../components/MediaNodeView.tsx'), 'utf8')
+    const webSource = readFileSync(resolve(__dirname, '../components/web/WebEmbedView.tsx'), 'utf8')
+
+    for (const source of [documentSource, mediaSource, webSource]) {
+      expect(source).toContain("getFloatingLayerCssVar('fullscreen')")
+      expect(source).not.toContain('214748')
+    }
   })
 })
