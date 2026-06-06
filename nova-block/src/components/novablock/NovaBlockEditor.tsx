@@ -129,6 +129,7 @@ import {
 } from '../../lib/novablock/blockLinks';
 import { BlockId } from '../../lib/novablock/extensions/BlockId';
 import { BlockLink } from '../../lib/novablock/extensions/BlockLink';
+import { useRevisionSnapshotStatus } from './hooks/useRevisionSnapshotStatus';
 
 const ADVANCED_TABLE_CELL_COLORS = [
   { label: '无', value: 'transparent' },
@@ -694,14 +695,6 @@ interface NovaBlockEditorProps {
   onToggleTypewriter?: () => void;
 }
 
-type RevisionSnapshotStatus = {
-  noteId: number;
-  status: 'queued' | 'saving' | 'saved' | 'failed';
-  detail?: string;
-  queued?: number;
-  updatedAt?: string;
-};
-
 /**
  * NovaBlockEditor (Sprint 3 Core)
  * 鏋佽嚧鎬ц兘銆乽ipro 涓撲笟瑙嗚
@@ -714,9 +707,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const allNotes = useNoteStore((state) => state.notes);
   const [isSaving, setIsSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
-  const [revisionSnapshotStatus, setRevisionSnapshotStatus] = useState<RevisionSnapshotStatus | null>(null);
-  const revisionSnapshotStatusByNoteRef = useRef<Record<number, RevisionSnapshotStatus | null>>({});
-  const activeRevisionNoteIdRef = useRef<number | null>(typeof note?.id === 'number' ? note.id : null);
+  const revisionSnapshotStatus = useRevisionSnapshotStatus(note?.id);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(note?.created_at || null);
   const [viewMode, setViewMode] = useState<'edit' | 'preview'>('edit');
   const [fps, setFps] = useState(0);
@@ -776,40 +767,6 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [hoveredInsertTarget, setHoveredInsertTarget] = useState<{ kind: 'row' | 'column'; key: string } | null>(null);
   const [advancedTableSelectionScope, setAdvancedTableSelectionScope] = useState<'cell' | 'row' | 'column' | null>(null);
 
-  useEffect(() => {
-    const activeNoteId = typeof note?.id === 'number' ? note.id : null;
-    activeRevisionNoteIdRef.current = activeNoteId;
-    setRevisionSnapshotStatus(
-      activeNoteId != null ? revisionSnapshotStatusByNoteRef.current[activeNoteId] ?? null : null,
-    );
-  }, [note?.id]);
-
-  useEffect(() => {
-    const unsubscribe = window.electron?.onRevisionSnapshotStatus?.((payload: RevisionSnapshotStatus) => {
-      if (!payload || typeof payload.noteId !== 'number') {
-        return;
-      }
-      revisionSnapshotStatusByNoteRef.current[payload.noteId] = payload;
-      if (activeRevisionNoteIdRef.current === payload.noteId) {
-        setRevisionSnapshotStatus(payload);
-      }
-      if (payload.status === 'saved') {
-        window.setTimeout(() => {
-          const latest = revisionSnapshotStatusByNoteRef.current[payload.noteId];
-          if (latest?.updatedAt === payload.updatedAt) {
-            revisionSnapshotStatusByNoteRef.current[payload.noteId] = null;
-          }
-          if (activeRevisionNoteIdRef.current === payload.noteId) {
-            setRevisionSnapshotStatus((current) => (
-              current?.noteId === payload.noteId && current.updatedAt === payload.updatedAt ? null : current
-            ));
-          }
-        }, 2500);
-      }
-    });
-
-    return () => unsubscribe?.();
-  }, []);
   const [advancedTablePopover, setAdvancedTablePopover] = useState<'text' | 'color' | null>(null);
   const [isAdvancedTableResizeCursor, setIsAdvancedTableResizeCursor] = useState(false);
   const [textColorAnchor, setTextColorAnchor] = useState<{ x: number; y: number } | null>(null);

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 const projectRoot = resolve(__dirname, '..')
 const editorPath = resolve(projectRoot, 'components/novablock/NovaBlockEditor.tsx')
+const revisionSnapshotHookPath = resolve(projectRoot, 'components/novablock/hooks/useRevisionSnapshotStatus.ts')
 const mainPath = resolve(projectRoot, '../../electron/main.js')
 const preloadPath = resolve(projectRoot, '../../electron/preload.js')
 const refineCssPath = resolve(projectRoot, 'styles/qingzhi-refine-v34.css')
@@ -123,11 +124,14 @@ describe('autosave regressions', () => {
 
   it('keeps revision snapshot status per note so switching notes cannot leave a stale queued badge', () => {
     const editorSource = readFileSync(editorPath, 'utf8')
-    const subscriptionBody = sliceBetween(editorSource, 'window.electron?.onRevisionSnapshotStatus?.((payload: RevisionSnapshotStatus) => {', 'return () => unsubscribe?.();')
+    const hookSource = readFileSync(revisionSnapshotHookPath, 'utf8')
+    const subscriptionBody = sliceBetween(hookSource, 'window.electron?.onRevisionSnapshotStatus?.((payload: RevisionSnapshotPayload) => {', 'return () => unsubscribe?.();')
 
-    expect(editorSource).toContain('const revisionSnapshotStatusByNoteRef = useRef<Record<number, RevisionSnapshotStatus | null>>({});')
-    expect(editorSource).toContain('const activeRevisionNoteIdRef = useRef<number | null>')
-    expect(editorSource).toContain('revisionSnapshotStatusByNoteRef.current[activeNoteId] ?? null')
+    expect(editorSource).toContain("import { useRevisionSnapshotStatus } from './hooks/useRevisionSnapshotStatus';")
+    expect(editorSource).toContain('const revisionSnapshotStatus = useRevisionSnapshotStatus(note?.id);')
+    expect(hookSource).toContain('const revisionSnapshotStatusByNoteRef = useRef<Record<number, RevisionSnapshotStatus>>({});')
+    expect(hookSource).toContain('const activeRevisionNoteIdRef = useRef<number | null>')
+    expect(hookSource).toContain('revisionSnapshotStatusByNoteRef.current[activeNoteId] ?? null')
     expect(subscriptionBody).toContain('revisionSnapshotStatusByNoteRef.current[payload.noteId] = payload;')
     expect(subscriptionBody).toContain('activeRevisionNoteIdRef.current === payload.noteId')
     expect(subscriptionBody).toContain('revisionSnapshotStatusByNoteRef.current[payload.noteId] = null;')
