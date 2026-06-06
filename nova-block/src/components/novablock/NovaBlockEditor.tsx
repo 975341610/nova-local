@@ -22,7 +22,7 @@ import { StickyNotesLayer } from '../editor/StickyNotesLayer';
 import { StickerPanel } from '../editor/StickerPanel';
 import type { StickerData, StickyNoteData, BackgroundPaperType } from '../../lib/types';
 import {
-    GripVertical, Bold, Italic, 
+    Bold, Italic,
     Underline, Eraser, Cpu, Strikethrough,
     Type, Heading1, Heading2, Heading3, CheckSquare, Code, Quote, Sparkles, Zap, Waves,
     Link as LinkIcon, Highlighter, Trash2, Copy, ListPlus, Minus,
@@ -75,7 +75,6 @@ import {
 import {
   buildAdvancedTableEdgeIntent,
   type AdvancedTableEdgeIntent,
-  type AdvancedTableRect,
 } from '../../lib/advancedTableEdges';
 import {
   forEachAdvancedTableCellInSelection,
@@ -105,6 +104,10 @@ import {
   AdvancedTableSizePicker,
   AdvancedTableToolbar,
 } from './components/AdvancedTableOverlays';
+import {
+  BlockHandleOverlay,
+  type BlockHandleOverlayState,
+} from './components/BlockHandleOverlay';
 import { BlockLinkPicker } from './components/BlockLinkPicker';
 import { TextColorPopover } from './components/TextColorPopover';
 import { EmoticonPanel } from '../editor/EmoticonPanel';
@@ -129,30 +132,11 @@ import {
 import { BlockId } from '../../lib/novablock/extensions/BlockId';
 import { BlockLink } from '../../lib/novablock/extensions/BlockLink';
 import { useRevisionSnapshotStatus } from './hooks/useRevisionSnapshotStatus';
-
-const ADVANCED_TABLE_CELL_COLORS = [
-  { label: '无', value: 'transparent' },
-  { label: '宣纸', value: '#f6f3ef' },
-  { label: '雾绿', value: '#dce5de' },
-  { label: '浅金', value: '#f4ead5' },
-  { label: '朱砂', value: '#f5dccd' },
-  { label: '玉色', value: '#e7f0ec' },
-];
-
-function escapeCssIdentifier(value: string): string {
-  const css = globalThis.CSS as typeof CSS | undefined;
-  if (css?.escape) {
-    return css.escape(value);
-  }
-  return value.replace(/["\\]/g, '\\$&');
-}
-
-const toAdvancedTableRect = (rect: DOMRect | ClientRect): AdvancedTableRect => ({
-  left: rect.left,
-  top: rect.top,
-  width: rect.width,
-  height: rect.height,
-});
+import {
+  ADVANCED_TABLE_CELL_COLORS,
+  escapeCssIdentifier,
+  toAdvancedTableRect,
+} from './advancedTableUi';
 
 interface NovaBlockEditorProps {
   note: Note | null;
@@ -292,12 +276,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const suppressNextGripClickRef = useRef(false);
   const dragHandleBridgeLockedRef = useRef(false);
   const isBlockMenuOpenRef = useRef(false);
-  const [blockHandleState, setBlockHandleState] = useState<{
-    visible: boolean;
-    pos: number;
-    rect: { top: number; left: number; right: number; bottom: number; width: number; height: number };
-    referenceRect: { top: number; left: number; right: number; bottom: number };
-  } | null>(null);
+  const [blockHandleState, setBlockHandleState] = useState<BlockHandleOverlayState | null>(null);
 
   const slashItemsRef = useRef<any[]>(NOVA_BLOCK_SLASH_ITEMS);
   slashItemsRef.current = NOVA_BLOCK_SLASH_ITEMS;
@@ -3020,49 +2999,18 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               className={`qz-editor-writing-surface relative group/editor mt-2 w-full min-h-[500px] rounded-xl ${isAdvancedTableResizeCursor ? 'qz-table-resize-cursor' : ''}`}
             >
               <BackgroundPaper type={backgroundPaper} />
-              {/* QingZhi custom block handle overlay: independent from Tiptap plugin visibility. */}
-              {editor && blockHandleState?.visible && typeof document !== 'undefined' && createPortal(
-                <div
-                  ref={blockMenuRef}
-                  data-testid="qingzhi-block-handle"
-                  data-qz-block-handle="true"
-                  role="button"
-                  tabIndex={0}
-                  draggable={true}
-                  className="qz-custom-block-handle"
-                  style={{
-                    position: 'fixed',
-                    left: blockHandleState.rect.left,
-                    top: blockHandleState.rect.top,
-                    width: blockHandleState.rect.width,
-                    height: blockHandleState.rect.height,
-                  }}
-                  onMouseEnter={() => {
-                    setDragHandleBridgeLocked(true);
-                    scheduleDragHandleReposition();
-                  }}
-                  onMouseLeave={() => {
-                    if (!isBlockMenuOpen) {
-                      setDragHandleBridgeLocked(false);
-                    }
-                  }}
-                  onMouseDown={handleGripMouseDown}
-                  onDragStart={handleGripDragStart}
-                  onDragEnd={handleGripDragEnd}
-                  onClick={handleGripClick}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      handleGripClick(event as unknown as React.MouseEvent);
-                    }
-                  }}
-                  aria-label="打开块菜单"
-                >
-                  <span className="qz-custom-block-handle-icon" aria-hidden="true">
-                    <GripVertical size={16} />
-                  </span>
-                </div>,
-                document.body,
-              )}
+              <BlockHandleOverlay
+                enabled={Boolean(editor)}
+                state={blockHandleState}
+                blockMenuRef={blockMenuRef}
+                isBlockMenuOpen={isBlockMenuOpen}
+                setDragHandleBridgeLocked={setDragHandleBridgeLocked}
+                scheduleDragHandleReposition={scheduleDragHandleReposition}
+                onMouseDown={handleGripMouseDown}
+                onDragStart={handleGripDragStart}
+                onDragEnd={handleGripDragEnd}
+                onClick={handleGripClick}
+              />
 
               {editor && (
                 <AdvancedTableToolbar

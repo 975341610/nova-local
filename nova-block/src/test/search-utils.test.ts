@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import type { Note } from '../lib/types'
-import { getNotesMissingContent, searchNotes } from '../lib/searchUtils'
+import { getNotesMissingContent, searchNotes, stripHtmlToText } from '../lib/searchUtils'
+
+const searchUtilsSourcePath = resolve(__dirname, '../lib/searchUtils.ts')
 
 const baseNote: Note = {
   id: 1,
@@ -23,6 +27,14 @@ const baseNote: Note = {
 }
 
 describe('searchUtils', () => {
+  it('extracts plain text without assigning untrusted html through innerHTML', () => {
+    const source = readFileSync(searchUtilsSourcePath, 'utf8')
+
+    expect(stripHtmlToText('<p>Hello <strong>Nova</strong></p><script>bad()</script>')).toBe('Hello Novabad()')
+    expect(source).toContain('DOMParser')
+    expect(source).not.toContain('.innerHTML =')
+  })
+
   it('finds notes whose bodies have not been loaded yet', () => {
     const missing = { ...baseNote, id: 2, title: '未加载正文' }
     const loaded = { ...baseNote, id: 3, title: '已加载正文', content: '<p>hello</p>' }
