@@ -131,6 +131,7 @@ import {
 } from '../../lib/novablock/blockLinks';
 import { BlockId } from '../../lib/novablock/extensions/BlockId';
 import { BlockLink } from '../../lib/novablock/extensions/BlockLink';
+import { useDocumentPreviewSuspension } from './hooks/useDocumentPreviewSuspension';
 import { useEditorSaveLifecycle } from './hooks/useEditorSaveLifecycle';
 import { useRevisionSnapshotStatus } from './hooks/useRevisionSnapshotStatus';
 import {
@@ -175,23 +176,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   // v0.22.0 · 版本历史抽屉
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [historyNoteId, setHistoryNoteId] = useState<number | null>(null);
-  useEffect(() => {
-    if (!isHistoryOpen) {
-      if (document.body.dataset.qzDocumentPreviewSuspended === 'true') {
-        delete document.body.dataset.qzDocumentPreviewSuspended;
-        window.dispatchEvent(new CustomEvent('qz:document-preview-resume'));
-      }
-      return;
-    }
-    document.body.dataset.qzDocumentPreviewSuspended = 'true';
-    window.dispatchEvent(new CustomEvent('qz:document-preview-suspend'));
-    return () => {
-      if (document.body.dataset.qzDocumentPreviewSuspended === 'true') {
-        delete document.body.dataset.qzDocumentPreviewSuspended;
-        window.dispatchEvent(new CustomEvent('qz:document-preview-resume'));
-      }
-    };
-  }, [isHistoryOpen]);
+  useDocumentPreviewSuspension(isHistoryOpen);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   // F1-T3 · Ctrl/Cmd+H toggles find/replace panel
   useEffect(() => {
