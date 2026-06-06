@@ -7,8 +7,8 @@ const sourceRoot = path.resolve(__dirname, '..')
 
 describe('QingZhi advanced table', () => {
   it('exposes an advanced table slash command and table toolbar actions', () => {
-    const editorSource = fs.readFileSync(
-      path.resolve(sourceRoot, 'components/novablock/NovaBlockEditor.tsx'),
+    const slashItemsSource = fs.readFileSync(
+      path.resolve(sourceRoot, 'components/novablock/slashItems.tsx'),
       'utf8',
     )
     const overlaySource = fs.readFileSync(
@@ -16,7 +16,8 @@ describe('QingZhi advanced table', () => {
       'utf8',
     )
 
-    expect(editorSource).toContain("label: '高级表格'")
+    expect(slashItemsSource).toContain("keywords: ['advanced-table'")
+    expect(slashItemsSource).toContain('open-advanced-table-size-picker')
     expect(overlaySource).toContain('qz-advanced-table-toolbar')
     expect(overlaySource).toContain('mergeCells')
     expect(overlaySource).toContain('splitCell')
