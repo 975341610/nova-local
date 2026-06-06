@@ -140,6 +140,19 @@ import {
   toAdvancedTableRect,
 } from './advancedTableUi';
 
+const isSafeEditorLinkHref = (href: string) => {
+  const trimmed = href.trim();
+  if (!trimmed) return false;
+
+  try {
+    const baseHref = typeof window !== 'undefined' ? window.location.href : 'http://localhost/';
+    const url = new URL(trimmed, baseHref);
+    return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:';
+  } catch {
+    return false;
+  }
+};
+
 interface NovaBlockEditorProps {
   note: Note | null;
   onLiveChange?: (payload: Partial<Note>) => void;
@@ -408,7 +421,12 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     Blockquote,
     CodeBlock,
     BlockLink,
-    Link.configure({ openOnClick: true, autolink: true }),
+    Link.configure({
+      openOnClick: true,
+      autolink: true,
+      protocols: ['http', 'https', 'mailto'],
+      validate: isSafeEditorLinkHref,
+    }),
     Highlight.configure({ multicolor: true }),
     UnderlineExtension,
     TextColorMark,

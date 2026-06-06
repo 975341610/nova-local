@@ -30,7 +30,7 @@ describe('searchUtils', () => {
   it('extracts plain text without assigning untrusted html through innerHTML', () => {
     const source = readFileSync(searchUtilsSourcePath, 'utf8')
 
-    expect(stripHtmlToText('<p>Hello <strong>Nova</strong></p><script>bad()</script>')).toBe('Hello Novabad()')
+    expect(stripHtmlToText('<p>Hello <strong>Nova</strong></p><script>bad()</script><style>.x{}</style>')).toBe('Hello Nova')
     expect(source).toContain('DOMParser')
     expect(source).not.toContain('.innerHTML =')
   })

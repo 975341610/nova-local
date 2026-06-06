@@ -14,10 +14,15 @@ export function stripHtmlToText(html: string) {
 
   if (typeof DOMParser !== 'undefined') {
     const doc = new DOMParser().parseFromString(html, 'text/html')
+    doc.querySelectorAll('script, style, template, noscript').forEach(element => element.remove())
     return (doc.body.textContent || '').replace(/\s+/g, ' ').trim()
   }
 
-  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  return html
+    .replace(/<(script|style|template|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 export function getNotesMissingContent(notes: Note[], limit?: number) {
