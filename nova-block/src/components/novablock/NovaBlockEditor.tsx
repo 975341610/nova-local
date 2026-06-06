@@ -105,7 +105,6 @@ import {
 } from './components/AdvancedTableOverlays';
 import {
   BlockHandleOverlay,
-  type BlockHandleOverlayState,
 } from './components/BlockHandleOverlay';
 import { BlockLinkPicker } from './components/BlockLinkPicker';
 import { TextColorPopover } from './components/TextColorPopover';
@@ -131,6 +130,7 @@ import {
 import { BlockId } from '../../lib/novablock/extensions/BlockId';
 import { BlockLink } from '../../lib/novablock/extensions/BlockLink';
 import { useAdvancedTableUiState } from './hooks/useAdvancedTableUiState';
+import { useBlockHandleLayerState } from './hooks/useBlockHandleLayerState';
 import { useDocumentPreviewSuspension } from './hooks/useDocumentPreviewSuspension';
 import { useEditorSaveLifecycle } from './hooks/useEditorSaveLifecycle';
 import { useRevisionSnapshotStatus } from './hooks/useRevisionSnapshotStatus';
@@ -273,14 +273,17 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const emoticonPanelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollTopByNoteIdRef = useRef<Record<string, number>>({});
-  const activeDragHandlePosRef = useRef(-1);
-  const dragHandleRepositionFrameRef = useRef<number | null>(null);
-  const dragInteractionRef = useRef<{ startX: number; startY: number; startTime: number } | null>(null);
-  const dragPreviewRef = useRef<HTMLElement | null>(null);
-  const suppressNextGripClickRef = useRef(false);
-  const dragHandleBridgeLockedRef = useRef(false);
   const isBlockMenuOpenRef = useRef(false);
-  const [blockHandleState, setBlockHandleState] = useState<BlockHandleOverlayState | null>(null);
+  const {
+    activeDragHandlePosRef,
+    dragHandleRepositionFrameRef,
+    dragInteractionRef,
+    dragPreviewRef,
+    suppressNextGripClickRef,
+    dragHandleBridgeLockedRef,
+    blockHandleState,
+    setBlockHandleState,
+  } = useBlockHandleLayerState();
 
   const slashItemsRef = useRef<any[]>(NOVA_BLOCK_SLASH_ITEMS);
   slashItemsRef.current = NOVA_BLOCK_SLASH_ITEMS;
