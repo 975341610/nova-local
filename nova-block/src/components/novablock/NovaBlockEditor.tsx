@@ -107,6 +107,7 @@ import {
   AdvancedTableToolbar,
 } from './components/AdvancedTableOverlays';
 import { BlockLinkPicker } from './components/BlockLinkPicker';
+import { TextColorPopover } from './components/TextColorPopover';
 import { EmoticonPanel } from '../editor/EmoticonPanel';
 import { SpellcheckSuggestionCard } from './components/SpellcheckSuggestionCard';
 import { buildSpellcheckSuggestionDetail } from './extensions/spellcheckHelpers';
@@ -4225,101 +4226,15 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
               onChange={handleStickyNotesChange}
             />
 
-            {/* v0.21.2 · 文字颜色 / 高亮取色 popover (Portal 至 body,避免被 BubbleMenu 裁切/卸载) */}
-            {(isTextColorOpen || isHighlightColorOpen) && createPortal(
-              <div
-                data-color-popover="true"
-                onMouseDown={(e) => { e.preventDefault(); }}
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  position: 'fixed',
-                  left: (isTextColorOpen ? textColorAnchor?.x : highlightColorAnchor?.x) ?? 0,
-                  top: (isTextColorOpen ? textColorAnchor?.y : highlightColorAnchor?.y) ?? 0,
-                  transform: 'translateX(-50%)',
-                  zIndex: 10000,
-                }}
-                className="rounded-xl border border-border/40 bg-background/98 shadow-xl backdrop-blur-md p-2 flex flex-col gap-1.5"
-              >
-                <div className="text-[10px] text-muted-foreground px-0.5 flex items-center justify-between">
-                  <span>{isTextColorOpen ? '文字颜色' : '高亮颜色'}</span>
-                  <button
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      if (isTextColorOpen) {
-                        editor?.chain().focus().unsetTextColor().run();
-                        setIsTextColorOpen(false);
-                      } else {
-                        editor?.chain().focus().unsetHighlight().run();
-                        setIsHighlightColorOpen(false);
-                      }
-                    }}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    清除
-                  </button>
-                </div>
-                <div className="grid grid-cols-8 gap-1" style={{ width: 196 }}>
-                  {(isTextColorOpen
-                    ? [
-                        { c: '#000000', n: '墨' },
-                        { c: '#d32f2f', n: '朱砂' },
-                        { c: '#e65100', n: '赤金' },
-                        { c: '#f9a825', n: '杏黄' },
-                        { c: '#2e7d32', n: '翠绿' },
-                        { c: '#0288d1', n: '靛青' },
-                        { c: '#6a1b9a', n: '玄紫' },
-                        { c: '#5d4037', n: '褐' },
-                      ]
-                    : [
-                        { c: '#fff59d', n: '淡黄' },
-                        { c: '#ffec3d', n: '柠黄' },
-                        { c: '#ffcdd2', n: '胭脂' },
-                        { c: '#ffab91', n: '橘粉' },
-                        { c: '#c8e6c9', n: '嫩绿' },
-                        { c: '#b3e5fc', n: '浅蓝' },
-                        { c: '#d1c4e9', n: '淡紫' },
-                        { c: '#d7ccc8', n: '米褐' },
-                      ]
-                  ).map(({ c, n }) => (
-                    <button
-                      key={c}
-                      title={n}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        if (isTextColorOpen) {
-                          editor?.chain().focus().setTextColor(c).run();
-                          setIsTextColorOpen(false);
-                        } else {
-                          editor?.chain().focus().toggleHighlight({ color: c }).run();
-                          setIsHighlightColorOpen(false);
-                        }
-                      }}
-                      className="w-5 h-5 rounded-full border border-border/60 hover:scale-110 transition-transform"
-                      style={{ background: c }}
-                    />
-                  ))}
-                </div>
-                <label
-                  className="flex items-center gap-2 pt-1.5 border-t border-border/30 text-[11px] text-muted-foreground cursor-pointer"
-                  onMouseDown={(e) => e.preventDefault()}
-                >
-                  <input
-                    type="color"
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (isTextColorOpen) {
-                        editor?.chain().focus().setTextColor(v).run();
-                      } else {
-                        editor?.chain().focus().setHighlight({ color: v }).run();
-                      }
-                    }}
-                    className="w-6 h-6 rounded cursor-pointer"
-                  />
-                  <span>自定义颜色</span>
-                </label>
-              </div>,
-              document.body
-            )}
+            <TextColorPopover
+              editor={editor}
+              isTextColorOpen={isTextColorOpen}
+              isHighlightColorOpen={isHighlightColorOpen}
+              textColorAnchor={textColorAnchor}
+              highlightColorAnchor={highlightColorAnchor}
+              setIsTextColorOpen={setIsTextColorOpen}
+              setIsHighlightColorOpen={setIsHighlightColorOpen}
+            />
 
             {/* Global Emoticon Panel (Detached from BubbleMenu) */}
             <AnimatePresence>
