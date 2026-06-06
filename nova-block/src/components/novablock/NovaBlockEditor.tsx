@@ -74,7 +74,6 @@ import {
 } from '../../lib/editorDraftSync';
 import {
   buildAdvancedTableEdgeIntent,
-  type AdvancedTableEdgeIntent,
 } from '../../lib/advancedTableEdges';
 import {
   forEachAdvancedTableCellInSelection,
@@ -131,6 +130,7 @@ import {
 } from '../../lib/novablock/blockLinks';
 import { BlockId } from '../../lib/novablock/extensions/BlockId';
 import { BlockLink } from '../../lib/novablock/extensions/BlockLink';
+import { useAdvancedTableUiState } from './hooks/useAdvancedTableUiState';
 import { useDocumentPreviewSuspension } from './hooks/useDocumentPreviewSuspension';
 import { useEditorSaveLifecycle } from './hooks/useEditorSaveLifecycle';
 import { useRevisionSnapshotStatus } from './hooks/useRevisionSnapshotStatus';
@@ -211,17 +211,22 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   const [blockLinkAnchor, setBlockLinkAnchor] = useState<{ x: number; y: number } | null>(null);
   const blockLinkSelectionRef = useRef<{ from: number; to: number } | null>(null);
   const blockLinkPickerRef = useRef<HTMLDivElement>(null);
-  const [showAdvancedTableToolbar, setShowAdvancedTableToolbar] = useState(false);
-  const [advancedTableSize, setAdvancedTableSize] = useState({ open: false, rows: 4, cols: 4 });
-  const [advancedTableEdgeIntent, setAdvancedTableEdgeIntent] = useState<AdvancedTableEdgeIntent>(null);
-  // The blue insertion line and "+" affordance are gated by hovering a specific
-  // persistent dot (identified by its key), never by merely touching a table
-  // row/column border.
-  const [hoveredInsertTarget, setHoveredInsertTarget] = useState<{ kind: 'row' | 'column'; key: string } | null>(null);
-  const [advancedTableSelectionScope, setAdvancedTableSelectionScope] = useState<'cell' | 'row' | 'column' | null>(null);
-
-  const [advancedTablePopover, setAdvancedTablePopover] = useState<'text' | 'color' | null>(null);
-  const [isAdvancedTableResizeCursor, setIsAdvancedTableResizeCursor] = useState(false);
+  const {
+    showAdvancedTableToolbar,
+    setShowAdvancedTableToolbar,
+    advancedTableSize,
+    setAdvancedTableSize,
+    advancedTableEdgeIntent,
+    setAdvancedTableEdgeIntent,
+    hoveredInsertTarget,
+    setHoveredInsertTarget,
+    advancedTableSelectionScope,
+    setAdvancedTableSelectionScope,
+    advancedTablePopover,
+    setAdvancedTablePopover,
+    isAdvancedTableResizeCursor,
+    setIsAdvancedTableResizeCursor,
+  } = useAdvancedTableUiState();
   const [textColorAnchor, setTextColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [highlightColorAnchor, setHighlightColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const [backgroundPaper, setBackgroundPaper] = useState<BackgroundPaperType>(note?.background_paper || 'none');
