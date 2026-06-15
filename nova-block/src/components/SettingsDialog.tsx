@@ -214,6 +214,10 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
       const result = await api.pickVaultFolder();
       if (result?.path) {
         setNewVaultPath(result.path);
+        const suggestedName = result.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop()?.trim();
+        if (suggestedName && (!newVaultName.trim() || newVaultName.trim() === '我的 Vault')) {
+          setNewVaultName(suggestedName);
+        }
       }
     } catch (err: any) {
       setVaultNotice({ success: false, message: err?.message || '选择 Vault 文件夹失败' });

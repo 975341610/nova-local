@@ -137,4 +137,25 @@ describe('SettingsDialog AI config', () => {
       expect(setAiModeMock).toHaveBeenCalledWith('local')
     })
   })
+
+  it('fills the new Vault path from the native folder picker and suggests the folder name', async () => {
+    apiMock.getModelConfig.mockResolvedValue({
+      provider: 'openai',
+      api_key_masked: '',
+      base_url: 'https://api.openai.com/v1',
+      model_name: 'gpt-4o-mini',
+    })
+    apiMock.pickVaultFolder.mockResolvedValue({ path: 'D:\\QingZhi\\WorkVault' })
+
+    render(<SettingsDialog isOpen onClose={() => {}} />)
+
+    fireEvent.click(await screen.findByText('Vault 管理'))
+    fireEvent.click(await screen.findByLabelText('选择 Vault 文件夹'))
+
+    await waitFor(() => {
+      expect(apiMock.pickVaultFolder).toHaveBeenCalled()
+      expect(screen.getByDisplayValue('D:\\QingZhi\\WorkVault')).toBeTruthy()
+      expect(screen.getByDisplayValue('WorkVault')).toBeTruthy()
+    })
+  })
 })
