@@ -86,6 +86,7 @@ import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
 import { FindReplaceExtension } from '../../lib/novablock/findReplacePlugin';
 import { buildPrompt, kindToBackendAction, type AIActionKind } from '../../lib/novablock/aiActions';
+import { isSafeEditorLinkHref } from '../../lib/novablock/editorLinkSecurity';
 import {
   AIStreamingPreviewNode,
   findAIStreamingPreview,
@@ -139,19 +140,6 @@ import {
   escapeCssIdentifier,
   toAdvancedTableRect,
 } from './advancedTableUi';
-
-const isSafeEditorLinkHref = (href: string) => {
-  const trimmed = href.trim();
-  if (!trimmed) return false;
-
-  try {
-    const baseHref = typeof window !== 'undefined' ? window.location.href : 'http://localhost/';
-    const url = new URL(trimmed, baseHref);
-    return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:';
-  } catch {
-    return false;
-  }
-};
 
 interface NovaBlockEditorProps {
   note: Note | null;
