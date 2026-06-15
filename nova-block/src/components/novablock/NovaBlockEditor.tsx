@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffe
 import { sanitizeLegacyApiUrlsInHtml } from "../../lib/api";
 import { EditorContent, useEditor, Editor } from '@tiptap/react';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
-import { Node, mergeAttributes } from '@tiptap/core';
 import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import Dropcursor from '@tiptap/extension-dropcursor';
@@ -30,8 +29,6 @@ import {
     Bot, MessageSquare, Palette
 } from 'lucide-react';
 
-import pixelMaidUrl from '../../assets/pixel-maid.webp';
-
 import {
     AudioNode, CalloutNode, DatabaseTableCell, DatabaseTableHeader,
     EmbedNode, WebEmbedNode, ResizableImage, TaskItem, TaskList, VideoNode, WikiLink,
@@ -43,16 +40,7 @@ import {
     Emoticon, SliderExtension, NoteLink, TextEffect, AISpellcheck, FreehandExtension,
     TextColorMark, MarginAnchor, ListStyleExtension
    } from '../../lib/tiptapExtensions';
-const AILoadingNode = Node.create({
-  name: "aiLoadingPlaceholder",
-  inline: true,
-  group: "inline",
-  atom: true,
-  parseHTML() { return [{ tag: "img[data-ai-loading]" }]; },
-  renderHTML({ HTMLAttributes }) {
-    return ["img", mergeAttributes(HTMLAttributes, { src: pixelMaidUrl, "data-ai-loading": "true", alt: "AI Thinking...", width: 40, height: 40, style: "display:inline-block; vertical-align:middle; margin:0 4px;" })];
-  }
-});
+import { AILoadingNode } from './extensions/AILoadingNode';
 
 import type { Note } from '../../lib/types';
 
