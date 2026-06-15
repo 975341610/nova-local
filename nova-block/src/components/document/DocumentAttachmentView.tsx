@@ -33,6 +33,7 @@ import {
 } from '../../lib/documentPdfPortal';
 import { getFloatingLayerCssVar } from '../../lib/floatingLayers';
 import { formatFileSize } from '../../lib/mediaUtils';
+import { useDocumentAttachmentViewState, type DocumentViewMode } from './useDocumentAttachmentViewState';
 
 type DocumentPreview = {
   kind: 'pdf' | 'markdown' | 'docx' | 'unsupported';
@@ -43,8 +44,6 @@ type DocumentPreview = {
   sections: Array<{ title: string; level?: number; page?: number }>;
   html: string;
 };
-
-type DocumentViewMode = 'card' | 'preview';
 
 type DocumentAttachmentViewProps = {
   src: string;
@@ -275,18 +274,11 @@ export function DocumentAttachmentView({
 }: DocumentAttachmentViewProps) {
   const absoluteSrc = useMemo(() => formatUrl(src), [src]);
   const cacheKey = useMemo(() => getDocumentPreviewCacheKey(absoluteSrc), [absoluteSrc]);
-  const [sessionViewMode, setSessionViewMode] = useState<DocumentViewMode>(() => {
-    return documentPreviewSessionCache.get(cacheKey)?.viewMode || viewMode;
-  });
   const [preview, setPreview] = useState<DocumentPreview | null>(() => {
     return documentPreviewSessionCache.get(cacheKey)?.preview || null;
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [fullscreen, setFullscreen] = useState(false);
-  const [page, setPage] = useState(1);
-  const [zoom, setZoom] = useState(100);
-  const [showPages, setShowPages] = useState(true);
   const [previewSuspended, setPreviewSuspended] = useState(
     () => document.body.dataset.qzDocumentPreviewSuspended === 'true',
   );
@@ -295,10 +287,31 @@ export function DocumentAttachmentView({
   const canAttemptPreview = previewableByName(name, type);
   const pageCount = Math.max(1, preview?.page_count || 1);
   const isPdf = preview?.kind === 'pdf' || /\.pdf(\?|#|$)/i.test(name || src);
+  const {
+    sessionViewMode,
+    setCachedViewMode,
+    fullscreen,
+    setFullscreen,
+    page,
+    setNextPage,
+    zoom,
+    zoomOut,
+    zoomIn,
+    showPages,
+    setShowPages,
+  } = useDocumentAttachmentViewState({
+    cacheKey,
+    initialViewMode: documentPreviewSessionCache.get(cacheKey)?.viewMode || viewMode,
+    pageCount,
+    onViewModeChange: (nextViewMode) => {
+      const entry = getOrCreateDocumentPreviewCacheEntry(cacheKey);
+      entry.viewMode = nextViewMode;
+      onViewModeChange(nextViewMode);
+    },
+  });
 
   useEffect(() => {
     const cached = documentPreviewSessionCache.get(cacheKey);
-    setSessionViewMode(cached?.viewMode || viewMode);
     setPreview(cached?.preview || null);
     setError('');
     setLoading(false);
@@ -330,19 +343,13 @@ export function DocumentAttachmentView({
     };
   }, []);
 
-  const setCachedViewMode = (nextViewMode: DocumentViewMode) => {
-    const entry = getOrCreateDocumentPreviewCacheEntry(cacheKey);
-    entry.viewMode = nextViewMode;
-    setSessionViewMode(nextViewMode);
-    onViewModeChange(nextViewMode);
-  };
-
   useEffect(() => {
     if (sessionViewMode !== 'preview' && !fullscreen) return;
     if (!canAttemptPreview || preview) return;
 
     let cancelled = false;
     const entry = getOrCreateDocumentPreviewCacheEntry(cacheKey);
+    entry.viewMode = sessionViewMode;
     const previewPromise = entry.promise || api.previewDocument({ src, name });
     entry.promise = previewPromise;
 
@@ -397,7 +404,6 @@ export function DocumentAttachmentView({
     }
   }, [fullscreen, isPdf, page]);
 
-  const setNextPage = (next: number) => setPage(Math.max(1, Math.min(pageCount, next)));
   const download = () => window.open(absoluteSrc, '_blank', 'noopener,noreferrer');
   const print = () => window.open(absoluteSrc, '_blank', 'noopener,noreferrer');
 
@@ -524,10 +530,10 @@ export function DocumentAttachmentView({
             <button type="button" className={toolbarButton} onClick={() => setNextPage(page + 1)} title="下一页">
               <ChevronDown size={17} />
             </button>
-            <button type="button" className={toolbarButton} onClick={() => setZoom(Math.max(50, zoom - 10))} title="缩小">
+            <button type="button" className={toolbarButton} onClick={zoomOut} title="缩小">
               <ZoomOut size={17} />
             </button>
-            <button type="button" className={toolbarButton} onClick={() => setZoom(Math.min(200, zoom + 10))} title="放大">
+            <button type="button" className={toolbarButton} onClick={zoomIn} title="放大">
               <ZoomIn size={17} />
             </button>
             <button type="button" className={toolbarButton} onClick={print} title="打印">
