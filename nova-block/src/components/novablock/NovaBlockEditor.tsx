@@ -1,6 +1,5 @@
 ﻿import { formatUrl, api } from "../../lib/api";
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
-import { sanitizeLegacyApiUrlsInHtml } from "../../lib/api";
 import { EditorContent, useEditor, Editor } from '@tiptap/react';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { BubbleMenu } from '@tiptap/react/menus';
@@ -69,12 +68,12 @@ import {
   getAdvancedTableSelectionScope,
   isAdvancedTableCellSelection,
 } from '../../lib/advancedTableSelection';
-import { stripLeadingDuplicateTitleBlockFromHtml } from '../../lib/noteContentTitle';
 import { aiMarkdownToHtml, shouldRenderAIMarkdown } from '../../lib/aiMarkdown';
 import { replaceEditorContentWithoutHistory } from '../../lib/editorContentReplace';
 import { FindReplaceExtension } from '../../lib/novablock/findReplacePlugin';
 import { buildPrompt, kindToBackendAction, type AIActionKind } from '../../lib/novablock/aiActions';
 import { isSafeEditorLinkHref } from '../../lib/novablock/editorLinkSecurity';
+import { prepareEditorContent } from '../../lib/novablock/editorContentPreparation';
 import { collectOutlineItems, shouldReuseOutlineItems, type OutlineItem } from '../../lib/novablock/outlineItems';
 import {
   AIStreamingPreviewNode,
@@ -483,8 +482,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
   }, []);
 
   const normalizedNoteContent = useMemo(() => {
-    const html = sanitizeLegacyApiUrlsInHtml(note?.content) || '<p></p>';
-    return stripLeadingDuplicateTitleBlockFromHtml(html, note?.title);
+    return prepareEditorContent(note?.content, note?.title);
   }, [note?.content, note?.title]);
 
   const blockLinkTargets = useMemo(() => {
@@ -2351,7 +2349,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         scrollContainerRef.current.scrollTop = nextScrollTop;
       }
       replaceEditorContentWithoutAutosave(
-        stripLeadingDuplicateTitleBlockFromHtml(sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>', note.title),
+        prepareEditorContent(note.content, note.title),
       );
       // 鍒囨崲鍐呭鍚庯紝寮哄埗琛ラ綈 ID 骞舵洿鏂板ぇ绾?
       // @ts-ignore
@@ -2377,14 +2375,8 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
       return;
     }
 
-    const incomingContent = stripLeadingDuplicateTitleBlockFromHtml(
-      sanitizeLegacyApiUrlsInHtml(note.content) || '<p></p>',
-      note.title,
-    );
-    const knownContent = stripLeadingDuplicateTitleBlockFromHtml(
-      sanitizeLegacyApiUrlsInHtml(latestNoteRef.current?.content) || '<p></p>',
-      latestNoteRef.current?.title,
-    );
+    const incomingContent = prepareEditorContent(note.content, note.title);
+    const knownContent = prepareEditorContent(latestNoteRef.current?.content, latestNoteRef.current?.title);
     if (incomingContent === knownContent || incomingContent === editor.getHTML()) {
       latestNoteRef.current = note;
       return;
@@ -2412,10 +2404,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
         latestNoteRef.current = { ...latestNoteRef.current, content: detail.content } as Note;
         return;
       }
-      const nextContent = stripLeadingDuplicateTitleBlockFromHtml(
-        sanitizeLegacyApiUrlsInHtml(detail.content) || '<p></p>',
-        note.title,
-      );
+      const nextContent = prepareEditorContent(detail.content, note.title);
       replaceEditorContentWithoutAutosave(nextContent);
       // @ts-ignore
       editor.commands.ensureHeadingIds();
@@ -3604,10 +3593,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
             cleanContent = cleanContent.replace(/^\n+/, '');
             const patched: any = { ...updated, content: cleanContent };
             replaceEditorContentWithoutAutosave(
-              stripLeadingDuplicateTitleBlockFromHtml(
-                sanitizeLegacyApiUrlsInHtml(cleanContent) || '<p></p>',
-                updated.title,
-              ),
+              prepareEditorContent(cleanContent, updated.title),
             );
             latestNoteRef.current = { ...latestNoteRef.current, ...patched } as Note;
             onLiveChange?.(patched);
