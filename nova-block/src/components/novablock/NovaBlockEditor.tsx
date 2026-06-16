@@ -75,6 +75,7 @@ import { replaceEditorContentWithoutHistory } from '../../lib/editorContentRepla
 import { FindReplaceExtension } from '../../lib/novablock/findReplacePlugin';
 import { buildPrompt, kindToBackendAction, type AIActionKind } from '../../lib/novablock/aiActions';
 import { isSafeEditorLinkHref } from '../../lib/novablock/editorLinkSecurity';
+import { collectOutlineItems, shouldReuseOutlineItems, type OutlineItem } from '../../lib/novablock/outlineItems';
 import {
   AIStreamingPreviewNode,
   findAIStreamingPreview,
@@ -458,7 +459,7 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     FindReplaceExtension,
   ], [isAiEnabled]);
 
-  const [outline, setOutline] = useState<any[]>([]);
+  const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [isTocCollapsed, setIsTocCollapsed] = useState(false);
   const outlineTimerRef = useRef<any>(null);
 
@@ -469,51 +470,11 @@ export const NovaBlockEditor = React.memo<NovaBlockEditorProps>(({
     }
     
     outlineTimerRef.current = setTimeout(() => {
-      const items: any[] = [];
-      let foldLevel: number | null = null;
-      
-      editorInstance.state.doc.descendants((node, pos) => {
-        if (node.type.name === 'heading') {
-          const currentLevel = node.attrs.level;
-          
-          // 閫昏緫涓?CollapsibleHeading 淇濇寔涓€鑷?
-          if (foldLevel !== null && currentLevel <= foldLevel) {
-            foldLevel = null;
-          }
-
-          // 濡傛灉澶勪簬鎶樺彔鑼冨洿鍐咃紝涓嶅姞鍏ュぇ绾?
-          if (foldLevel !== null) return false;
-
-          const text = node.textContent;
-          const displayText = text.trim() === '' ? '无标题' : text;
-          const baseId = node.attrs.id || `h-pending-${pos}`;
-          
-          items.push({
-            id: baseId,
-            key: baseId + '-' + pos + '-' + currentLevel, // Ensure absolute uniqueness for React Key
-            text: displayText,
-            level: currentLevel,
-          });
-
-          if (node.attrs.collapsed) {
-            foldLevel = currentLevel;
-          }
-          return false;
-        }
-        
-        if (node.isBlock && foldLevel !== null) return false;
-        return true;
-      });
+      const items = collectOutlineItems(editorInstance.state.doc);
 
       // 鍙湁鍦ㄧ粨鏋勬垨鏍稿績鏁版嵁鍙戠敓鍙樺寲鏃舵墠鏇存柊鐘舵€?
       setOutline((prev) => {
-        // 鍏抽敭锛氬鏋滃綋鍓嶅寘鍚?pending ID锛屾垨鑰呬箣鍓嶅寘鍚?pending ID锛屽繀椤诲厑璁告洿鏂颁互杈惧埌鏈€缁堢ǔ瀹氱姸鎬?
-        const hasPending = items.some(it => it.id.startsWith('h-pending-'));
-        const prevHasPending = prev.some(it => it.id.startsWith('h-pending-'));
-
-        if (!hasPending && !prevHasPending && 
-            prev.length === items.length && 
-            prev.every((item, i) => item.id === items[i].id && item.text === items[i].text && item.level === items[i].level)) {
+        if (shouldReuseOutlineItems(prev, items)) {
           return prev;
         }
         return items;
