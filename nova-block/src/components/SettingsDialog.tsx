@@ -578,7 +578,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
         <header className="qz-settings-page-header">
           <div className="flex items-center gap-3">
             <div className="qz-settings-page-stamp">肆</div>
-            <h3>Settings · 顶栏常驻按钮自定义</h3>
+            <h3>设置 · 顶栏常驻按钮自定义</h3>
           </div>
           <span>设置 → 外观 → 顶栏 · 默认 4 项</span>
         </header>

@@ -6,10 +6,15 @@ const projectRoot = resolve(__dirname, '../..')
 const settingsDialog = readFileSync(resolve(projectRoot, 'src/components/SettingsDialog.tsx'), 'utf-8')
 
 describe('QingZhi settings panel contract', () => {
+  it('uses a fully Chinese heading for the QingZhi appearance settings', () => {
+    expect(settingsDialog).toContain('设置 · 顶栏常驻按钮自定义')
+    expect(settingsDialog).not.toContain('Settings · 顶栏常驻按钮自定义')
+  })
+
   it('matches the QingZhi topbar customization layout', () => {
     const requiredMarkers = [
       "activeTab === 'qingzhi'",
-      'Settings · 顶栏常驻按钮自定义',
+      '设置 · 顶栏常驻按钮自定义',
       '设置 → 外观 → 顶栏 · 默认 4 项',
       '顶栏常驻按钮',
       '已选 · 拖拽排序',
